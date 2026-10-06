@@ -23,7 +23,7 @@ func TestIntegrationEnsure(t *testing.T) {
 		t.Fatal(tag2, err)
 	}
 	out, err := c.Run("run", "--rm", tag, "bash", "-lc",
-		"id -u; id -un; claude --version; tmux -V; jq --version; go version; node --version; pnpm --version; echo $GOMODCACHE")
+		"id -u; id -un; claude --version; tmux -V; jq --version; go version; node --version; pnpm --version; echo $DISABLE_AUTOUPDATER; echo $GOMODCACHE")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,6 +34,9 @@ func TestIntegrationEnsure(t *testing.T) {
 	}
 	if !strings.Contains(out, "go version go") || !strings.Contains(out, "Claude Code") {
 		t.Fatal("missing go or claude in login shell PATH")
+	}
+	if lines[len(lines)-2] != "1" {
+		t.Fatal("DISABLE_AUTOUPDATER", lines[len(lines)-2])
 	}
 	if lines[len(lines)-1] != "/sbx/cache/go-mod" {
 		t.Fatal("GOMODCACHE", lines[len(lines)-1])

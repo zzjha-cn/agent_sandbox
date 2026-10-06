@@ -45,7 +45,7 @@ func Execute() int {
 		},
 	}
 	root.PersistentFlags().BoolVarP(&app.Verbose, "verbose", "v", false, "打印执行的 docker 和 git 命令")
-	root.AddCommand(app.runCmd(), app.attachCmd(), app.shellCmd(), app.stopCmd(), app.lsCmd(), app.pathCmd(), app.doneCmd(), app.memoryCmd())
+	root.AddCommand(app.runCmd(), app.attachCmd(), app.shellCmd(), app.stopCmd(), app.lsCmd(), app.pathCmd(), app.doneCmd(), app.memoryCmd(), app.upgradeCmd())
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(app.Err, "sbx:", err)
 		return 1
@@ -55,18 +55,24 @@ func Execute() int {
 
 // load 解析 Workspace 和配置。
 func (a *App) load() error {
+	if err := a.loadConfig(); err != nil {
+		return err
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	a.WS, err = workspace.Resolve(cwd)
+	return err
+}
+
+// loadConfig 只读全局配置，不要求在 git 仓库里。
+func (a *App) loadConfig() error {
 	home, err := task.Home()
 	if err != nil {
 		return err
 	}
 	a.Home = home
-	cwd, err := os.Getwd()
-	if err != nil {
-		return err
-	}
-	if a.WS, err = workspace.Resolve(cwd); err != nil {
-		return err
-	}
 	cfg, warnings, err := config.Load(filepath.Join(home, "config.toml"))
 	for _, w := range warnings {
 		fmt.Fprintln(a.Err, "警告:", w)

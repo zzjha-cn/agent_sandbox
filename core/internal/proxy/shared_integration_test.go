@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"sandx/internal/docker"
 )
@@ -96,5 +97,29 @@ func TestIntegrationSharedIsolation(t *testing.T) {
 	logs, _ := c.Exec(s.Name, docker.ExecOpts{}, "cat", "/var/log/squid/access.log")
 	if !strings.Contains(logs, "TCP_DENIED/403") || !strings.Contains(logs, "ws-a.t1") {
 		t.Errorf("access.log missing expected entries:\n%s", logs)
+	}
+
+	// 日志轮转：低于阈值不动；超过阈值后 access.log 转成 access.log.0，squid 继续写新文件
+	if err := s.rotateIfLarge(1 << 30); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Exec(s.Name, docker.ExecOpts{}, "test", "-e", "/var/log/squid/access.log.0"); err == nil {
+		t.Fatal("should not rotate below limit")
+	}
+	if err := s.rotateIfLarge(0); err != nil {
+		t.Fatal(err)
+	}
+	rotated := false
+	for i := 0; i < 20 && !rotated; i++ {
+		_, err := c.Exec(s.Name, docker.ExecOpts{}, "test", "-s", "/var/log/squid/access.log.0")
+		rotated = err == nil
+		time.Sleep(250 * time.Millisecond)
+	}
+	if !rotated {
+		t.Fatal("access.log.0 not created after rotate")
+	}
+	curl(netB, urlB, "https://example.com/")
+	if logs, _ := c.Exec(s.Name, docker.ExecOpts{}, "cat", "/var/log/squid/access.log"); !strings.Contains(logs, "example.com") {
+		t.Errorf("squid should keep logging after rotate:\n%s", logs)
 	}
 }

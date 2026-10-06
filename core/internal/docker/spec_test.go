@@ -68,3 +68,10 @@ func TestExecArgs(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestRunSpecLogMaxSize(t *testing.T) {
+	got := strings.Join(RunSpec{Image: "img", LogMaxSize: "10m"}.Args(), " ")
+	if !strings.Contains(got, "--log-opt max-size=10m --log-opt max-file=2 img") {
+		t.Fatal(got)
+	}
+}

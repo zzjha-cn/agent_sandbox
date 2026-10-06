@@ -10,7 +10,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"sandx/internal/image"
 	"sandx/internal/memory"
 )
 
@@ -84,7 +83,7 @@ func (a *App) sandboxForPull() (memory.Sandbox, error) {
 			return memory.ExecIn(a.Docker, it.Str("Names")), nil
 		}
 	}
-	in, err := image.BuiltinInputs(a.Cfg.Profile, a.Cfg.ClaudeVersion(), os.Getuid(), os.Getgid())
+	in, err := a.imageInputs()
 	if err != nil {
 		return memory.Sandbox{}, err
 	}
@@ -92,6 +91,57 @@ func (a *App) sandboxForPull() (memory.Sandbox, error) {
 		return memory.Sandbox{}, fmt.Errorf("沙箱镜像还不存在（还没有 sbx run 过）：%v", err)
 	}
 	return memory.OneShot(a.Docker, in.Tag()), nil
+}
+
+type pullPlan struct {
+	hostDir, basePath string
+	src, dst          memory.Files
+	acts              []memory.Action
+	next              memory.Base
+}
+
+// pullPlan 计算沙箱 → 宿主机方向的记忆同步计划。
+func (a *App) pullPlan() (pullPlan, error) {
+	key, hostDir, basePath := a.memoryPaths()
+	p := pullPlan{hostDir: hostDir, basePath: basePath}
+	sb, err := a.sandboxForPull()
+	if err != nil {
+		return p, err
+	}
+	if p.src, err = sb.Read(memory.SandboxDir(key)); err != nil {
+		return p, err
+	}
+	if p.dst, err = memory.ReadDir(hostDir); err != nil {
+		return p, err
+	}
+	base, err := memory.LoadBase(basePath)
+	if err != nil {
+		return p, err
+	}
+	p.acts, p.next = memory.Plan(p.src, p.dst, base)
+	return p, nil
+}
+
+// remindPull 在沙箱里有还没导回的记忆时提醒一句（sbx done 前调用，失败不影响 done）。
+func (a *App) remindPull() {
+	p, err := a.pullPlan()
+	if err != nil {
+		return
+	}
+	n, conflicts := len(memory.Changes(p.acts)), 0
+	for _, x := range p.acts {
+		if x.Kind == "conflict" {
+			conflicts++
+		}
+	}
+	if n+conflicts == 0 {
+		return
+	}
+	msg := fmt.Sprintf("提示: 沙箱里有 %d 个项目记忆文件还没导回宿主机", n)
+	if conflicts > 0 {
+		msg += fmt.Sprintf("（另有 %d 个两边都改过）", conflicts)
+	}
+	a.logf("%s；记忆保存在 sbx-home 里，done 不会删除，随时可以 sbx memory pull 查看并导回", msg)
 }
 
 func showDiff(name string, old, new []byte, out *os.File) {
@@ -121,24 +171,11 @@ func (a *App) memoryCmd() *cobra.Command {
 			if err := a.load(); err != nil {
 				return err
 			}
-			key, hostDir, basePath := a.memoryPaths()
-			sb, err := a.sandboxForPull()
+			p, err := a.pullPlan()
 			if err != nil {
 				return err
 			}
-			src, err := sb.Read(memory.SandboxDir(key))
-			if err != nil {
-				return err
-			}
-			dst, err := memory.ReadDir(hostDir)
-			if err != nil {
-				return err
-			}
-			base, err := memory.LoadBase(basePath)
-			if err != nil {
-				return err
-			}
-			acts, next := memory.Plan(src, dst, base)
+			hostDir, basePath, src, dst, acts, next := p.hostDir, p.basePath, p.src, p.dst, p.acts, p.next
 			changes := memory.Changes(acts)
 			fmt.Fprintf(a.Out, "项目记忆：沙箱 → 宿主机 %s\n", hostDir)
 			for _, x := range acts {

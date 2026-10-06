@@ -76,14 +76,9 @@ func (b Builder) Ensure(in Inputs) (string, error) {
 	if ok, err := b.Docker.ImageExists(tag); err != nil || ok {
 		return tag, err
 	}
-	ptag := in.ProfileTag()
-	if ok, err := b.Docker.ImageExists(ptag); err != nil {
+	ptag, err := b.EnsureProfile(in)
+	if err != nil {
 		return "", err
-	} else if !ok {
-		fmt.Fprintf(b.Out, "构建 Profile 镜像 %s …\n", ptag)
-		if err := b.build(ptag, map[string][]byte{"Dockerfile": in.ProfileFile}, nil); err != nil {
-			return "", err
-		}
 	}
 	fmt.Fprintf(b.Out, "构建 Agent 层 %s …\n", tag)
 	files := map[string][]byte{"Dockerfile": in.AgentFile, "entrypoint.sh": in.Entrypoint}
@@ -97,6 +92,16 @@ func (b Builder) Ensure(in Inputs) (string, error) {
 		return "", err
 	}
 	return tag, nil
+}
+
+// EnsureProfile 确保 Profile 层镜像存在，返回 tag。
+func (b Builder) EnsureProfile(in Inputs) (string, error) {
+	ptag := in.ProfileTag()
+	if ok, err := b.Docker.ImageExists(ptag); err != nil || ok {
+		return ptag, err
+	}
+	fmt.Fprintf(b.Out, "构建 Profile 镜像 %s …\n", ptag)
+	return ptag, b.build(ptag, map[string][]byte{"Dockerfile": in.ProfileFile}, nil)
 }
 
 // build 在临时目录里准备构建上下文，失败时重试 1 次（M0-4：偶发 TLS EOF）。

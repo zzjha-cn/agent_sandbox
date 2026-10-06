@@ -287,6 +287,8 @@ func (a *App) doneCmd() *cobra.Command {
 			if err := a.load(); err != nil {
 				return err
 			}
+			// 记忆是 Workspace 级的（存在 sbx-home），每次 done 只提醒一次；趁容器还在时读
+			a.remindPull()
 			var errs []error
 			for _, n := range args {
 				t, err := a.task(n)

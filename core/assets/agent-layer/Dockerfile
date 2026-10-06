@@ -30,8 +30,10 @@ RUN set -eux; \
 COPY entrypoint.sh /sbx/entrypoint.sh
 RUN chmod 0755 /sbx/entrypoint.sh
 
+# npm 全局目录归 root，agent 用户无法自更新；升级走 sbx upgrade（重建 Agent 层）
 ENV HOME=/home/agent \
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
+    DISABLE_AUTOUPDATER=1 \
     npm_config_cache=/sbx/cache/npm \
     PIP_CACHE_DIR=/sbx/cache/pip \
     UV_CACHE_DIR=/sbx/cache/uv \

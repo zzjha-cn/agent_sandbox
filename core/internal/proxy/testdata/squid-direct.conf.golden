@@ -12,5 +12,7 @@ http_access deny all
 
 logformat sbx %ts.%03tu %un %>a %Ss/%>Hs %rm %ru %Sh/%<a
 access_log stdio:/var/log/squid/access.log sbx
+# 只留 1 份旧日志；sbx 在 access.log 超过上限时执行 squid -k rotate
+logfile_rotate 1
 cache deny all
 shutdown_lifetime 1 seconds

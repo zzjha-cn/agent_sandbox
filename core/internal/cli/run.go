@@ -157,7 +157,7 @@ func (a *App) create(t task.Task, base string) (err error) {
 
 	// 2. 镜像
 	step = "准备镜像"
-	in, err := image.BuiltinInputs(a.Cfg.Profile, a.Cfg.ClaudeVersion(), os.Getuid(), os.Getgid())
+	in, err := a.imageInputs()
 	if err != nil {
 		return err
 	}
@@ -351,7 +351,7 @@ func (a *App) startAgent(t task.Task) error {
 		return err
 	}
 	if !ok {
-		return errors.New(loginHelp(t))
+		return errors.New(a.loginHelp(t))
 	}
 	statusFile := filepath.Join(t.StateDir(), "status.json")
 	os.Remove(statusFile)
@@ -365,17 +365,21 @@ func (a *App) startAgent(t task.Task) error {
 	})
 }
 
-func loginHelp(t task.Task) string {
+func (a *App) loginHelp(t task.Task) string {
 	meta, _, _ := t.ReadMeta()
 	img := meta.Image
 	if img == "" {
 		img = "sbx/web-go:<hash>"
 	}
+	env := ""
+	if up := a.Cfg.Network.Upstream; up != "" {
+		env = "-e HTTPS_PROXY=" + up + " "
+	}
 	return strings.Join([]string{
 		"沙箱里的 claude 还没有登录（sbx-home 里没有凭据）。在终端执行一次：",
 		"",
 		"  docker run -it --rm -e HOME=/home/agent -v sbx-home:/home/agent \\",
-		"    -e HTTPS_PROXY=http://host.docker.internal:7890 " + img + " claude auth login",
+		"    " + env + img + " claude auth login",
 		"",
 		"按提示打开链接、粘贴授权码；完成后重新执行 sbx run " + t.Name + "。",
 	}, "\n")

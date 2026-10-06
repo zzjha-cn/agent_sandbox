@@ -53,6 +53,7 @@ sbx stop fix-login           # 停止容器，保留一切；sbx run 可恢复
 sbx done fix-login           # 结束：清理容器/网络/依赖 volume/worktree/state，保留分支
 git merge sbx/fix-login      # 在主仓库里合并
 sbx memory pull              # 把沙箱里新记的项目记忆导回宿主机（先看差异再确认）
+sbx upgrade                  # 升级沙箱里的 claude（容器里不会自动更新）；新建的 Task 生效
 ```
 
 **项目记忆**：每次 `sbx run` 会把宿主机这个仓库的 Claude 自动记忆（`~/.claude/projects/<key>/memory/`）导入沙箱；沙箱里新记的不会自动回到宿主机，需要 `sbx memory pull`（ADR 0016）。

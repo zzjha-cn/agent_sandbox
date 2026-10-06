@@ -134,7 +134,7 @@
 - [ ] **M3-1** `assets/profiles/py-rust/Dockerfile`（§5.2 B），并加上对应的语言栈白名单预设。
 - [ ] **M3-2** 自定义 Profile：读取 `.sbx/Dockerfile` 或 `profile.image`；检查是否为 Debian 或 Ubuntu 系，不是就给出明确报错。
 - [ ] **M3-3** 根据项目里的版本文件（`.tool-versions`、`mise.toml`、`.nvmrc`、`.python-version`、`rust-toolchain.toml`）用 mise 自动安装运行时，结果放进 `sbx-mise`。
-- [ ] **M3-4** `sbx upgrade`：只重建 Agent 层；支持锁定 Agent 版本。
+- [x] **M3-4** `sbx upgrade`：只重建 Agent 层；支持锁定 Agent 版本。（M1 收尾时提前实现，镜像里关闭自动更新；冒烟测试复用下次 run 的检查）
 - [ ] **M3-5** 依赖遮盖改为由配置驱动（`deps.mask`），并给每个 Profile 设好默认值（`.venv`、`target` 等）。
 
 ### Agent

@@ -134,12 +134,13 @@ func (s Shared) EnsureShared() error {
 	switch {
 	case !exists:
 		spec := docker.RunSpec{
-			Name:      s.name(),
-			Image:     Image,
-			Labels:    map[string]string{"sbx.kind": "proxy", "sbx.proxy": "shared"},
-			Network:   s.egress(),
-			Mounts:    []docker.Mount{{Source: s.Dir, Target: "/etc/sbx", ReadOnly: true}},
-			Resources: docker.Resources{Memory: "128m"},
+			Name:       s.name(),
+			Image:      Image,
+			Labels:     map[string]string{"sbx.kind": "proxy", "sbx.proxy": "shared"},
+			Network:    s.egress(),
+			Mounts:     []docker.Mount{{Source: s.Dir, Target: "/etc/sbx", ReadOnly: true}},
+			Resources:  docker.Resources{Memory: "128m"},
+			LogMaxSize: "10m",
 			// docker stop 超时被 SIGKILL 后 PID 文件会残留，下次 start 时 squid 拒绝启动
 			Entrypoint: "sh",
 			Cmd:        []string{"-c", "rm -f /run/squid.pid; exec squid -f " + confPath + " -NYC"},
@@ -159,7 +160,22 @@ func (s Shared) EnsureShared() error {
 			return err
 		}
 	}
-	return s.waitReady()
+	if err := s.waitReady(); err != nil {
+		return err
+	}
+	return s.rotateIfLarge(logLimit)
+}
+
+// logLimit 是 access.log 的轮转阈值（logfile_rotate 1，最多占 2 倍）。
+const logLimit = 20 << 20
+
+// rotateIfLarge 在 access.log 超过 limit 字节时让 squid 轮转日志。每次 run/resume 都会经过这里。
+func (s Shared) rotateIfLarge(limit int64) error {
+	script := fmt.Sprintf(`f=/var/log/squid/access.log; [ "$(stat -c %%s "$f" 2>/dev/null || echo 0)" -gt %d ] || exit 0; squid -f %s -k rotate`, limit, confPath)
+	if _, err := s.Docker.Exec(s.name(), docker.ExecOpts{}, "sh", "-c", script); err != nil {
+		return fmt.Errorf("squid 日志轮转失败：%w", err)
+	}
+	return nil
 }
 
 func (s Shared) waitReady() error {

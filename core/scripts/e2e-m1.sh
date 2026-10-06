@@ -104,6 +104,7 @@ check "云端 MCP 被策略拦截（ADR 0015）" "[ \"\$(ex 'curl -s -o /dev/nul
 check "~/.ssh 不存在" "ex '[ ! -e ~/.ssh ] && [ ! -e $HOME/.ssh ]'"
 check "宿主机 home 里只看得到挂载进来的路径" "[ -z \"\$(ex 'ls -A $HOME 2>/dev/null' | grep -v '^.sbx$')\" ]"
 check "以非 root 运行" "[ \"\$(ex 'id -u')\" != 0 ]"
+check "claude 自动更新已关闭" "[ \"\$(ex 'echo \$DISABLE_AUTOUPDATER')\" = 1 ]"
 WT1="$(ex 'pwd')"
 ex 'echo x > node_modules/e2e-probe' >/dev/null 2>&1
 check "node_modules 写入不落到宿主机" "ex 'test -f node_modules/e2e-probe' && [ ! -e '$WT1/node_modules/e2e-probe' ]"
@@ -120,8 +121,12 @@ fi
 
 # 7. 清理
 echo "== 清理"
-"$SBX" done t1 t2
+docker exec -u agent "$C1" bash -c "printf 'late note\n' > '$SMEM/late-note.md'"
+DONE_OUT="$("$SBX" done t1 t2 2>&1)"
+echo "$DONE_OUT"
 trap - EXIT
+check "done 提醒还没导回的记忆" "printf '%s' \"\$DONE_OUT\" | grep -q '还没导回宿主机'"
+check "done 不删除沙箱里的记忆（在 sbx-home）" "\"$SBX\" memory pull --yes | grep -q 'late-note.md'"
 check "没有残留容器" "[ -z \"\$(docker ps -aq --filter label=sbx.ws=$WS)\" ]"
 check "没有残留网络" "[ -z \"\$(docker network ls -q --filter label=sbx.ws=$WS)\" ]"
 check "没有残留 volume" "[ -z \"\$(docker volume ls -q --filter label=sbx.ws=$WS)\" ]"
