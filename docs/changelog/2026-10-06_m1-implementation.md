@@ -4,7 +4,7 @@
 
 ## 一句话
 
-`sandbox/core` 从零实现了 M1。内容包括：`run`、`attach`、`shell`、`stop`、`ls`、`path`、`done`、`memory pull`、`upgrade` 共 9 个命令，shared squid 代理，web-go 镜像，项目记忆同步。自动化测试和 e2e（32 项）全部通过，交互模式已在真实项目上使用。**全部改动尚未提交**，当前在 `sand` 分支。
+`core/` 从零实现了 M1。内容包括：`run`、`attach`、`shell`、`stop`、`ls`、`path`、`done`、`memory pull`、`upgrade` 共 9 个命令，shared squid 代理，web-go 镜像，项目记忆同步。自动化测试和 e2e（32 项）全部通过，交互模式已在真实项目上使用。代码和文档已提交到 `main`。
 
 ## 先读这些
 
@@ -12,9 +12,9 @@
 |---|---|
 | `docs/architecture.md` | 现在的代码怎么工作，按"问题 → Task → 四个方面 → 生命周期"组织 |
 | `docs/walkthrough.md` | 用一个具体场景按顺序讲每条命令背后发生了什么 |
-| `docs/m1-acceptance.md` | 测试结果、实现中遇到的问题、和设计的偏差 |
+| `docs/private/m1-acceptance.md` | 测试结果、实现中遇到的问题、和设计的偏差（不纳入版本控制） |
 | `docs/implementation-checklist.md` | 总清单：M1 全部完成（M1-22 除外），M3-4 提前完成 |
-| `core/README.md` | 安装、配置、登录、日常用法 |
+| `README.md`（仓库根） | 安装、配置、登录、日常用法 |
 
 ## 今天的变更
 
@@ -65,8 +65,9 @@
 
 | 状态 | 文件 |
 |---|---|
-| 新增 | `docs/architecture.md`、`docs/walkthrough.md`、`docs/m1-acceptance.md`、`docs/adr/0016-project-memory-sync.md`、`core/README.md`，以及本文件 |
-| 修改 | `CONTEXT.md`（状态改为 M1 已实现，加了链接）、`docs/design.md`（回写实现中的偏差）、`docs/implementation-checklist.md`、`docs/m1-checklist.md` |
+| 新增 | `docs/architecture.md`、`docs/walkthrough.md`、`docs/private/m1-acceptance.md`、`docs/private/adr/0016-project-memory-sync.md`、`README.md`，以及本文件 |
+| 修改 | `docs/CONTEXT.md`（状态改为 M1 已实现，加了链接）、`docs/design.md`（回写实现中的偏差）、`docs/implementation-checklist.md`、`docs/m1-checklist.md` |
+| 移动 | `CONTEXT.md` → `docs/`；`core/README.md` → 仓库根；`docs/adr/`、`docs/m1-acceptance.md` → `docs/private/`（被 `.gitignore` 的 `private` 排除，不纳入版本控制）。各文档内的相对链接已同步更新 |
 
 ## 和设计的偏差（已回写 design.md）
 
@@ -115,8 +116,8 @@
 
 ## 下一步（建议顺序）
 
-1. **用户确认后提交**：M1 代码、4 个修正和文档一起提交。不要擅自提交。
-2. **M1-22 无人值守验收**：需要用户配合离开一段时间。结果记到 `m1-acceptance.md` 的 9.2 节。
+1. ~~**用户确认后提交**~~：已完成，M1 代码、4 个修正和文档已在 `main` 上。
+2. **M1-22 无人值守验收**：需要用户配合离开一段时间。结果记到 `private/m1-acceptance.md` 的 9.2 节。
 3. **M2**，按日常使用频率排序：
 
    | 顺序 | 内容 | 清单编号 |

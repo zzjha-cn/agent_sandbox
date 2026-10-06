@@ -3,9 +3,9 @@
 | 项 | 内容 |
 |---|---|
 | 目标 | 一个 Task 能在沙箱里无人值守地跑起来；两个 Task 能并行 |
-| 依据 | [design.md v1.1](design.md)、[ADR 0001–0015](adr/)、[M0-SUMMARY](../spikes/M0-SUMMARY.md)、总清单 [implementation-checklist.md](implementation-checklist.md) 的 M1-1 至 M1-22 |
+| 依据 | [design.md v1.1](design.md)、ADR 0001–0015（`private/adr/`，未纳入版本控制）、[M0-SUMMARY](../spikes/M0-SUMMARY.md)、总清单 [implementation-checklist.md](implementation-checklist.md) 的 M1-1 至 M1-22 |
 | 日期 | 2026-10-04 |
-| 代码位置 | `sandbox/core/`（module `sandx`，二进制名 `sbx`） |
+| 代码位置 | `core/`（module `sandx`，二进制名 `sbx`） |
 
 **M1 完成标准**：在一个真实仓库上开 2 个并行 Task，claude 无人值守地各完成一次改动，在主仓库里能看到两个 `sbx/<task>` 分支；同时满足 §9 的安全检查。
 
@@ -34,7 +34,7 @@
 ## 1. 前置条件（开工前完成）
 
 - [x] **P-1** Docker Desktop → Settings → Resources：**内存调到 10GB**，CPU 保持 8（ADR 0012 修订）。完成后用 `docker info --format '{{.MemTotal}}'` 确认约等于 10GB。
-- [x] **P-2** 确定 Go module 路径（实际：`sandbox/core`，module `sandx`）。原计划先用 `sbx`，等有了远端仓库再改成真实地址（只需改 `go.mod` 和 import）。
+- [x] **P-2** 确定 Go module 路径（实际：`core/`，module `sandx`）。原计划先用 `sbx`，等有了远端仓库再改成真实地址（只需改 `go.mod` 和 import）。
 - [ ] **P-3** 清理 M0 的测试镜像（可选）：`docker rmi sbx-m04-tools sbx-m05`。测试 volume `m01-home`、`m05-home` 可以保留做对照。
 - [ ] **P-4** 选一个**真实验收仓库**，用于 WP9（建议用你手头一个 Next.js 或 Go 项目，规模中等，有测试）。
 
@@ -260,14 +260,14 @@ WP1 骨架 ─┬─► WP2 docker 封装 ─┬─► WP5 镜像 ────�
   - [x] 宿主机的 `<repo>/node_modules` 没有被写入
   - [x] 一个 Task 的容器访问另一个 Task 的容器失败（网络互相隔离）
   - [x] 修改 `~/.claude/skills` 时，容器里没有写权限
-- [x] **9.4** 把验收结果写到 `docs/m1-acceptance.md`：每项的通过或失败、耗时、遇到的问题。
+- [x] **9.4** 把验收结果写到 `docs/private/m1-acceptance.md`：每项的通过或失败、耗时、遇到的问题。
 
 ---
 
 ## 3. 完成定义（Definition of Done）
 
 - [x] 上面每个 WP 的验收都通过；`make test lint test-docker e2e` 全部通过。
-- [ ] 9.2 的真实仓库验收完成，并且记录在 `m1-acceptance.md`。
+- [ ] 9.2 的真实仓库验收完成，并且记录在 `private/m1-acceptance.md`。
 - [x] 实现过程中和设计的偏差**回写进 design.md**（必要时补 ADR）。已知的一项：WP7.2 宿主机 Claude 配置的挂载方式。
 - [ ] 总清单 `implementation-checklist.md` 里的 M1-1 至 M1-22 全部勾选。
 - [x] `README.md` 的"首次使用"一节写完：安装、登录、`sbx run`、`sbx done`。

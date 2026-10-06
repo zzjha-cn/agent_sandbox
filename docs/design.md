@@ -4,7 +4,7 @@
 |---|---|
 | 状态 | 设计稿 v1.1（已根据 M0 验证结果修订；尚未实现） |
 | 日期 | 2026-10-04 |
-| 依据 | [CONTEXT.md](../CONTEXT.md)（术语表）、[ADR 0001–0015](adr/)、[M0 验证汇总](../spikes/M0-SUMMARY.md) |
+| 依据 | [CONTEXT.md](CONTEXT.md)（术语表）、ADR 0001–0016（`private/adr/`，未纳入版本控制）、[M0 验证汇总](../spikes/M0-SUMMARY.md) |
 
 ---
 
@@ -514,7 +514,7 @@ memory = "4g"                 # 覆盖个人全局默认值（默认 3g）
 ## 12. 实现结构（ADR 0013）
 
 ```
-sandbox/core/          # Go module sandx（M1 实际位置）
+core/                  # Go module sandx（M1 实际位置）
   cmd/sbx/main.go
   internal/
     config/      # 4 层加载、合并、校验
@@ -527,10 +527,15 @@ sandbox/core/          # Go module sandx（M1 实际位置）
     agent/       # settings/config 生成、启动参数、登录流程
   assets/        # embed：Agent 层 Dockerfile、entrypoint、hooks 脚本、
                  #        profiles/web-go、profiles/py-rust、squid.conf.tmpl、allowlist 预设
-  docs/
-    design.md
-    adr/
+docs/
+  design.md
   CONTEXT.md
+  architecture.md      # 实现现状
+  walkthrough.md       # 按场景走一遍
+  changelog/
+  private/             # 不纳入版本控制
+    adr/
+    m1-acceptance.md
 ```
 
 - 只依赖 docker CLI，不引入 Docker SDK，以兼容 Podman 等实现。

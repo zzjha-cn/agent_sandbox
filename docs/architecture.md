@@ -1,7 +1,7 @@
 # sbx 实现现状：设计与流程
 
-> 对应代码：`sandbox/core`（M1 完成，含交互验收后的 4 个修正）。本文只写**代码现在实际怎么工作**。
-> 目标设计见 `design.md`，决策依据见 `adr/`，按场景逐步讲解见 [walkthrough.md](walkthrough.md)，验收记录见 `m1-acceptance.md`。
+> 对应代码：`core/`（M1 完成，含交互验收后的 4 个修正）。本文只写**代码现在实际怎么工作**。
+> 目标设计见 [design.md](design.md)，按场景逐步讲解见 [walkthrough.md](walkthrough.md)。决策依据 `private/adr/` 和验收记录 `private/m1-acceptance.md` 不纳入版本控制，只在本地可见。
 
 **阅读路线**：
 

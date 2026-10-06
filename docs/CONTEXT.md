@@ -1,6 +1,6 @@
 # sbx — AI 编码 Agent 沙箱运行时
 
-> 状态：设计已达成共识（2026-10-04），尚未实现。完整设计见 [docs/design.md](docs/design.md)，实施清单见 [docs/implementation-checklist.md](docs/implementation-checklist.md)（M1 详细清单见 [docs/m1-checklist.md](docs/m1-checklist.md)），决策详见 [docs/adr/](docs/adr/)。
+> 状态：M1（MVP）已实现（2026-10-06）。实现现状见 [architecture.md](architecture.md) 和 [walkthrough.md](walkthrough.md)，完整设计见 [design.md](design.md)，实施清单见 [implementation-checklist.md](implementation-checklist.md)（M1 详细清单见 [m1-checklist.md](m1-checklist.md)），决策详见 [private/adr/](private/adr/)。
 
 ## 定位
 
@@ -63,25 +63,27 @@
 
 ## 决策索引
 
+> ADR 放在 `docs/private/adr/`，不纳入版本控制（见 `.gitignore` 的 `private`），下面的链接只在本地有效。
+
 | # | 决策 |
 |---|---|
-| [0001](docs/adr/0001-container-isolation.md) | 用容器级隔离，不绑定特定 Docker 实现 |
-| [0002](docs/adr/0002-task-scoped-sandbox.md) | 每个 Task 一个 Sandbox，Workspace → Task → Sandbox |
-| [0003](docs/adr/0003-worktree-with-writable-git.md) | 用 worktree，主 `.git` 可写挂载（已接受风险） |
-| [0004](docs/adr/0004-agent-in-tmux.md) | Agent 跑在容器内的 tmux 里，另有 headless 模式 |
-| [0005](docs/adr/0005-egress-proxy-allowlist.md) | 用 Squid 做 Egress Proxy，白名单为默认，可切换 open |
-| [0006](docs/adr/0006-auth-and-host-config.md) | 共享 sbx-home 存放登录态，宿主机配置只读挂入 |
-| [0007](docs/adr/0007-profile-plus-agent-layer.md) | Profile 加自动叠加的 Agent 层，内置两个 Profile |
-| [0008](docs/adr/0008-dependency-volumes.md) | 依赖目录用 volume 遮盖，缓存全局共享 |
-| [0009](docs/adr/0009-layered-config.md) | 配置分四层 |
-| [0010](docs/adr/0010-config-trust.md) | 用信任确认防止配置被篡改 |
-| [0011](docs/adr/0011-status-notify-reclaim.md) | 状态、通知、回收，不做常驻守护进程 |
-| [0012](docs/adr/0012-resources-and-ports.md) | 资源上限、并发上限、端口按需映射 |
-| [0013](docs/adr/0013-go-binary-docker-cli.md) | 用 Go 单二进制，通过 docker CLI 编排；Agent 免确认模式运行 |
-| [0014](docs/adr/0014-proxy-shared-or-dedicated.md) | Egress Proxy 默认共享，可以配置为独占 |
-| [0015](docs/adr/0015-block-cloud-mcp-by-default.md) | 默认拦截 claude.ai 云端 MCP 连接器 |
-| [0016](docs/adr/0016-project-memory-sync.md) | 项目自动记忆：导入沙箱，手动导回 |
+| [0001](private/adr/0001-container-isolation.md) | 用容器级隔离，不绑定特定 Docker 实现 |
+| [0002](private/adr/0002-task-scoped-sandbox.md) | 每个 Task 一个 Sandbox，Workspace → Task → Sandbox |
+| [0003](private/adr/0003-worktree-with-writable-git.md) | 用 worktree，主 `.git` 可写挂载（已接受风险） |
+| [0004](private/adr/0004-agent-in-tmux.md) | Agent 跑在容器内的 tmux 里，另有 headless 模式 |
+| [0005](private/adr/0005-egress-proxy-allowlist.md) | 用 Squid 做 Egress Proxy，白名单为默认，可切换 open |
+| [0006](private/adr/0006-auth-and-host-config.md) | 共享 sbx-home 存放登录态，宿主机配置只读挂入 |
+| [0007](private/adr/0007-profile-plus-agent-layer.md) | Profile 加自动叠加的 Agent 层，内置两个 Profile |
+| [0008](private/adr/0008-dependency-volumes.md) | 依赖目录用 volume 遮盖，缓存全局共享 |
+| [0009](private/adr/0009-layered-config.md) | 配置分四层 |
+| [0010](private/adr/0010-config-trust.md) | 用信任确认防止配置被篡改 |
+| [0011](private/adr/0011-status-notify-reclaim.md) | 状态、通知、回收，不做常驻守护进程 |
+| [0012](private/adr/0012-resources-and-ports.md) | 资源上限、并发上限、端口按需映射 |
+| [0013](private/adr/0013-go-binary-docker-cli.md) | 用 Go 单二进制，通过 docker CLI 编排；Agent 免确认模式运行 |
+| [0014](private/adr/0014-proxy-shared-or-dedicated.md) | Egress Proxy 默认共享，可以配置为独占 |
+| [0015](private/adr/0015-block-cloud-mcp-by-default.md) | 默认拦截 claude.ai 云端 MCP 连接器 |
+| [0016](private/adr/0016-project-memory-sync.md) | 项目自动记忆：导入沙箱，手动导回 |
 
 ## M0 验证结论（2026-10-04）
 
-全部通过（Codex 部分推迟到 M3-6），详见 [spikes/M0-SUMMARY.md](spikes/M0-SUMMARY.md)。资源默认值已定：Docker VM 10GB，每个 Task 2C/3g，`max_running = 3`（ADR 0012 修订）。
+全部通过（Codex 部分推迟到 M3-6），详见 [spikes/M0-SUMMARY.md](../spikes/M0-SUMMARY.md)。资源默认值已定：Docker VM 10GB，每个 Task 2C/3g，`max_running = 3`（ADR 0012 修订）。

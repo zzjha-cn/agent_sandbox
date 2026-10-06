@@ -1,6 +1,6 @@
 # sbx
 
-在容器沙箱里运行 Claude Code 的 Task 运行时。设计见 [../docs/design.md](../docs/design.md)，术语见 [../CONTEXT.md](../CONTEXT.md)。
+在容器沙箱里运行 Claude Code 的 Task 运行时。设计见 [docs/design.md](docs/design.md)，术语见 [docs/CONTEXT.md](docs/CONTEXT.md)。
 
 当前进度：M1（MVP）。支持 `run / attach / shell / stop / ls / done`，内置 Profile 只有 `web-go`，网络只有 shared proxy 加 allowlist 模式。
 
@@ -9,7 +9,7 @@
 ### 1. 安装
 
 ```bash
-cd sandbox/core
+cd core
 make build                     # 生成 bin/sbx
 ln -sf "$PWD/bin/sbx" /usr/local/bin/sbx   # 可选
 ```

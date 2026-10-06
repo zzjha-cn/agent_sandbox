@@ -1,7 +1,7 @@
 # sbx 走一遍：从第一次使用到合并分支
 
 > 本文用一个具体场景，从头到尾按顺序讲一遍：每条命令敲下去之后，sbx、Docker、git、squid、claude 分别做了什么，留下了什么。
-> 讲的是 M1 代码的实际行为。结构化的说明见 [architecture.md](architecture.md)，设计取舍见 [design.md](design.md) 和 [adr/](adr/)。
+> 讲的是 M1 代码的实际行为。结构化的说明见 [architecture.md](architecture.md)，设计取舍见 [design.md](design.md) 和 `private/adr/`（未纳入版本控制）。
 
 ## 场景
 
@@ -19,7 +19,7 @@
 ## 第 0 幕：准备
 
 ```bash
-cd ~/workspace/.../sandbox/core && make build    # 得到 bin/sbx，把它放进 PATH
+cd ~/workspace/.../agent_sandbox/core && make build    # 得到 bin/sbx，把它放进 PATH
 cat > ~/.sbx/config.toml <<'EOF'
 [network]
 upstream = "http://host.docker.internal:7890"
