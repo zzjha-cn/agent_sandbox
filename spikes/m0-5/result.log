@@ -1,0 +1,15 @@
+== 1. headless：claude -p（会调用一次工具） ==
+DONE
+-- events --
+12:13:51 idle SessionStart
+12:13:51 running UserPromptSubmit
+12:13:56 running PreToolUse
+12:13:59 idle Stop
+-- status --
+{"state":"idle","event":"Stop","ts":1791116039}
+
+== 2. 交互：tmux 内 claude TUI ==
+-- 启动后画面 --
+no server running on /tmp/tmux-1000/default
+-- status --
+(无)

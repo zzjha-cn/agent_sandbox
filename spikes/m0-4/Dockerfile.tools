@@ -1,0 +1,7 @@
+# M0-4 测试镜像：覆盖 claude / codex / npm / pnpm / pip / uv / cargo / go / git / curl
+FROM node:22-bookworm
+RUN apt-get update && apt-get install -y --no-install-recommends python3-pip python3-venv golang-go git curl ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN npm i -g @anthropic-ai/claude-code @openai/codex pnpm
+RUN pip install --break-system-packages uv
+RUN curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+ENV PATH=/root/.cargo/bin:$PATH

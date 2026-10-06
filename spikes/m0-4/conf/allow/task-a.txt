@@ -1,0 +1,14 @@
+.anthropic.com
+.claude.ai
+.openai.com
+.chatgpt.com
+.github.com
+.githubusercontent.com
+registry.npmjs.org
+pypi.org
+files.pythonhosted.org
+proxy.golang.org
+sum.golang.org
+index.crates.io
+static.crates.io
+.claude.com

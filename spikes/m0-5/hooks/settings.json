@@ -1,0 +1,9 @@
+{
+  "hooks": {
+    "SessionStart":     [{"hooks":[{"type":"command","command":"/sbx/hooks/status.sh idle"}]}],
+    "UserPromptSubmit": [{"hooks":[{"type":"command","command":"/sbx/hooks/status.sh running"}]}],
+    "PreToolUse":       [{"matcher":"*","hooks":[{"type":"command","command":"/sbx/hooks/status.sh running"}]}],
+    "Stop":             [{"hooks":[{"type":"command","command":"/sbx/hooks/status.sh idle"}]}],
+    "Notification":     [{"hooks":[{"type":"command","command":"/sbx/hooks/status.sh idle"}]}]
+  }
+}

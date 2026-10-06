@@ -1,0 +1,3 @@
+.anthropic.com
+.github.com
+registry.npmjs.org

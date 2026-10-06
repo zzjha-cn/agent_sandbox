@@ -1,0 +1,7 @@
+# spike 运行产物，不入库
+.tokens
+**/conf/passwd
+*.log
+!result.log
+**/work/
+result_*.log

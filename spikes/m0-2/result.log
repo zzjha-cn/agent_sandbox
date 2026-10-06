@@ -1,0 +1,10 @@
+## 预热
+| 场景 | 耗时 | 结果 |
+|---|---|---|
+| Next.js 宿主机原生 (npm ci + build) |   17.6s | rc=0 |
+| Next.js 容器 · node_modules 在 volume |   18.6s | rc=0 |
+| Next.js 容器 · node_modules 在 bind |   31.7s | rc=0 |
+| Go gin 宿主机原生 (go test ./...) |    3.0s | rc=0 |
+| Go gin 容器 · 源码 bind，缓存 volume |   18.8s | rc=1 |
+| git status ×20 宿主机              |    0.2s | rc=0 |
+| git status ×20 容器 (bind)          |    0.5s | rc=0 |
