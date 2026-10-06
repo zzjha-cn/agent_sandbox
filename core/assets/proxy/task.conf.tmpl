@@ -1,0 +1,13 @@
+# task {{.TaskID}}（由 sbx 渲染）
+acl u_{{.ACL}} proxy_auth {{.TaskID}}
+{{- if .Block}}
+acl blk_{{.ACL}} dstdomain "/etc/sbx/block/{{.TaskID}}.txt"
+http_access deny u_{{.ACL}} blk_{{.ACL}}
+{{- end}}
+{{- if .Open}}
+http_access allow u_{{.ACL}}
+{{- else}}
+acl a_{{.ACL}} dstdomain "/etc/sbx/allow/{{.TaskID}}.txt"
+http_access allow u_{{.ACL}} CONNECT SSL_ports a_{{.ACL}}
+http_access allow u_{{.ACL}} a_{{.ACL}}
+{{- end}}

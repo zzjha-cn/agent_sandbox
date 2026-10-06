@@ -1,0 +1,11 @@
+registry.npmjs.org
+.yarnpkg.com
+.npmmirror.com
+pypi.org
+files.pythonhosted.org
+proxy.golang.org
+sum.golang.org
+goproxy.cn
+.githubusercontent.com
+codeload.github.com
+github.com

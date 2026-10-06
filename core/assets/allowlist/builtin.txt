@@ -1,0 +1,6 @@
+.anthropic.com
+.claude.ai
+.claude.com
+.openai.com
+.chatgpt.com
+github.com

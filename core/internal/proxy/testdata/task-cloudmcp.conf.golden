@@ -1,0 +1,6 @@
+# task demo-abc123.t1（由 sbx 渲染）
+acl u_demo_abc123_t1 proxy_auth demo-abc123.t1
+acl a_demo_abc123_t1 dstdomain "/etc/sbx/allow/demo-abc123.t1.txt"
+http_access allow u_demo_abc123_t1 CONNECT SSL_ports a_demo_abc123_t1
+http_access allow u_demo_abc123_t1 a_demo_abc123_t1
+
