@@ -27,7 +27,7 @@
 | **sbx-home** | 所有 Task 共享的 volume，存放 Agent 登录态、会话历史和缓存。 |
 | **依赖遮盖** | 用每个 Task 独立的 named volume 盖住 worktree 内的依赖目录（如 `node_modules`、`.venv`、`target`），避免 Linux 二进制写回宿主机。 |
 | **信任确认（trust）** | 宿主机侧 `~/.sbx/trust/` 记录你确认过的 `.sbx/` 内容哈希。内容变化后拒绝启动 Task，直到执行 `sbx trust`。 |
-| **Task 状态** | `running`（Agent 工作中）/ `idle`（等待输入）/ `stopped`（容器已停止）/ `exited(code\|oom)`（headless 结束或被 OOM 杀掉）。 |
+| **Task 状态** | `running`（Agent 工作中）/ `idle`（等待输入）/ `exited(agent)`（容器还在，但 claude 已退出）/ `stopped`（容器已停止）/ `exited(code\|oom)`（headless 结束或被 OOM 杀掉）。 |
 
 ## 目录与配置布局
 

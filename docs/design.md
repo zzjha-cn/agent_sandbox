@@ -354,6 +354,7 @@ http_access allow u_<id>
   | `PreToolUse` | `running` | 刷新最后活动时间 |
   | `Stop` | `idle` | 回合结束，等待输入 |
   | `Notification` | `idle`，并执行 `on_idle` | 空闲约 60 秒后触发，表示"需要人处理"。**`on_idle` 挂在这个事件上，不挂在 Stop 上**，避免短暂停顿也发通知 |
+  | `SessionEnd` | `exited` | claude 自己退出（Ctrl-D、`/exit`、崩溃）。没有这一条的话，`sbx ls` 会一直停在最后一次写下的 idle（M1 实现后发现） |
   - `status.json` 先写临时文件再 rename；同时追加 `events.log` 方便排查。
   - 不复制宿主机的 hooks。
 - **Claude 首次启动状态的预置**（M0-5：否则交互模式的 TUI 会卡在引导、登录方式选择和 bypass 警告这些对话框上）。每次 Task 启动前幂等写入：

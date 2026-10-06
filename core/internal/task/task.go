@@ -132,8 +132,15 @@ func (t Task) ReadStatus() (*AgentStatus, error) {
 	return &s, nil
 }
 
+// HasPriorSession 报告这个 Task 以前跑过 claude（hooks 写过 events.log），
+// 用于决定重新拉起时要不要带 --continue。
+func (t Task) HasPriorSession() bool {
+	_, err := os.Stat(filepath.Join(t.StateDir(), "events.log"))
+	return err == nil
+}
+
 // Derive 根据容器状态和 status.json 推导 Task 状态：
-// absent / stopped / exited(<code>) / exited(oom) / starting / running / idle。
+// absent / stopped / exited(<code>) / exited(oom) / exited(agent) / starting / running / idle。
 func Derive(st docker.State, exists bool, s *AgentStatus) string {
 	if !exists {
 		return "absent"
@@ -157,6 +164,9 @@ func Derive(st docker.State, exists bool, s *AgentStatus) string {
 	switch s.State {
 	case "running", "idle":
 		return s.State
+	case "exited":
+		// 容器还在，但容器里的 claude 已经退出（tmux 会话里现在是 shell）
+		return "exited(agent)"
 	default:
 		return "starting"
 	}

@@ -158,17 +158,21 @@ sbx run fix-login
 5. 删掉旧的 `status.json`，然后在容器里执行：
    ```
    tmux new-session -d -s agent -x 220 -y 50 \
-     'claude --dangerously-skip-permissions --settings /sbx/gen/settings.sbx.json'
+     'claude --dangerously-skip-permissions --settings /sbx/gen/settings.sbx.json; \
+      printf "\n[sbx] claude 已退出…\n"; exec bash -l'
    ```
    工作目录是 worktree 路径，和宿主机上的路径完全一样。
+   后面那半截是会话保活：claude 退出后窗口里换成一个 shell，窗口不关，tmux 会话也就不会跟着没掉（第 12 幕）。
 6. 冒烟检查最多 30 秒。期间轮询两件事：
    - tmux 画面：如果出现"select login method""trust this folder"之类的对话框，说明预置字段随 claude 版本变了，立即报错，并附上画面的最后 20 行；
-   - `status.json`：claude 启动时触发 `SessionStart` hook，`status.sh` 写入 `{"state":"idle","event":"SessionStart",...}`。sbx 读到这一条，就认为启动成功。
+   - `status.json`：claude 启动时触发 `SessionStart` hook，`status.sh` 写入 `{"state":"idle","event":"SessionStart",...}`。sbx 读到这一条，就认为启动成功；读到 `exited`（`SessionEnd`）则说明 claude 刚起来就退了，立即报错。
 7. 没有加 `--detach`，所以 sbx 执行 `docker exec -it -u agent … tmux attach -t agent`。你看到的就是 claude 的界面。
 
 从敲命令到看到界面大约 20 秒。你输入需求：*"登录页输错密码后没有提示，修一下并加测试，完成后提交。"*
 
-按 `Ctrl-b d` 离开 tmux。claude 继续在容器里运行。
+离开 tmux：按 `Ctrl-b`，松手，再按 `d`。claude 继续在容器里运行。
+
+注意 `Ctrl-D` 不是离开，是**退出 claude**（和 `/exit` 一样）。按错了也不要紧，见第 12 幕。
 
 ---
 
@@ -259,7 +263,7 @@ fix-login   idle    sbx/fix-login   2      4f +86 -7   21m ago      ~/.sbx/workt
 
 | 列 | 怎么算 |
 |---|---|
-| STATUS | 先 `docker inspect` 看容器是否在运行。在运行就读 `status.json` 里的 state；容器已停止就看退出码，137 和 143 显示 stopped，OOM 显示 exited(oom) |
+| STATUS | 先 `docker inspect` 看容器是否在运行。在运行就读 `status.json` 里的 state（claude 已退出时是 `exited(agent)`）；容器已停止就看退出码，137 和 143 显示 stopped，OOM 显示 exited(oom) |
 | AHEAD | `git rev-list --count <base>..sbx/fix-login` |
 | DIFF | `git diff --shortstat <base>...sbx/fix-login`，压缩成"文件数 +新增行 -删除行" |
 | LAST-ACTIVE | `status.json` 里的时间戳 |
@@ -375,6 +379,43 @@ sbx upgrade
 4. 已有的 Task 不受影响：容器的镜像不能原地替换，要 `sbx done` 后重新 `run` 才会用上新版本。
 
 如果你在配置里固定了 `agents.claude.version`，`upgrade` 会拒绝执行，提示你改配置。
+
+---
+
+## 第 12 幕：手滑按了 Ctrl-D
+
+你本来想离开，按成了 `Ctrl-D`。claude 收到 EOF，退出了。
+
+屏幕上出现：
+
+```
+[sbx] claude 已退出。Ctrl-b d 离开容器；sbx run 可以在这个会话里重新拉起。
+
+agent@sbx:/Users/apple/.sbx/worktrees/shop-e76272/fix-login$
+```
+
+发生了什么：
+
+1. claude 退出，但 tmux 窗口跑的命令后面还跟着 `exec bash -l`，所以窗口里换成了一个 shell，**窗口和会话都还在**。你现在可以直接在 worktree 里 `git log`、`git diff`。
+2. claude 退出时触发 `SessionEnd` hook，`status.json` 写成 `{"state":"exited",...}`。
+
+```
+$ sbx ls
+TASK        STATUS         BRANCH          AHEAD  DIFF        LAST-ACTIVE  PATH
+fix-login   exited(agent)  sbx/fix-login   2      4f +86 -7   5s ago       ~/.sbx/worktrees/shop-e76272/fix-login
+```
+
+`exited(agent)` 的意思是：容器还在跑，但里面的 claude 已经退出了。
+
+恢复：
+
+```bash
+sbx run fix-login
+```
+
+sbx 看到会话还在、claude 已退出，就用 `tmux respawn-window -k` 在同一个窗口里重开 claude，并且默认带上 `--continue`，接着刚才那段对话。想重新开一段用 `sbx run fix-login --fresh`。
+
+> 这一条是 M1 验收后发现的：原来 tmux 窗口直接跑 claude，claude 一退窗口就关，会话跟着结束，`sbx attach` 报"会话不存在"，而 `sbx ls` 还显示 idle —— 看上去像是 Task 卡死了。
 
 ---
 

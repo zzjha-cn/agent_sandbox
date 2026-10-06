@@ -200,18 +200,19 @@ agent 容器 ──(Task 网络 --internal)──▶ sbx-proxy:3128 ──(sbx-e
 
 ### 6.1 Agent 状态
 
-`settings.sbx.json` 注册了 5 个 hooks，都调用 `status.sh <state>`。脚本原子写入 `/sbx/state/status.json`，也就是宿主机上的 `state/<ws>/<task>/status.json`，并追加一行到 `events.log`。
+`settings.sbx.json` 注册了 6 个 hooks，都调用 `status.sh <state>`。脚本原子写入 `/sbx/state/status.json`，也就是宿主机上的 `state/<ws>/<task>/status.json`，并追加一行到 `events.log`。
 
 | 事件 | state |
 |---|---|
 | UserPromptSubmit、PreToolUse | running |
 | SessionStart、Stop、Notification | idle |
+| SessionEnd | exited |
 
 ### 6.2 `sbx ls`
 
 | 列 | 来源 |
 |---|---|
-| STATUS | 容器在运行时，取 `status.json` 里的 running 或 idle（还没有就显示 starting）。<br>容器已停止时：退出码 0、137、143 显示 stopped；OOM 显示 exited(oom)；其他显示 exited(n)。<br>容器不存在显示 absent。 |
+| STATUS | 容器在运行时，取 `status.json` 里的 running 或 idle（还没有就显示 starting）；`SessionEnd` 写过 exited 的显示 **exited(agent)**，表示容器还在但 claude 已经退出。<br>容器已停止时：退出码 0、137、143 显示 stopped；OOM 显示 exited(oom)；其他显示 exited(n)。<br>容器不存在显示 absent。 |
 | AHEAD / DIFF | `git rev-list --count base..分支` 和 `git diff --shortstat`，DIFF 显示成 `3f +10 -2` 的形式 |
 | LAST-ACTIVE | `status.json` 的时间 |
 | PATH | worktree 路径 |
@@ -270,15 +271,18 @@ claude 的自动记忆在宿主机上存于 `~/.claude/projects/<key>/memory/`�
 
 ### 7.3 启动 Agent（新建和恢复共用）
 
-1. tmux 会话已经存在：直接返回。
+1. tmux 会话已经存在，并且 claude 还在跑（`status.json` 不是 exited）：直接返回。
 2. 预置脚本（以 agent 用户执行，幂等）：
    - 把"已完成引导""信任此目录""跳过危险模式确认"写进 claude 配置；
    - 把 `~/.claude/{CLAUDE.md,skills,agents,commands}` 软链接到只读挂载的目录。
 3. 导入项目记忆（§6.3）。失败只警告，不中断。
 4. `claude auth status`：没登录就打印登录命令后退出。命令里的代理参数取自 `network.upstream`。
-5. 在 tmux 里启动 `claude --dangerously-skip-permissions --settings /sbx/gen/settings.sbx.json`。
+5. 在 tmux 里启动 claude。会话不存在就 `new-session`，会话还在但 claude 已退出就 `respawn-window -k`（复用同一个窗口，已经 attach 的人不用重进）。
+   - 实际跑的是 `claude … ; printf '[sbx] claude 已退出…'; exec bash -l`。**claude 退出后窗口里留一个 login shell**，否则窗口关闭会连带结束 tmux 会话，Task 就再也 attach 不回去（§7.6）。
+   - 这个 Task 以前跑过 claude（`events.log` 存在）时默认带 `--continue`，接上上次对话；`sbx run --fresh` 可以开新的一段。
 6. 冒烟检查，最多 30 秒：
    - 画面上出现已知对话框：报错，附上最后 20 行画面。这说明预置字段可能随 claude 版本变了。
+   - `status.json` 变成 exited，或者画面出现退出提示：报错，说明 claude 启动后立刻退出了。
    - `status.json` 出现 `SessionStart`：成功。
 
 ### 7.4 run 恢复
@@ -297,11 +301,22 @@ claude 的自动记忆在宿主机上存于 `~/.claude/projects/<key>/memory/`�
 
 | 命令 | 做什么 |
 |---|---|
-| `attach <task>` | `docker exec -it` 进入 tmux 会话；按 `Ctrl-b d` 离开，Agent 继续运行 |
+| `attach <task>` | `docker exec -it` 进入 tmux 会话；按 `Ctrl-b` 松手再按 `d` 离开，Agent 继续运行。claude 已退出时会先提示一句，进去看到的是 shell |
 | `shell <task>` | 在容器里开一个 bash，工作目录是 worktree |
 | `path [task]` | 打印工作目录 |
 | `stop <task>...` | `docker stop -t 10`；之后 `StopIfIdle` |
 | `done <task>...` | 1. 提醒导回记忆<br>2. 检查 worktree 是否有未提交的改动<br>3. 删容器，从代理摘除，删网络，删依赖 volume<br>4. 删 worktree 和 state<br>5. 提示合并命令<br>共享 volume 不删，所以登录态、缓存和记忆都保留 |
+
+### 7.6 claude 退出和会话保活
+
+交互模式下，`Ctrl-D` 和 `/exit` 是 **claude 自己的退出**，不是 tmux 的 detach（detach 是 `Ctrl-b` 松手再按 `d`）。两者很容易混淆，所以 claude 退出必须是可恢复的：
+
+| 层 | 做法 |
+|---|---|
+| tmux 窗口 | 窗口跑的是 `claude … ; printf 提示 ; exec bash -l`。claude 退出后窗口里换成一个 login shell，**窗口不关、会话不死**。如果直接把 claude 当窗口命令，它一退窗口就关，最后一个窗口关掉会话就结束，`attach` 再也进不去 |
+| 状态 | `SessionEnd` hook 把 `status.json` 写成 `exited`，`sbx ls` 显示 `exited(agent)`。否则状态会一直停在最后一次写下的 idle，看上去像还在工作 |
+| 恢复 | `sbx run <task>` 发现会话还在但 claude 已退出，就 `respawn-window -k` 在同一个窗口里重开，默认带 `--continue` 接上这个 Task 的上次对话（`--fresh` 开新的一段） |
+| attach | 会话还在就照常进去；claude 已退出时先提示一句，进去看到的是 shell，可以直接在 worktree 里跑 git |
 
 ---
 

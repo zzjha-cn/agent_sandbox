@@ -64,10 +64,25 @@ func TestSettingsJSON(t *testing.T) {
 	if err := json.Unmarshal(SettingsJSON(), &v); err != nil {
 		t.Fatal(err)
 	}
-	if len(v.Hooks) != 5 || v.Hooks["PreToolUse"][0].Matcher != "*" ||
+	if len(v.Hooks) != 6 || v.Hooks["PreToolUse"][0].Matcher != "*" ||
 		v.Hooks["Stop"][0].Hooks[0].Command != "/sbx/gen/hooks/status.sh idle" ||
-		v.Hooks["UserPromptSubmit"][0].Hooks[0].Command != "/sbx/gen/hooks/status.sh running" {
+		v.Hooks["UserPromptSubmit"][0].Hooks[0].Command != "/sbx/gen/hooks/status.sh running" ||
+		v.Hooks["SessionEnd"][0].Hooks[0].Command != "/sbx/gen/hooks/status.sh exited" {
 		t.Fatalf("%+v", v)
+	}
+}
+
+// claude 退出后窗口必须留下一个 shell，否则 tmux 会话会跟着结束，Task 再也 attach 不回去。
+func TestClaudeCmdKeepsSessionAlive(t *testing.T) {
+	fresh := ClaudeCmd(false)
+	if !strings.HasSuffix(fresh, "exec bash -l") || !strings.Contains(fresh, ExitNotice) {
+		t.Fatalf("fresh: %s", fresh)
+	}
+	if strings.Contains(fresh, "--continue") {
+		t.Fatalf("fresh 不应该带 --continue: %s", fresh)
+	}
+	if !strings.Contains(ClaudeCmd(true), "--continue") {
+		t.Fatalf("continue: %s", ClaudeCmd(true))
 	}
 }
 

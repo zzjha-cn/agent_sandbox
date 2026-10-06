@@ -23,7 +23,7 @@ const smokeTimeout = 30 * time.Second
 
 func (a *App) runCmd() *cobra.Command {
 	var base string
-	var detach bool
+	var detach, fresh bool
 	cmd := &cobra.Command{
 		Use:   "run [task]",
 		Short: "创建或恢复 Task，在沙箱里启动 Agent（省略 task 时用 main）",
@@ -43,11 +43,12 @@ func (a *App) runCmd() *cobra.Command {
 			if a.Verbose {
 				a.logf("生效配置：\n%s", a.Cfg)
 			}
-			return a.run(t, base, detach)
+			return a.run(t, base, detach, fresh)
 		},
 	}
 	cmd.Flags().StringVar(&base, "base", "", "新建分支的起点（默认当前 HEAD）")
 	cmd.Flags().BoolVarP(&detach, "detach", "d", false, "只启动，不 attach")
+	cmd.Flags().BoolVar(&fresh, "fresh", false, "重新拉起 claude 时开一段新对话（默认接上这个 Task 的上次对话）")
 	return cmd
 }
 
@@ -61,7 +62,7 @@ func (u undo) run() {
 	}
 }
 
-func (a *App) run(t task.Task, base string, detach bool) error {
+func (a *App) run(t task.Task, base string, detach bool, fresh bool) error {
 	st, exists, err := a.Docker.Inspect(t.Container())
 	if err != nil {
 		return err
@@ -70,10 +71,10 @@ func (a *App) run(t task.Task, base string, detach bool) error {
 		if base != "" {
 			a.logf("Task %s 已存在，忽略 --base", t.Name)
 		}
-		if err := a.resume(t, st); err != nil {
+		if err := a.resume(t, st, fresh); err != nil {
 			return err
 		}
-	} else if err := a.create(t, base); err != nil {
+	} else if err := a.create(t, base, fresh); err != nil {
 		return err
 	}
 	if detach {
@@ -83,8 +84,8 @@ func (a *App) run(t task.Task, base string, detach bool) error {
 	return a.attach(t)
 }
 
-// resume 处理容器已存在的情况：已停止就启动，tmux 会话不在就补启动。
-func (a *App) resume(t task.Task, st docker.State) error {
+// resume 处理容器已存在的情况：已停止就启动，claude 不在就补拉起。
+func (a *App) resume(t task.Task, st docker.State, fresh bool) error {
 	meta, ok, err := t.ReadMeta()
 	if err != nil {
 		return err
@@ -109,7 +110,7 @@ func (a *App) resume(t task.Task, st docker.State) error {
 			return err
 		}
 	}
-	return a.startAgent(t)
+	return a.startAgent(t, fresh)
 }
 
 func (a *App) hostClaude() agent.HostClaude {
@@ -135,7 +136,7 @@ func (a *App) proxySpec(t task.Task, taskID string) proxy.TaskSpec {
 	}
 }
 
-func (a *App) create(t task.Task, base string) (err error) {
+func (a *App) create(t task.Task, base string, fresh bool) (err error) {
 	if a.Cfg.Network.Proxy != "shared" {
 		return fmt.Errorf("M1 只支持 network.proxy = \"shared\"")
 	}
@@ -253,7 +254,7 @@ func (a *App) create(t task.Task, base string) (err error) {
 
 	// 9. 预置、登录检查、启动 Agent
 	step = "启动 Agent"
-	return a.startAgent(t)
+	return a.startAgent(t, fresh)
 }
 
 func (a *App) prepareWorktree(t task.Task, base string) (string, error) {
@@ -333,9 +334,11 @@ func (a *App) ensureVolumes(t task.Task, tag string, u *undo) error {
 }
 
 // startAgent 预置首次启动状态、检查登录、在 tmux 里拉起 claude 并做冒烟检查。
-func (a *App) startAgent(t task.Task) error {
+// 会话还在但 claude 已经退出时（Ctrl-D、/exit），在原会话里重新拉起。
+func (a *App) startAgent(t task.Task, fresh bool) error {
 	rt := agent.Runtime{Docker: a.Docker, Container: t.Container(), Worktree: t.Worktree()}
-	if rt.HasSession() {
+	hasSession := rt.HasSession()
+	if hasSession && !agentExited(t) {
 		return nil
 	}
 	if out, err := rt.Preseed(); err != nil {
@@ -353,16 +356,33 @@ func (a *App) startAgent(t task.Task) error {
 	if !ok {
 		return errors.New(a.loginHelp(t))
 	}
+	cont := !fresh && t.HasPriorSession()
 	statusFile := filepath.Join(t.StateDir(), "status.json")
 	os.Remove(statusFile)
-	if _, err := rt.StartClaude(); err != nil {
+	if hasSession {
+		a.logf("claude 已退出，正在原会话里重新拉起 …")
+		if err := rt.RespawnClaude(cont); err != nil {
+			return err
+		}
+	} else if _, err := rt.StartClaude(cont); err != nil {
 		return err
+	}
+	if cont {
+		a.logf("接上 Task %s 的上次对话（--continue；要新开一段用 --fresh）", t.Name)
 	}
 	a.logf("等待 claude 就绪 …")
 	return rt.SmokeCheck(smokeTimeout, func() bool {
 		s, err := t.ReadStatus()
 		return err == nil && s != nil && s.Event == "SessionStart"
+	}, func() bool {
+		return agentExited(t)
 	})
+}
+
+// agentExited 报告 hooks 写下的状态是不是"claude 已退出"。
+func agentExited(t task.Task) bool {
+	s, err := t.ReadStatus()
+	return err == nil && s != nil && s.State == "exited"
 }
 
 func (a *App) loginHelp(t task.Task) string {

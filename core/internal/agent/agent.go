@@ -69,6 +69,9 @@ var hookEvents = []struct{ event, state, matcher string }{
 	{"PreToolUse", "running", "*"},
 	{"Stop", "idle", ""},
 	{"Notification", "idle", ""},
+	// claude 退出（Ctrl-D、/exit、崩溃）后把状态标成 exited，
+	// 否则 sbx ls 会一直停在最后一次 hook 写下的 idle。
+	{"SessionEnd", "exited", ""},
 }
 
 // SettingsJSON 生成通过 --settings 注入的 settings.sbx.json。

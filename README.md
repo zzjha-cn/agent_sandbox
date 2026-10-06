@@ -43,9 +43,11 @@ docker run -it --rm -e HOME=/home/agent -v sbx-home:/home/agent \
 ```bash
 cd <你的仓库>
 sbx run fix-login            # 新建 Task：worktree ~/.sbx/worktrees/<ws>/fix-login，分支 sbx/fix-login，进入 claude
-                             # Ctrl-b d 离开（Agent 继续运行）
+                             # 离开：Ctrl-b 松手再按 d（Agent 继续运行）
+                             # 注意 Ctrl-D 是退出 claude，不是离开；退出后会话还在，sbx run 可重新拉起
 sbx run t2 --detach          # 只启动不进入
-sbx ls                       # 状态（running/idle/stopped…）、ahead 提交数、diff、最后活动时间、工作目录
+sbx run fix-login            # claude 退出后再跑一次 = 重新拉起，并接上上次对话（--fresh 则开新对话）
+sbx ls                       # 状态（running/idle/exited(agent)/stopped…）、ahead 提交数、diff、最后活动时间、工作目录
 code "$(sbx path fix-login)"  # Task 的改动在它自己的 worktree 里，不在仓库目录；合并分支后才回到仓库
 sbx attach fix-login         # 回到 Agent 会话
 sbx shell fix-login          # 在容器里开一个 bash

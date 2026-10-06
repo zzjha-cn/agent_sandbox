@@ -25,6 +25,7 @@ func TestDerive(t *testing.T) {
 		{run, true, nil, "starting"},
 		{run, true, &AgentStatus{State: "idle"}, "idle"},
 		{run, true, &AgentStatus{State: "running"}, "running"},
+		{run, true, &AgentStatus{State: "exited"}, "exited(agent)"},
 		{run, true, &AgentStatus{State: "weird"}, "starting"},
 	}
 	for i, c := range cases {

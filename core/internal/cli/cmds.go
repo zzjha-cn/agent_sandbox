@@ -29,7 +29,7 @@ func (a *App) taskArg(args []string) (task.Task, error) {
 func (a *App) attachCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "attach <task>",
-		Short: "进入 Task 的 Agent 会话（tmux；Ctrl-b d 退出而不停止）",
+		Short: "进入 Task 的 Agent 会话（tmux；Ctrl-b 松手再按 d 离开，不会停掉 Agent）",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			t, err := a.taskArg(args)
@@ -58,7 +58,10 @@ func (a *App) attach(t task.Task) error {
 	}
 	rt := agent.Runtime{Docker: a.Docker, Container: t.Container()}
 	if !rt.HasSession() {
-		return fmt.Errorf("Task %s 的 Agent 会话不存在（claude 已退出）；用 sbx run %s 重新拉起", t.Name, t.Name)
+		return fmt.Errorf("Task %s 的 Agent 会话不存在；用 sbx run %s 重新拉起", t.Name, t.Name)
+	}
+	if agentExited(t) {
+		fmt.Fprintf(a.Out, "提示：claude 已经退出，会话里现在是一个 shell。用 sbx run %s 重新拉起（默认接上这个 Task 的上次对话）。\n", t.Name)
 	}
 	return a.Docker.ExecInteractive(t.Container(), docker.ExecOpts{User: "agent"}, "tmux", "attach", "-t", agent.Session)
 }
