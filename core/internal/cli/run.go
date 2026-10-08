@@ -22,7 +22,7 @@ import (
 const smokeTimeout = 30 * time.Second
 
 func (a *App) runCmd() *cobra.Command {
-	var base string
+	var base, netMode string
 	var detach, fresh bool
 	cmd := &cobra.Command{
 		Use:   "run [task]",
@@ -43,12 +43,19 @@ func (a *App) runCmd() *cobra.Command {
 			if a.Verbose {
 				a.logf("生效配置：\n%s", a.Cfg)
 			}
+			if netMode != "" {
+				a.Cfg.Network.Mode = netMode
+				if err := a.Cfg.Validate(); err != nil {
+					return err
+				}
+			}
 			return a.run(t, base, detach, fresh)
 		},
 	}
 	cmd.Flags().StringVar(&base, "base", "", "新建分支的起点（默认当前 HEAD）")
 	cmd.Flags().BoolVarP(&detach, "detach", "d", false, "只启动，不 attach")
 	cmd.Flags().BoolVar(&fresh, "fresh", false, "重新拉起 claude 时开一段新对话（默认接上这个 Task 的上次对话）")
+	cmd.Flags().StringVar(&netMode, "net", "", "本次的网络模式：open（默认，全部放行）或 allowlist（只放行白名单）")
 	return cmd
 }
 
@@ -101,7 +108,7 @@ func (a *App) resume(t task.Task, st docker.State, fresh bool) error {
 	if _, err := p.AttachTask(a.proxySpec(t, meta.TaskID)); err != nil {
 		return err
 	}
-	if err := agent.RenderGen(t.GenDir(), a.hostClaude()); err != nil {
+	if err := agent.RenderGen(t.GenDir(), a.hostClaude(), !a.Cfg.Network.CloudMCP); err != nil {
 		return err
 	}
 	if !st.Running {
@@ -206,7 +213,7 @@ func (a *App) create(t task.Task, base string, fresh bool) (err error) {
 	// 6. gen 目录
 	step = "渲染生成文件"
 	host := a.hostClaude()
-	if err := agent.RenderGen(t.GenDir(), host); err != nil {
+	if err := agent.RenderGen(t.GenDir(), host, !a.Cfg.Network.CloudMCP); err != nil {
 		return err
 	}
 
@@ -231,7 +238,7 @@ func (a *App) create(t task.Task, base string, fresh bool) (err error) {
 			DepMasks: a.Cfg.Deps.Mask, DepVolume: t.DepVolume,
 			StateDir: t.StateDir(), GenDir: t.GenDir(), Host: host,
 		}),
-		Env:     agent.Env(agent.EnvInput{ProxyURL: proxyURL, GitName: name, GitMail: mail, WS: t.WS.ID, Task: t.Name}),
+		Env:     agent.Env(agent.EnvInput{ProxyURL: proxyURL, GitName: name, GitMail: mail, WS: t.WS.ID, Task: t.Name, TZ: agent.HostTZ()}),
 		Workdir: t.Worktree(),
 		Resources: docker.Resources{
 			CPUs: a.Cfg.Resources.CPUs, Memory: a.Cfg.Resources.Memory, Pids: a.Cfg.Resources.Pids,

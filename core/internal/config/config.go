@@ -51,10 +51,12 @@ func Default() Config {
 		DefaultAgent: "claude",
 		Profile:      "web-go",
 		MaxRunning:   3,
-		Network:      Network{Proxy: "shared", Mode: "allowlist"},
-		Resources:    Resources{CPUs: 2, Memory: "3g", Pids: 1024},
-		Deps:         Deps{Mask: []string{"node_modules"}},
-		Agents:       map[string]Agent{"claude": {Version: "latest"}},
+		// 默认不拦截出网（2026-10-08 决定，ADR 0005 修订）：白名单改成按需开启，
+		// 写 network.mode = "allowlist" 或 sbx run --net allowlist 才生效。
+		Network:   Network{Proxy: "shared", Mode: "open"},
+		Resources: Resources{CPUs: 2, Memory: "3g", Pids: 1024},
+		Deps:      Deps{Mask: []string{"node_modules"}},
+		Agents:    map[string]Agent{"claude": {Version: "latest"}},
 	}
 }
 

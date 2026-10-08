@@ -1,0 +1,193 @@
+package cli
+
+import (
+	"fmt"
+	"path/filepath"
+	"strings"
+	"text/tabwriter"
+	"time"
+
+	"github.com/spf13/cobra"
+
+	"sandx/internal/config"
+	"sandx/internal/proxy"
+)
+
+func (a *App) netCmd() *cobra.Command {
+	cmd := &cobra.Command{Use: "net", Short: "查看和调整 Task 的出网情况"}
+	cmd.AddCommand(a.netDeniedCmd(), a.netAllowCmd())
+	return cmd
+}
+
+func (a *App) netAllowCmd() *cobra.Command {
+	var project bool
+	cmd := &cobra.Command{
+		Use:   "allow <host>...",
+		Short: "把域名加进白名单（写入 ~/.sbx/config.toml），并对运行中的 Task 热加载",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if project {
+				return fmt.Errorf("--project 需要项目层配置（M2-1），还没实现；现在只能写个人全局配置")
+			}
+			if err := a.load(); err != nil {
+				return err
+			}
+			path := filepath.Join(a.Home, "config.toml")
+			added, err := config.AddAllow(path, args)
+			if err != nil {
+				return err
+			}
+			if len(added) == 0 {
+				fmt.Fprintln(a.Out, "都已经在白名单里了，没有改动")
+				return nil
+			}
+			fmt.Fprintf(a.Out, "已加入 %s：%s\n", path, strings.Join(added, "、"))
+			if err := a.loadConfig(); err != nil { // 重新读，下面下发的是新名单
+				return err
+			}
+			n, err := a.reloadAllow()
+			if err != nil {
+				return err
+			}
+			if n > 0 {
+				fmt.Fprintf(a.Out, "已对 %d 个运行中的 Task 热加载，不用重启\n", n)
+			}
+			if a.Cfg.Network.Mode == "open" {
+				fmt.Fprintln(a.Out, "提示：当前 network.mode = \"open\"，本来就不拦截；白名单只在 allowlist 模式下起作用")
+			}
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&project, "project", false, "写进项目配置（待 M2-1）")
+	return cmd
+}
+
+// reloadAllow 把新的白名单下发给当前 Workspace 里所有运行中的 Task，并让 squid 热加载。
+func (a *App) reloadAllow() (int, error) {
+	names, err := a.taskNames()
+	if err != nil {
+		return 0, err
+	}
+	p := a.proxy()
+	n := 0
+	for _, name := range names {
+		t, err := a.task(name)
+		if err != nil {
+			continue
+		}
+		st, exists, err := a.Docker.Inspect(t.Container())
+		if err != nil || !exists || !st.Running {
+			continue
+		}
+		meta, ok, _ := t.ReadMeta()
+		taskID := t.ID()
+		if ok && meta.TaskID != "" {
+			taskID = meta.TaskID
+		}
+		if _, err := p.AttachTask(a.proxySpec(t, taskID)); err != nil {
+			return n, err
+		}
+		n++
+	}
+	return n, nil
+}
+
+func (a *App) netDeniedCmd() *cobra.Command {
+	var all bool
+	var since time.Duration
+	cmd := &cobra.Command{
+		Use:   "denied [task]",
+		Short: "列出被代理拒绝的域名（省略 task 时统计当前 Workspace 的全部 Task）",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := a.load(); err != nil {
+				return err
+			}
+			// 日志里的用户名是 TaskID（<ws>.<task>）。省略 task 时按 ws 前缀过滤。
+			taskID, prefix := "", a.WS.ID+"."
+			if len(args) == 1 {
+				t, err := a.task(args[0])
+				if err != nil {
+					return err
+				}
+				taskID = t.ID()
+			}
+			entries, err := a.proxy().AccessLog()
+			if err != nil {
+				return fmt.Errorf("读不到 sbx-proxy 的日志（代理没在运行？）：%w", err)
+			}
+			var from time.Time
+			if since > 0 {
+				from = time.Now().Add(-since)
+			}
+			rows := proxy.SummarizeDenied(filterWS(entries, taskID, prefix), taskID, from, proxy.PolicyList())
+			return a.printDenied(rows, all, since)
+		},
+	}
+	cmd.Flags().BoolVar(&all, "all", false, "连策略拦截、已知遥测和认证失败一起显示")
+	cmd.Flags().DurationVar(&since, "since", 0, "只看最近这段时间，例如 2h（默认全部）")
+	return cmd
+}
+
+// filterWS 在没有指定 task 时，把范围限制在当前 Workspace 的 Task 上。
+func filterWS(entries []proxy.Entry, taskID, prefix string) []proxy.Entry {
+	if taskID != "" {
+		return entries
+	}
+	out := entries[:0:0]
+	for _, e := range entries {
+		if len(e.TaskID) > len(prefix) && e.TaskID[:len(prefix)] == prefix {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+func (a *App) printDenied(rows []proxy.DeniedHost, all bool, since time.Duration) error {
+	var shown []proxy.DeniedHost
+	hidden := map[proxy.Kind]int{}
+	notAllowed := 0
+	for _, r := range rows {
+		if r.Kind == proxy.KindNotAllowed {
+			notAllowed++
+		}
+		if all || r.Kind == proxy.KindNotAllowed {
+			shown = append(shown, r)
+		} else {
+			hidden[r.Kind] += r.Count
+		}
+	}
+	scope := "全部时间"
+	if since > 0 {
+		scope = "最近 " + since.String()
+	}
+	if len(shown) == 0 {
+		fmt.Fprintf(a.Out, "没有被拒的请求（%s）\n", scope)
+	} else {
+		w := tabwriter.NewWriter(a.Out, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(w, "HOST\tCOUNT\tLAST\tKIND\tTASK")
+		for _, r := range shown {
+			task := "-"
+			if len(r.Tasks) > 0 {
+				task = r.Tasks[0]
+				if len(r.Tasks) > 1 {
+					task = fmt.Sprintf("%s 等 %d 个", task, len(r.Tasks))
+				}
+			}
+			fmt.Fprintf(w, "%s\t%d\t%s\t%s\t%s\n", r.Host, r.Count, humanAgo(time.Since(r.Last)), r.Kind, task)
+		}
+		if err := w.Flush(); err != nil {
+			return err
+		}
+	}
+	for _, k := range []proxy.Kind{proxy.KindPolicy, proxy.KindAuth} {
+		if n := hidden[k]; n > 0 {
+			fmt.Fprintf(a.Out, "另有 %s %d 次（--all 查看）\n", k, n)
+		}
+	}
+	// 只有"不在白名单"那一类才需要你决定放不放行；策略拦截和认证失败不给这个建议。
+	if notAllowed > 0 {
+		fmt.Fprintln(a.Out, "要放行：在 ~/.sbx/config.toml 的 [network] 里加 allow = [\"<host>\"]，然后重新 sbx run")
+	}
+	return nil
+}

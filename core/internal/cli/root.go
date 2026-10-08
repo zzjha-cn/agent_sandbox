@@ -45,7 +45,7 @@ func Execute() int {
 		},
 	}
 	root.PersistentFlags().BoolVarP(&app.Verbose, "verbose", "v", false, "打印执行的 docker 和 git 命令")
-	root.AddCommand(app.runCmd(), app.attachCmd(), app.shellCmd(), app.stopCmd(), app.lsCmd(), app.pathCmd(), app.doneCmd(), app.memoryCmd(), app.upgradeCmd())
+	root.AddCommand(app.runCmd(), app.attachCmd(), app.shellCmd(), app.stopCmd(), app.lsCmd(), app.pathCmd(), app.doneCmd(), app.memoryCmd(), app.upgradeCmd(), app.netCmd())
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(app.Err, "sbx:", err)
 		return 1

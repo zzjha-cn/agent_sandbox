@@ -5,4 +5,4 @@ state="$1"; dir="${SBX_STATE_DIR:-/sbx/state}"; mkdir -p "$dir"
 ev=$(jq -r '.hook_event_name // "?"' 2>/dev/null || echo "?")
 printf '{"state":"%s","event":"%s","ts":%s}\n' "$state" "$ev" "$(date +%s)" > "$dir/.status.tmp"
 mv -f "$dir/.status.tmp" "$dir/status.json"
-echo "$(date +%T) $state $ev" >> "$dir/events.log"
+echo "$(date +'%F %T %z') $state $ev" >> "$dir/events.log"

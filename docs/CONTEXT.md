@@ -22,7 +22,7 @@
 | **Agent 层** | `sbx` 自动叠加在 Profile 之上的固定层：claude / codex CLI、tmux、git、非 root 用户、proxy 环境变量、入口脚本、状态 hooks。 |
 | **派生镜像** | Profile + Agent 层构建出的镜像，命名为 `sbx/<profile>:<hash>`。 |
 | **Egress Proxy** | 独立的 Squid 容器，是 Sandbox 唯一的出网通道，负责白名单放行和访问日志。有两种部署：**shared**（默认，全局一个，通过代理认证区分 Task）和 **dedicated**（每个 Task 一个 sidecar）。 |
-| **网络模式** | `allowlist`（默认，按域名白名单放行）或 `open`（全部放行）。两种模式都经过 Egress Proxy。 |
+| **网络模式** | `open`（**默认**，全部放行）或 `allowlist`（只放行白名单）。两种模式都经过 Egress Proxy；策略拦截层在两种模式下都生效。默认值 2026-10-08 从 allowlist 改过来（ADR 0005 修订）。 |
 | **白名单层** | 内置层（LLM API 和 Agent 认证）+ 语言栈预设层（包源、镜像）+ 项目层。三层取并集，再减去**策略拦截层**（默认包含云端 MCP，ADR 0015）。 |
 | **sbx-home** | 所有 Task 共享的 volume，存放 Agent 登录态、会话历史和缓存。 |
 | **依赖遮盖** | 用每个 Task 独立的 named volume 盖住 worktree 内的依赖目录（如 `node_modules`、`.venv`、`target`），避免 Linux 二进制写回宿主机。 |
@@ -52,6 +52,8 @@
 | `sbx run [task]` | 创建或恢复 Task，在容器内的 tmux 里启动 Agent TUI |
 | `sbx run <task> -p "..."` | headless 模式运行一个 prompt，输出写进 Task 日志 |
 | `sbx attach <task>` | 接入 Task 的 tmux 会话 |
+| `sbx net denied [task]` | 按域名列出被代理拒绝的请求 |
+| `sbx net allow <host>...` | 把域名加进白名单并热加载 |
 | `sbx ls` | 列出 Task：状态、分支、提交数和 diff 统计、最后活动时间、网络被拒次数 |
 | `sbx port <task> <port>` | 把容器端口映射到宿主机的随机空闲端口 |
 | `sbx net denied [task]` / `sbx net allow <host>` | 查看被拒请求；把域名加进白名单 |

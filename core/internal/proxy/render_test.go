@@ -52,15 +52,6 @@ func TestBuiltinLists(t *testing.T) {
 	}
 }
 
-func contains(l []string, s string) bool {
-	for _, x := range l {
-		if x == s {
-			return true
-		}
-	}
-	return false
-}
-
 func TestACLName(t *testing.T) {
 	if got := ACLName("my-repo-abc123.fix-login"); got != "my_repo_abc123_fix_login" {
 		t.Fatal(got)

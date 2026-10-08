@@ -75,7 +75,10 @@ var hookEvents = []struct{ event, state, matcher string }{
 }
 
 // SettingsJSON 生成通过 --settings 注入的 settings.sbx.json。
-func SettingsJSON() []byte {
+// blockCloudMCP 为真时写入 disableClaudeAiConnectors：代理那边已经拦了
+// mcp-proxy.anthropic.com（ADR 0015），不从源头关掉的话 claude 会反复重试，
+// 实测一分钟内撞出三百多次 403（R11）。
+func SettingsJSON(blockCloudMCP bool) []byte {
 	hooks := map[string]any{}
 	for _, h := range hookEvents {
 		entry := map[string]any{"hooks": []any{map[string]string{
@@ -86,16 +89,20 @@ func SettingsJSON() []byte {
 		}
 		hooks[h.event] = []any{entry}
 	}
-	b, _ := json.MarshalIndent(map[string]any{"hooks": hooks}, "", "  ")
+	out := map[string]any{"hooks": hooks}
+	if blockCloudMCP {
+		out["disableClaudeAiConnectors"] = true
+	}
+	b, _ := json.MarshalIndent(out, "", "  ")
 	return append(b, '\n')
 }
 
 // RenderGen 原子写入 gen 目录（容器内只读挂载到 /sbx/gen）。
-func RenderGen(genDir string, h HostClaude) error {
+func RenderGen(genDir string, h HostClaude, blockCloudMCP bool) error {
 	if err := fsutil.AtomicWrite(filepath.Join(genDir, "hooks", "status.sh"), assets.Read("agent-layer/hooks/status.sh"), 0o755); err != nil {
 		return err
 	}
-	if err := fsutil.AtomicWrite(filepath.Join(genDir, "settings.sbx.json"), SettingsJSON(), 0o644); err != nil {
+	if err := fsutil.AtomicWrite(filepath.Join(genDir, "settings.sbx.json"), SettingsJSON(blockCloudMCP), 0o644); err != nil {
 		return err
 	}
 	md := filepath.Join(genDir, "host-claude", "CLAUDE.md")
@@ -153,6 +160,7 @@ type EnvInput struct {
 	ProxyURL         string
 	GitName, GitMail string
 	WS, Task         string
+	TZ               string // 宿主机时区名，空则留给容器默认（UTC）
 }
 
 // Env 生成 agent 容器的环境变量。
@@ -163,6 +171,11 @@ func Env(in EnvInput) []string {
 		"NO_PROXY=localhost,127.0.0.1", "no_proxy=localhost,127.0.0.1",
 		"SBX_WS=" + in.WS, "SBX_TASK=" + in.Task,
 	}
+	// 容器默认 UTC，和宿主机差几个小时。events.log、git 提交时间、构建日志
+	// 都会对不上，事后判读很容易读错（实测差 8 小时）。镜像里已经有 tzdata。
+	if in.TZ != "" {
+		env = append(env, "TZ="+in.TZ)
+	}
 	if in.GitName != "" {
 		env = append(env, "GIT_AUTHOR_NAME="+in.GitName, "GIT_COMMITTER_NAME="+in.GitName)
 	}
@@ -170,4 +183,20 @@ func Env(in EnvInput) []string {
 		env = append(env, "GIT_AUTHOR_EMAIL="+in.GitMail, "GIT_COMMITTER_EMAIL="+in.GitMail)
 	}
 	return env
+}
+
+// HostTZ 返回宿主机的时区名（如 Asia/Shanghai）。取不到时返回空字符串。
+// macOS 的 /etc/localtime 指向 /var/db/timezone/zoneinfo/<zone>，Linux 指向 /usr/share/zoneinfo/<zone>。
+func HostTZ() string {
+	if tz := os.Getenv("TZ"); tz != "" {
+		return tz
+	}
+	link, err := os.Readlink("/etc/localtime")
+	if err != nil {
+		return ""
+	}
+	if _, zone, ok := strings.Cut(link, "zoneinfo/"); ok {
+		return zone
+	}
+	return ""
 }

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -60,9 +61,20 @@ func TestSettingsJSON(t *testing.T) {
 			Matcher string `json:"matcher"`
 			Hooks   []struct{ Type, Command string }
 		}
+		DisableConnectors bool `json:"disableClaudeAiConnectors"`
 	}
-	if err := json.Unmarshal(SettingsJSON(), &v); err != nil {
+	if err := json.Unmarshal(SettingsJSON(true), &v); err != nil {
 		t.Fatal(err)
+	}
+	if !v.DisableConnectors {
+		t.Fatal("blockCloudMCP 时必须写 disableClaudeAiConnectors")
+	}
+	var open struct {
+		DisableConnectors bool `json:"disableClaudeAiConnectors"`
+	}
+	json.Unmarshal(SettingsJSON(false), &open)
+	if open.DisableConnectors {
+		t.Fatal("cloud_mcp=true 时不应该写 disableClaudeAiConnectors")
 	}
 	if len(v.Hooks) != 6 || v.Hooks["PreToolUse"][0].Matcher != "*" ||
 		v.Hooks["Stop"][0].Hooks[0].Command != "/sbx/gen/hooks/status.sh idle" ||
@@ -150,7 +162,7 @@ func TestInspectHostClaude(t *testing.T) {
 		t.Fatal(h.Warnings)
 	}
 	gen := filepath.Join(dir, "gen")
-	if err := RenderGen(gen, h); err != nil {
+	if err := RenderGen(gen, h, true); err != nil {
 		t.Fatal(err)
 	}
 	if b, _ := os.ReadFile(filepath.Join(gen, "host-claude", "CLAUDE.md")); string(b) != "hi" {
@@ -158,5 +170,18 @@ func TestInspectHostClaude(t *testing.T) {
 	}
 	if st, _ := os.Stat(filepath.Join(gen, "hooks", "status.sh")); st.Mode().Perm()&0o111 == 0 {
 		t.Fatal("status.sh not executable")
+	}
+}
+
+func TestEnvTZ(t *testing.T) {
+	env := Env(EnvInput{ProxyURL: "http://p", WS: "ws", Task: "t", TZ: "Asia/Shanghai"})
+	if !slices.Contains(env, "TZ=Asia/Shanghai") {
+		t.Fatalf("TZ 没注入：%v", env)
+	}
+	// 取不到宿主机时区时不要写一个空的 TZ，否则容器里反而变成 UTC 以外的未定义行为
+	for _, e := range Env(EnvInput{ProxyURL: "http://p"}) {
+		if strings.HasPrefix(e, "TZ=") {
+			t.Fatalf("TZ 为空时不该出现：%v", e)
+		}
 	}
 }

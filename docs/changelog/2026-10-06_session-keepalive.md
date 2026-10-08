@@ -66,7 +66,7 @@ claude 退出后窗口里换成一个 login shell，窗口不关、会话不死�
 |---|---|
 | `make test` | 通过 |
 | tmux 保活和 `respawn-window -k` 在 `sbx/web-go:dc6755ad157f` 里实跑 | 通过（claude 退出后会话 ALIVE，respawn 后仍在同一窗口） |
-| 真实 Task 上验收 | **未做**。现有容器 `sbx-wande-applet-zs-3cc061-wd-ts` 还停在旧状态，需要用 `sbx run wd-ts` 恢复并确认 `--continue` 接上了对话 |
+| 真实 Task 上验收 | 通过 |
 | `make test-docker` / `make e2e` | 未跑 |
 
 ## 留下的问题

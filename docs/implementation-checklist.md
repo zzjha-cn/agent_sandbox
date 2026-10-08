@@ -108,13 +108,13 @@
 - [ ] **M2-5** 测试：修改 `sandbox.toml` 或 `.sbx/Dockerfile` 后，`run` 会被拒绝；执行 `trust` 之后可以运行；已经在跑的 Task 不受影响。
 
 ### 网络
-- [ ] **M2-6** open 模式：`--net open` 和配置项 `network.mode`；shared 模式下生成 open 片段。
+- [x] **M2-6** open 模式：`--net open` 和配置项 `network.mode`；shared 模式下生成 open 片段。**默认值已改为 `open`**（2026-10-08，ADR 0005 修订）。
 - [ ] **M2-7** dedicated 模式：sidecar 的创建和销毁，`--proxy dedicated` 和配置项 `network.proxy`。
 - [ ] **M2-8** 上游代理：`network.upstream` 对应 `cache_peer`；Linux 上给 squid 容器加 `--add-host host-gateway`。
 - [ ] **M2-9** 项目层白名单 `network.allow`。
-- [ ] **M2-10** `sbx net denied [task]`：解析 access.log，shared 模式下按用户名过滤；**分三类**统计：不在白名单（默认展示）/ 策略拦截和遥测（`--all`）/ 407 认证失败（§6.5）。
-- [ ] **M2-10a** `network.cloud_mcp` 和 `--cloud-mcp` 解除云端 MCP 拦截（ADR 0015）；调研能从源头关闭 claude.ai MCP 加载的官方开关（R11）。
-- [ ] **M2-11** `sbx net allow <host> [--project|--personal]`：写入配置；写的是项目层时提示需要 trust；对运行中的 proxy 执行 reconfigure。
+- [x] **M2-10** `sbx net denied [task]`：解析 access.log，shared 模式下按用户名过滤；**分三类**统计：不在白名单（默认展示）/ 策略拦截和遥测（`--all`）/ 407 认证失败（§6.5）。
+- [ ] **M2-10a** `network.cloud_mcp` 和 `--cloud-mcp` 解除云端 MCP 拦截（ADR 0015）。<br>R11 已解决：`cloud_mcp = false`（默认）时在注入的 settings 里写 `disableClaudeAiConnectors: true`，claude 不再去取云端连接器，重试风暴消失。`--cloud-mcp` 命令行开关还没做。
+- [x] **M2-11** `sbx net allow <host>...`：写入个人全局配置（保留注释和排版），对运行中的 Task 重新下发白名单并 reconfigure。`--project` 待 M2-1 的项目层配置，当前会明确报错。
 
 ### 认证
 - [ ] **M2-12** `sbx login claude|codex`：按 M0-1 的结论实现。

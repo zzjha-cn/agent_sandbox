@@ -1,0 +1,6 @@
+# 已知遥测端点。不放行，只用于 sbx net denied 的分类：
+# 被拒了也不影响 Agent 干活，默认不展示（design §6.5）。
+.datadoghq.com
+.statsig.com
+statsig.anthropic.com
+.sentry.io

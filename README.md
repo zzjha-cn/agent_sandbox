@@ -2,7 +2,9 @@
 
 在容器沙箱里运行 Claude Code 的 Task 运行时。设计见 [docs/design.md](docs/design.md)，术语见 [docs/CONTEXT.md](docs/CONTEXT.md)。
 
-当前进度：M1（MVP）。支持 `run / attach / shell / stop / ls / done`，内置 Profile 只有 `web-go`，网络只有 shared proxy 加 allowlist 模式。
+当前进度：M1（MVP）加 M2 的一部分。支持 `run / attach / shell / stop / ls / path / done / memory / upgrade / net`，内置 Profile 只有 `web-go`，网络只有 shared proxy。
+
+**网络默认不拦截**（`network.mode = "open"`，2026-10-08 改，ADR 0005 修订）。要按白名单放行就在配置里写 `mode = "allowlist"`，或者 `sbx run <task> --net allowlist`。两种模式都走 Squid，所以 `sbx net denied` 的日志一直有；云端 MCP 的策略拦截在两种模式下都生效。
 
 ## 首次使用
 
@@ -54,6 +56,8 @@ sbx shell fix-login          # 在容器里开一个 bash
 sbx stop fix-login           # 停止容器，保留一切；sbx run 可恢复
 sbx done fix-login           # 结束：清理容器/网络/依赖 volume/worktree/state，保留分支
 git merge sbx/fix-login      # 在主仓库里合并
+sbx net denied               # Agent 被代理拦了什么（--all 看全部分类，--since 2h 限时间）
+sbx net allow <host>         # 放行一个域名，并对运行中的 Task 热加载
 sbx memory pull              # 把沙箱里新记的项目记忆导回宿主机（先看差异再确认）
 sbx upgrade                  # 升级沙箱里的 claude（容器里不会自动更新）；新建的 Task 生效
 ```

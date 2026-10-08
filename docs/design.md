@@ -219,6 +219,8 @@ Workspace (git 仓库) 1 ──── * Task 1 ──── 1 Sandbox
 
 ## 6. 网络（ADR 0005、0014）
 
+> **2026-10-08 修订**：`network.mode` 的默认值从 `allowlist` 改成 `open`（ADR 0005 修订）。白名单改成按需开启：`network.mode = "allowlist"` 或 `sbx run --net allowlist`。策略拦截层（云端 MCP）在两种模式下都生效。
+
 ### 6.1 拓扑
 
 - `sbx-<ws>-<task>-net`：用 `docker network create --internal` 创建，**没有外部路由**。agent 容器只接入这个网络。
@@ -326,7 +328,7 @@ http_access allow u_<id>
   - **不在白名单**：`TCP_DENIED/403`，且域名不属于策略拦截层或已知遥测，这是**默认展示的唯一一类**。
   - **策略拦截 / 已知遥测**：云端 MCP（被拦后会持续重试，实测一轮 94 次）、`*.datadoghq.com` 等。默认隐藏，`--all` 时才显示。
   - **认证失败**：`TCP_DENIED/407`。有的客户端会先不带凭据试一次再重发，正常情况下会有少量；数量很大才说明配置有问题。
-- `sbx net denied [task]` 列出被拒的域名、次数和最近时间。
+- `sbx net denied [task]` 列出被拒的域名、次数和最近时间（M1 之后实现：`--all` 显示全部三类，`--since 2h` 限定时间窗；省略 task 时统计当前 Workspace 的全部 Task）。
 - `sbx net allow <host> [--project|--personal]` 把域名写进对应层的配置；如果写的是项目层，会触发信任确认（§9），然后对运行中的 proxy 执行 reconfigure。
 
 ---
@@ -355,6 +357,8 @@ http_access allow u_<id>
   | `Stop` | `idle` | 回合结束，等待输入 |
   | `Notification` | `idle`，并执行 `on_idle` | 空闲约 60 秒后触发，表示"需要人处理"。**`on_idle` 挂在这个事件上，不挂在 Stop 上**，避免短暂停顿也发通知 |
   | `SessionEnd` | `exited` | claude 自己退出（Ctrl-D、`/exit`、崩溃）。没有这一条的话，`sbx ls` 会一直停在最后一次写下的 idle（M1 实现后发现） |
+
+  同一个文件里还写 **`disableClaudeAiConnectors: true`**（`network.cloud_mcp = false` 时，也就是默认）：代理拦掉 `mcp-proxy.anthropic.com` 之后 claude 会反复重试，实测一分钟内撞出 321 次 403。这个键从源头关掉云端连接器的拉取，官方文档注明它"`true` 在任何层都生效"，所以注入层写就够了（R11）。
   - `status.json` 先写临时文件再 rename；同时追加 `events.log` 方便排查。
   - 不复制宿主机的 hooks。
 - **Claude 首次启动状态的预置**（M0-5：否则交互模式的 TUI 会卡在引导、登录方式选择和 bypass 警告这些对话框上）。每次 Task 启动前幂等写入：
@@ -468,7 +472,8 @@ memory = "4g"                 # 覆盖个人全局默认值（默认 3g）
 | `sbx shell <task>` | 在 Task 容器里打开一个 bash |
 | `sbx logs <task>` | 查看 `run.log` |
 | `sbx port <task> <port>` | 映射到宿主机 `127.0.0.1` 上的随机空闲端口并打印地址（实现方式：在 egress 网络上起一个 socat 转发容器，或重建 agent 容器） |
-| `sbx net denied [task]` / `sbx net allow <host> [--project\|--personal]` | 见 §6.4 |
+| `sbx run ... [--net open\|allowlist]` | 本次的网络模式，覆盖配置 |
+| `sbx net denied [task]` / `sbx net allow <host>...` | 见 §6.5。`--project` 待 M2-1 |
 | `sbx login claude\|codex` | 见 §7.1 |
 | `sbx trust` | 见 §9.3 |
 | `sbx upgrade` | 重建 Agent 层；已有的 Task 下次启动时生效 |
@@ -569,4 +574,4 @@ docs/
 | R7 | `sbx port` 的实现方式（转发容器还是重建容器） | 实现复杂度 | M3 实现时决定 |
 | R9 | Claude Code 的内部状态字段（引导、bypass 警告）随版本变化 | 交互模式卡在对话框上，无人值守失效 | 升级时和 doctor 里做冒烟测试；出现问题时退回 headless 模式 |
 | R10 | Docker VM 内存（8GB）不足以支撑 `max_running × memory` | 并发高峰时 VM 级 OOM | ✅ 已决定：VM 调到 10GB，每个 Task 3g × 3；超出时给出警告 |
-| R11 | 云端 MCP 被拦截后 claude 持续重试 | 日志噪音，有少量开销 | `net denied` 分类隐藏；M2 查找能从源头关闭的官方开关 |
+| R11 | 云端 MCP 被拦截后 claude 持续重试 | 日志噪音，有少量开销 | ✅ 已解除：官方开关是 settings 里的 `disableClaudeAiConnectors`，`cloud_mcp = false` 时由 sbx 注入；`net denied` 仍然把这类归到"策略拦截/遥测"并默认隐藏 |

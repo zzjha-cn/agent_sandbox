@@ -208,6 +208,8 @@ agent 容器 ──(Task 网络 --internal)──▶ sbx-proxy:3128 ──(sbx-e
 | SessionStart、Stop、Notification | idle |
 | SessionEnd | exited |
 
+同一个文件里还有 `disableClaudeAiConnectors: true`（`network.cloud_mcp` 为 false 时，也就是默认）：代理拦掉云端 MCP 之后 claude 会反复重试，这个键从源头关掉连接器的拉取。
+
 ### 6.2 `sbx ls`
 
 | 列 | 来源 |
@@ -304,6 +306,7 @@ claude 的自动记忆在宿主机上存于 `~/.claude/projects/<key>/memory/`�
 | `attach <task>` | `docker exec -it` 进入 tmux 会话；按 `Ctrl-b` 松手再按 `d` 离开，Agent 继续运行。claude 已退出时会先提示一句，进去看到的是 shell |
 | `shell <task>` | 在容器里开一个 bash，工作目录是 worktree |
 | `path [task]` | 打印工作目录 |
+| `net denied [task]` | 从 `sbx-proxy` 的 access.log 里按域名聚合被拒请求。默认只显示**不在白名单**的那一类；`--all` 连策略拦截/已知遥测和 407 认证失败一起显示；`--since 2h` 限定时间窗。省略 task 时统计当前 Workspace 的全部 Task |
 | `stop <task>...` | `docker stop -t 10`；之后 `StopIfIdle` |
 | `done <task>...` | 1. 提醒导回记忆<br>2. 检查 worktree 是否有未提交的改动<br>3. 删容器，从代理摘除，删网络，删依赖 volume<br>4. 删 worktree 和 state<br>5. 提示合并命令<br>共享 volume 不删，所以登录态、缓存和记忆都保留 |
 

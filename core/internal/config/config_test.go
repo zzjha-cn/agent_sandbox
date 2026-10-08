@@ -15,7 +15,7 @@ func TestDefaultWhenMissing(t *testing.T) {
 	if cfg.Resources.Memory != "3g" || cfg.Resources.CPUs != 2 || cfg.Resources.Pids != 1024 || cfg.MaxRunning != 3 {
 		t.Fatalf("%+v", cfg)
 	}
-	if cfg.Network.Mode != "allowlist" || cfg.Network.Proxy != "shared" || cfg.Network.CloudMCP {
+	if cfg.Network.Mode != "open" || cfg.Network.Proxy != "shared" || cfg.Network.CloudMCP {
 		t.Fatalf("%+v", cfg.Network)
 	}
 	if len(cfg.Deps.Mask) != 1 || cfg.Deps.Mask[0] != "node_modules" {
