@@ -1,0 +1,662 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>sbx — a sandbox runtime for Claude Code</title>
+<meta name="description" content="Team introduction to sbx: a day of real use, the architecture, a Q&A on each piece, and a scenario index.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: numbered rail + 68ch text column; diagrams and tables scroll in their own containers. */
+:root{
+  --bg:#eef1f4; --surface:#ffffff; --surface-2:#e4e9ee;
+  --ink:#141c24; --muted:#5a6a78; --line:#c4cfd9; --line-strong:#8e9faf;
+  --accent:#0d6b86; --accent-soft:#d7eaf1;
+  --warn:#9a5a12; --warn-soft:#f6e6cf;
+  --font-display:"Archivo",system-ui,-apple-system,sans-serif;
+  --font-body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --font-mono:"IBM Plex Mono","SF Mono",ui-monospace,Menlo,monospace;
+  --r:6px;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0f1519; --surface:#172027; --surface-2:#1e2930;
+  --ink:#dfe7ed; --muted:#93a3b1; --line:#2f3d47; --line-strong:#4c5f6d;
+  --accent:#55b6d6; --accent-soft:#11323e;
+  --warn:#d7a05a; --warn-soft:#352a18;
+  color-scheme:dark;
+}}
+:root[data-theme="dark"]{
+  --bg:#0f1519; --surface:#172027; --surface-2:#1e2930;
+  --ink:#dfe7ed; --muted:#93a3b1; --line:#2f3d47; --line-strong:#4c5f6d;
+  --accent:#55b6d6; --accent-soft:#11323e;
+  --warn:#d7a05a; --warn-soft:#352a18;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{background:var(--bg);color:var(--ink);font-family:var(--font-body);
+  font-size:15.5px;line-height:1.72;-webkit-font-smoothing:antialiased;margin:0}
+img{max-width:100%}
+.wrap{max-width:1040px;margin:0 auto;padding-inline:20px;padding-block:0 72px}
+h1,h2,h3{text-wrap:balance;margin:0}
+code,kbd,.mono{font-family:var(--font-mono)}
+a{color:var(--accent)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:3px}
+
+/* header */
+header{padding-block:56px 40px;border-bottom:1px solid var(--line)}
+.mark{font-family:var(--font-display);font-weight:700;font-size:clamp(44px,9vw,76px);
+  letter-spacing:-.035em;line-height:1;color:var(--ink)}
+.mark span{color:var(--accent)}
+.tagline{font-size:clamp(17px,2.6vw,21px);line-height:1.5;max-width:34ch;margin:18px 0 0}
+.subline{color:var(--muted);margin-top:14px;max-width:64ch;font-size:14.5px}
+.meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:24px}
+.chip{font-family:var(--font-mono);font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;
+  padding:4px 9px;border:1px solid var(--line);border-radius:100px;color:var(--muted);background:var(--surface)}
+.chip.on{color:var(--accent);border-color:var(--accent);background:var(--accent-soft)}
+
+/* sections */
+section{padding-block:52px;border-bottom:1px solid var(--line)}
+section:last-of-type{border-bottom:0}
+.sec-head{display:grid;grid-template-columns:44px 1fr;gap:16px;align-items:start;margin-bottom:28px}
+.num{font-family:var(--font-mono);font-size:12px;color:var(--accent);padding-top:7px;letter-spacing:.08em}
+h2{font-size:clamp(23px,4vw,30px);letter-spacing:-.02em;line-height:1.3}
+.sec-head p{margin:8px 0 0;color:var(--muted);font-size:14.5px;max-width:62ch}
+.body{max-width:68ch}
+.body p{margin:0 0 16px}
+h3{font-size:17px;margin:32px 0 10px;letter-spacing:-.01em}
+
+/* timeline */
+.day{display:grid;gap:0;margin-top:8px}
+.beat{display:grid;grid-template-columns:76px 1fr;gap:20px;padding-block:22px;border-top:1px dashed var(--line)}
+.beat:first-child{border-top:0;padding-top:4px}
+.clock{font-family:var(--font-mono);font-size:13px;color:var(--accent);font-weight:500;padding-top:2px;
+  font-variant-numeric:tabular-nums}
+.beat h3{margin:0 0 8px;font-size:16.5px}
+.beat p{margin:0 0 12px;color:var(--muted);font-size:14.5px;max-width:60ch}
+.beat p strong{color:var(--ink);font-weight:500}
+.beat p:last-child{margin-bottom:0}
+
+/* terminal */
+.term{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);
+  overflow-x:auto;margin:0 0 14px;min-width:0}
+.term pre{margin:0;padding:14px 16px;font-family:var(--font-mono);font-size:12.5px;line-height:1.7;
+  white-space:pre;color:var(--ink)}
+.term .p{color:var(--accent)}
+.term .c{color:var(--muted)}
+.term .w{color:var(--warn)}
+
+/* diagram */
+figure{margin:28px 0 0}
+.scroller{overflow-x:auto;border:1px solid var(--line);border-radius:var(--r);background:var(--surface);min-width:0}
+.scroller svg{display:block;min-width:720px;width:100%;height:auto;max-width:100%}
+figcaption{color:var(--muted);font-size:13px;margin-top:10px;max-width:64ch}
+.d-box{fill:var(--surface);stroke:var(--line-strong)}
+.d-inner{fill:var(--surface-2);stroke:var(--line)}
+.d-accent{fill:var(--accent-soft);stroke:var(--accent)}
+.d-line{stroke:var(--line-strong);fill:none}
+.d-flow{stroke:var(--accent);fill:none}
+.d-t{fill:var(--ink);font-family:var(--font-body);font-size:12px}
+.d-m{fill:var(--muted);font-family:var(--font-mono);font-size:10.5px}
+.d-lb{fill:var(--muted);font-family:var(--font-mono);font-size:10px;letter-spacing:.09em}
+.d-a{fill:var(--accent);font-family:var(--font-mono);font-size:10.5px}
+
+/* pillars */
+.pillars{display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:1px;
+  background:var(--line);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;margin-top:28px}
+.pil{background:var(--surface);padding:20px 18px;min-width:0}
+.pil .k{font-family:var(--font-mono);font-size:11px;color:var(--accent);letter-spacing:.08em}
+.pil h3{margin:9px 0 6px;font-size:15.5px}
+.pil p{margin:0;color:var(--muted);font-size:13.5px;line-height:1.6}
+.pil .fix{margin-top:10px;font-size:13px;color:var(--ink);padding-top:10px;border-top:1px dashed var(--line)}
+
+/* Q&A */
+.qgroup{margin-top:34px}
+.qgroup>.gl{font-family:var(--font-mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--muted);padding-bottom:9px;border-bottom:1px solid var(--line-strong)}
+.qa{padding-block:22px;border-bottom:1px solid var(--line)}
+.q{font-weight:500;font-size:16px;margin:0 0 10px;display:grid;grid-template-columns:20px 1fr;gap:10px;align-items:start}
+.q::before{content:"Q";font-family:var(--font-mono);font-size:12px;color:var(--accent);padding-top:3px}
+.qa .a{color:var(--muted);font-size:14.5px;max-width:62ch}
+.qa .a p{margin:0 0 12px}
+.qa .a p:last-child{margin-bottom:0}
+.qa .a strong{color:var(--ink);font-weight:500}
+
+/* tables */
+.tw{overflow-x:auto;margin-top:18px;border:1px solid var(--line);border-radius:var(--r);min-width:0}
+table{border-collapse:collapse;width:100%;font-size:13.5px;background:var(--surface);min-width:520px}
+th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--muted);font-weight:500;background:var(--surface-2)}
+tr:last-child td{border-bottom:0}
+td code{font-size:12.5px;color:var(--ink)}
+td.k{white-space:nowrap}
+
+/* call-outs */
+.note{border-left:2px solid var(--warn);background:var(--warn-soft);padding:16px 18px;
+  border-radius:0 var(--r) var(--r) 0;margin:22px 0;font-size:14.5px;max-width:66ch}
+.note b{color:var(--ink)}
+.note .t{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--warn);display:block;margin-bottom:7px}
+.note p{margin:0 0 10px}.note p:last-child{margin-bottom:0}
+
+/* limits */
+.limits{margin:18px 0 0;padding:0;list-style:none;display:grid;gap:9px}
+.limits li{display:grid;grid-template-columns:16px 1fr;gap:11px;color:var(--muted);font-size:14.5px}
+.limits li::before{content:"—";font-family:var(--font-mono);color:var(--line-strong)}
+footer{padding-block:34px;color:var(--muted);font-size:13px}
+footer code{font-size:12.5px}
+
+@media (max-width:620px){
+  .sec-head{grid-template-columns:1fr;gap:6px}
+  .num{padding-top:0}
+  .beat{grid-template-columns:1fr;gap:4px}
+  .clock{padding-top:0}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="mark">s<span>b</span>x</div>
+  <p class="tagline">Run Claude Code in a Docker sandbox — skip the permission prompts without betting your machine on it.</p>
+  <p class="subline">One container, one git worktree and one branch per task. Inside, <code>--dangerously-skip-permissions</code> is fine. Outside, nothing changed.</p>
+  <div class="meta">
+    <span class="chip on">M1 complete</span>
+    <span class="chip">M2 in progress</span>
+    <span class="chip">Go 1.27</span>
+    <span class="chip">Apache-2.0</span>
+  </div>
+</header>
+
+<!-- 01 -->
+<section>
+  <div class="sec-head">
+    <div class="num">01</div>
+    <div>
+      <h2>A day of real use</h2>
+      <p>Before the architecture: here is an ordinary working day with sbx.</p>
+    </div>
+  </div>
+
+  <div class="day">
+    <div class="beat">
+      <div class="clock">09:30</div>
+      <div>
+        <h3>Three unrelated jobs, all started at once</h3>
+        <p>Fix a login bug, add search, bump a dependency. You used to queue them up, because all three touch the same repo.</p>
+        <div class="term"><pre><span class="c">$</span> cd ~/code/shop
+<span class="c">$</span> sbx run fix-login            <span class="c"># go in, explain the job, Ctrl-b then d to leave</span>
+<span class="c">$</span> sbx run add-search --detach  <span class="c"># this one starts in the background</span>
+<span class="c">$</span> sbx run bump-deps --detach</pre></div>
+        <p>Each task gets its own worktree, branch and container. <strong>They are separate at the filesystem level</strong>, not by convention, so none of them can touch another's files.</p>
+      </div>
+    </div>
+
+    <div class="beat">
+      <div class="clock">10:00</div>
+      <div>
+        <h3>A glance before the standup</h3>
+        <div class="term"><pre><span class="c">$</span> sbx ls
+workspace shop-e76272 (/Users/you/code/shop)
+TASK        STATUS   BRANCH          AHEAD  DIFF         LAST-ACTIVE
+add-search  <span class="p">running</span>  sbx/add-search  0      2f +86 -3    4s ago
+bump-deps   <span class="w">idle</span>     sbx/bump-deps   1      1f +12 -12   6m ago
+fix-login   <span class="p">running</span>  sbx/fix-login   1      3f +48 -6    11s ago</pre></div>
+        <p><code>bump-deps</code> has been quiet for six minutes — either it finished, or it stopped to ask you something. Go look.</p>
+      </div>
+    </div>
+
+    <div class="beat">
+      <div class="clock">11:00</div>
+      <div>
+        <h3>Review one of them</h3>
+        <div class="term"><pre><span class="c">$</span> code "$(sbx path fix-login)"   <span class="c"># the worktree is a real directory on your host</span></pre></div>
+        <p>Not happy? Attach and keep talking. Happy? Wrap it up.</p>
+      </div>
+    </div>
+
+    <div class="beat">
+      <div class="clock">14:00</div>
+      <div>
+        <h3>A task needs MongoDB and the network blocks it</h3>
+        <div class="term"><pre><span class="c">$</span> sbx net denied
+HOST                 COUNT  LAST    KIND            TASK
+fastdl.mongodb.org   4      2m ago  <span class="w">not allowed</span>     shop-e76272.add-search
+
+<span class="c">$</span> sbx net allow fastdl.mongodb.org
+Added to ~/.sbx/config.toml: fastdl.mongodb.org
+Hot-reloaded into 3 running tasks; no restart needed</pre></div>
+        <p><strong>There is a record of everything the agent reached for.</strong> Once the permission prompts are off, that record is the thing that lets you relax.</p>
+      </div>
+    </div>
+
+    <div class="beat">
+      <div class="clock">18:00</div>
+      <div>
+        <h3>End of day</h3>
+        <div class="term"><pre><span class="c">$</span> sbx stop fix-login    <span class="c"># shut it down; container and conversation are kept</span></pre></div>
+        <p>Tomorrow, <code>sbx run fix-login</code> picks the conversation back up where it stopped.</p>
+      </div>
+    </div>
+
+    <div class="beat">
+      <div class="clock">Next day</div>
+      <div>
+        <h3>Wrap up</h3>
+        <div class="term"><pre><span class="c">$</span> sbx done fix-login          <span class="c"># container, network, dep volume, worktree — branch stays</span>
+<span class="c">$</span> git merge sbx/fix-login     <span class="c"># you merge; sbx never does it for you</span>
+<span class="c">$</span> git branch -D sbx/fix-login</pre></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 02 -->
+<section>
+  <div class="sec-head">
+    <div class="num">02</div>
+    <div>
+      <h2>Why it is built this way</h2>
+      <p>The whole thing starts from one trade-off.</p>
+    </div>
+  </div>
+
+  <div class="body">
+    <p style="font-size:17.5px;line-height:1.6">A coding agent only gets out of your way once you turn the permission prompts off — and <strong>the moment you do, it can touch anything on your machine.</strong></p>
+    <p>Doing that on your host machine has four concrete risks. sbx turns one unit of agent work into a <b>Task</b> and answers each risk with one measure.</p>
+  </div>
+
+  <div class="pillars">
+    <div class="pil">
+      <div class="k">① WHERE CHANGES GO</div>
+      <h3>Code</h3>
+      <p>It wrecks the working tree you are using right now.</p>
+      <div class="fix">Its own git worktree and branch</div>
+    </div>
+    <div class="pil">
+      <div class="k">② WHERE IT RUNS</div>
+      <h3>Runtime</h3>
+      <p>It reads <code>~/.ssh</code>, or leaves installed junk on your host.</p>
+      <div class="fix">A container with controlled mounts</div>
+    </div>
+    <div class="pil">
+      <div class="k">③ WHAT IT REACHES</div>
+      <h3>Network</h3>
+      <p>It talks to anything — leaking data or pulling in a bad dependency.</p>
+      <div class="fix">An internal network behind a proxy</div>
+    </div>
+    <div class="pil">
+      <div class="k">④ STAYING IN CONTROL</div>
+      <h3>State</h3>
+      <p>You come back and cannot tell how far it got.</p>
+      <div class="fix">Hook-written state, <code>ls</code>, memory sync</div>
+    </div>
+  </div>
+
+  <div class="body" style="margin-top:26px">
+    <p>The lifecycle <code>run → stop → run (resume) → done</code> creates, pauses, restores and tears down all four together.</p>
+    <p><strong>sbx itself is only an orchestrator</strong>: a single Go binary that does everything by shelling out to <code>docker</code> and <code>git</code>, with no SDKs. It does not stay resident — the command exits and the agent keeps running inside the container.</p>
+  </div>
+</section>
+
+<!-- 03 -->
+<section>
+  <div class="sec-head">
+    <div class="num">03</div>
+    <div>
+      <h2>Architecture</h2>
+      <p>Two tasks running in parallel on one machine.</p>
+    </div>
+  </div>
+
+  <figure>
+    <div class="scroller">
+      <svg viewBox="0 0 900 640" role="img" aria-label="sbx architecture: the sbx CLI, main repo and worktrees on the host; inside Docker, two internal task networks, a shared squid proxy, the egress network and three kinds of volume">
+        <defs>
+          <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,1 L9,5 L0,9 z" fill="var(--accent)"></path>
+          </marker>
+          <marker id="arg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,1 L9,5 L0,9 z" fill="var(--line-strong)"></path>
+          </marker>
+        </defs>
+
+        <!-- host -->
+        <rect class="d-box" x="16" y="30" width="868" height="226" rx="8"></rect>
+        <text class="d-lb" x="34" y="22">HOST  MACOS / LINUX</text>
+
+        <rect class="d-accent" x="40" y="58" width="146" height="50" rx="5"></rect>
+        <text class="d-t" x="56" y="79" font-weight="500">sbx CLI</text>
+        <text class="d-m" x="56" y="96">single Go binary</text>
+
+        <text class="d-a" x="40" y="130">docker / git only</text>
+        <text class="d-m" x="40" y="148">exits when the command</text>
+        <text class="d-m" x="40" y="164">ends; agent keeps running</text>
+
+        <rect class="d-inner" x="214" y="58" width="208" height="76" rx="5"></rect>
+        <text class="d-t" x="230" y="80">① main repo ~/code/shop</text>
+        <text class="d-m" x="230" y="100">.git — holds every branch</text>
+        <text class="d-m" x="230" y="118">you merge here</text>
+
+        <rect class="d-inner" x="470" y="58" width="236" height="76" rx="5"></rect>
+        <text class="d-t" x="486" y="80">① worktree ×N</text>
+        <text class="d-m" x="486" y="100">~/.sbx/worktrees/&lt;ws&gt;/&lt;task&gt;</text>
+        <text class="d-m" x="486" y="118">branch sbx/&lt;task&gt;</text>
+
+        <path class="d-flow" d="M470,96 L432,96" marker-end="url(#ar)"></path>
+        <text class="d-a" x="422" y="52" text-anchor="end">commits land here</text>
+
+        <rect class="d-inner" x="214" y="152" width="208" height="62" rx="5"></rect>
+        <text class="d-t" x="230" y="174">④ ~/.sbx/state/&lt;ws&gt;/&lt;task&gt;</text>
+        <text class="d-m" x="230" y="194">status.json · events.log · gen/</text>
+
+        <rect class="d-inner" x="470" y="152" width="236" height="62" rx="5"></rect>
+        <text class="d-t" x="486" y="174">③ ~/.sbx/proxy</text>
+        <text class="d-m" x="486" y="194">squid config · one file per task</text>
+
+        <rect class="d-inner" x="730" y="58" width="134" height="156" rx="5"></rect>
+        <text class="d-t" x="746" y="80">~/.claude</text>
+        <text class="d-m" x="746" y="100">CLAUDE.md</text>
+        <text class="d-m" x="746" y="117">skills / agents</text>
+        <text class="d-m" x="746" y="134">commands</text>
+        <text class="d-a" x="746" y="158">mounted read-only</text>
+        <text class="d-m" x="746" y="186">settings.json</text>
+        <text class="d-m" x="746" y="203">never enters</text>
+
+        <!-- docker -->
+        <rect class="d-box" x="16" y="296" width="868" height="326" rx="8"></rect>
+        <text class="d-lb" x="34" y="288">DOCKER</text>
+
+        <rect class="d-inner" x="40" y="322" width="316" height="112" rx="6" stroke-dasharray="5 4"></rect>
+        <text class="d-a" x="56" y="342">② ③ task network t1 · --internal</text>
+        <rect class="d-box" x="56" y="352" width="284" height="68" rx="5"></rect>
+        <text class="d-t" x="70" y="373">container sbx-&lt;ws&gt;-t1</text>
+        <text class="d-m" x="70" y="392">tini → sleep infinity</text>
+        <text class="d-m" x="70" y="409">tmux "agent" → claude</text>
+
+        <rect class="d-inner" x="40" y="452" width="316" height="112" rx="6" stroke-dasharray="5 4"></rect>
+        <text class="d-a" x="56" y="472">② ③ task network t2 · --internal</text>
+        <rect class="d-box" x="56" y="482" width="284" height="68" rx="5"></rect>
+        <text class="d-t" x="70" y="503">container sbx-&lt;ws&gt;-t2</text>
+        <text class="d-m" x="70" y="522">mounts: worktree · .git · state</text>
+        <text class="d-m" x="70" y="539">nothing else from the host</text>
+
+        <text class="d-m" x="40" y="590">task networks cannot reach each other</text>
+
+        <rect class="d-accent" x="430" y="372" width="180" height="122" rx="6"></rect>
+        <text class="d-t" x="446" y="394" font-weight="500">③ sbx-proxy</text>
+        <text class="d-m" x="446" y="414">squid :3128</text>
+        <text class="d-m" x="446" y="434">authenticates per task</text>
+        <text class="d-m" x="446" y="451">allowlist / policy block</text>
+        <text class="d-m" x="446" y="476">logs everything</text>
+
+        <path class="d-flow" d="M356,386 L430,410" marker-end="url(#ar)"></path>
+        <path class="d-flow" d="M356,516 L430,462" marker-end="url(#ar)"></path>
+        <text class="d-a" x="366" y="440">HTTPS_PROXY</text>
+
+        <rect class="d-inner" x="676" y="372" width="188" height="68" rx="5"></rect>
+        <text class="d-t" x="692" y="394">sbx-egress</text>
+        <text class="d-m" x="692" y="414">upstream proxy / direct</text>
+        <text class="d-m" x="692" y="431">the only way out</text>
+        <path class="d-flow" d="M610,406 L676,406" marker-end="url(#ar)"></path>
+
+        <rect class="d-inner" x="430" y="510" width="434" height="98" rx="5"></rect>
+        <text class="d-lb" x="446" y="531">VOLUMES</text>
+        <text class="d-t" x="446" y="553">sbx-home</text>
+        <text class="d-m" x="446" y="571">login · memory</text>
+        <text class="d-m" x="446" y="588">shared</text>
+        <text class="d-t" x="586" y="553">sbx-cache</text>
+        <text class="d-m" x="586" y="571">package caches</text>
+        <text class="d-m" x="586" y="588">shared</text>
+        <text class="d-t" x="726" y="553">dep volume</text>
+        <text class="d-m" x="726" y="571">masks node_modules</text>
+        <text class="d-m" x="726" y="588">per task</text>
+
+        <path class="d-line" d="M113,108 L113,276 L560,276 L560,296" marker-end="url(#arg)" stroke-dasharray="4 4"></path>
+        <text class="d-m" x="200" y="270">docker run / exec</text>
+      </svg>
+    </div>
+    <figcaption>①–④ map to the four measures above. A task network is <code>--internal</code>: it has no route out, and the only thing a container can reach is squid.</figcaption>
+  </figure>
+
+  <h3 style="margin-top:38px">Per task, and shared</h3>
+  <div class="tw">
+    <table>
+      <thead><tr><th></th><th>Owned by each task</th><th>Shared by all tasks</th></tr></thead>
+      <tbody>
+        <tr><td class="k">① Code</td><td>worktree, branch <code>sbx/&lt;task&gt;</code></td><td>the main repo's <code>.git</code></td></tr>
+        <tr><td class="k">② Runtime</td><td>container, dep volume</td><td>image, <code>sbx-home</code>, <code>sbx-cache</code></td></tr>
+        <tr><td class="k">③ Network</td><td>internal network, proxy identity + token</td><td><code>sbx-proxy</code>, <code>sbx-egress</code></td></tr>
+        <tr><td class="k">④ State</td><td><code>~/.sbx/state/&lt;ws&gt;/&lt;task&gt;/</code></td><td><code>~/.sbx/memory/</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="subline" style="margin-top:14px">Every Docker resource is labelled <code>sbx.ws</code> / <code>sbx.task</code> / <code>sbx.kind</code>. <code>ls</code> and <code>done</code> find resources by label rather than guessing at names.</p>
+</section>
+
+<!-- 04 -->
+<section>
+  <div class="sec-head">
+    <div class="num">04</div>
+    <div>
+      <h2>Questions people actually ask</h2>
+      <p>Organised by the question, not by the module.</p>
+    </div>
+  </div>
+
+  <div class="qgroup">
+    <div class="gl">Volumes — what survives</div>
+
+    <div class="qa">
+      <p class="q">If the container is deleted, do I lose the dependencies I installed and my login?</p>
+      <div class="a">
+        <p>It depends which one. sbx uses three kinds of volume, with very different lifetimes:</p>
+      </div>
+      <div class="tw">
+        <table>
+          <thead><tr><th>Volume</th><th>Scope</th><th>Holds</th><th>On sbx done</th></tr></thead>
+          <tbody>
+            <tr><td class="k"><code>sbx-home</code></td><td>global, shared</td><td>credentials, Claude config, project memory</td><td><b>kept</b></td></tr>
+            <tr><td class="k"><code>sbx-cache</code></td><td>global, shared</td><td>npm / pip / go / cargo caches</td><td><b>kept</b></td></tr>
+            <tr><td class="k"><code>…-dep-&lt;i&gt;</code></td><td>per task</td><td><code>node_modules</code> and friends</td><td>deleted</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="a" style="margin-top:12px">
+        <p>So <code>done</code> only removes that task's <code>node_modules</code>. Your login and your caches stay, which is why the next task starts fast.</p>
+      </div>
+    </div>
+
+    <div class="qa">
+      <p class="q">What is the dep volume for? Why not just use the host's node_modules?</p>
+      <div class="a">
+        <p>Because <strong>the worktree is a bind mount — whatever the container writes, your host gets</strong>. Left alone, a <code>pnpm install</code> inside the container would drop a set of Linux-native modules straight into your macOS directory.</p>
+        <p>The fix is <strong>mount order</strong>: mount the worktree first, then mount a volume at <code>&lt;worktree&gt;/node_modules</code> to <strong>cover it up</strong>. The container sees the volume; your copy is untouched; neither side can see the other.</p>
+      </div>
+      <div class="term" style="margin-top:12px"><pre><span class="c">[deps]</span>
+mask = ["node_modules"]    <span class="c"># add .venv, target, vendor, …</span></pre></div>
+    </div>
+
+    <div class="qa">
+      <p class="q">Logins expire. What then?</p>
+      <div class="a">
+        <p>Run <code>claude auth login</code> in a container once more. It writes to the same <code>sbx-home</code>, so <strong>every task picks it up immediately</strong> — no logging in task by task. The credentials never live inside a task, which is also why <code>done</code> cannot delete them.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="qgroup">
+    <div class="gl">Code — where the changes went</div>
+
+    <div class="qa">
+      <p class="q">Why can't I see the agent's changes in my repo?</p>
+      <div class="a">
+        <p>They are in <code>~/.sbx/worktrees/&lt;ws&gt;/&lt;task&gt;/</code>, a separate git worktree. That is deliberate: otherwise three parallel tasks would overwrite each other.</p>
+        <p>The worktree is <strong>a real directory on your host</strong>, not something inside the container. <code>code "$(sbx path fix-login)"</code> opens it; <code>git diff</code> and <code>git log</code> work normally. The changes reach your repo directory once you merge the branch.</p>
+        <p>To skip that layer and have changes land in the repo directory itself, <strong>omit the task name</strong> and use the main task.</p>
+      </div>
+    </div>
+
+    <div class="qa">
+      <p class="q">Can sbx done delete my code?</p>
+      <div class="a">
+        <p>No, and there are two guards. <strong>Uncommitted changes</strong> make it refuse outright and tell you to commit first; <code>--force</code> is the only way to discard them. <strong>Committed but unmerged</strong> work lives on the branch in the main repo's <code>.git</code>, so removing the worktree costs nothing.</p>
+        <p><code>done</code> prints the merge command when it finishes. <strong>sbx never merges on its own</strong> — that call is yours.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="qgroup">
+    <div class="gl">Network — what it can reach</div>
+
+    <div class="qa">
+      <p class="q">Is traffic blocked by default?</p>
+      <div class="a">
+        <p><strong>No</strong> (<code>network.mode = "open"</code>). But everything still <strong>goes through squid</strong>, so the logs are always there and <code>sbx net denied</code> always works.</p>
+        <p>To tighten it, set <code>mode = "allowlist"</code> or pass <code>sbx run &lt;task&gt; --net allowlist</code>: only the built-in list (Anthropic, npm, pypi, the Go proxy and so on) plus whatever you configure. That is the right setting for untrusted code.</p>
+      </div>
+      <div class="note">
+        <span class="t">Why open is the default</span>
+        <p>Allowlist used to be the default. In practice, when the allowlist blocked a dependency download, the agent would <b>quietly substitute something else, keep going, and report that the tests passed</b>.</p>
+        <p>A block that gets silently worked around is worse than no block at all, because you end up trusting a false result. So the default flipped to open, and the allowlist is there for the cases that genuinely need it.</p>
+      </div>
+    </div>
+
+    <div class="qa">
+      <p class="q">Can two tasks reach each other?</p>
+      <div class="a">
+        <p>No. Each task gets its own <code>--internal</code> network and they share none. Squid tells them apart with basic auth — the username is <code>&lt;ws&gt;.&lt;task&gt;</code> and the password is a random token (<code>proxy.cred</code>, mode 0600). <strong>Borrowing another task's identity gets a 407.</strong></p>
+      </div>
+    </div>
+  </div>
+
+  <div class="qgroup">
+    <div class="gl">State — knowing what it is doing</div>
+
+    <div class="qa">
+      <p class="q">Where does the status in sbx ls come from? Is it guessing?</p>
+      <div class="a">
+        <p>No. The settings injected into Claude register six hooks; each event writes a line to <code>/sbx/state/status.json</code>, which is <code>~/.sbx/state/&lt;ws&gt;/&lt;task&gt;/</code> on your host.</p>
+      </div>
+      <div class="tw">
+        <table>
+          <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td class="k"><code>running</code></td><td>working</td></tr>
+            <tr><td class="k"><code>idle</code></td><td><b>stopped: either finished, or waiting on you</b></td></tr>
+            <tr><td class="k"><code>exited(agent)</code></td><td>Claude exited, container still up; <code>sbx run</code> brings it back</td></tr>
+            <tr><td class="k"><code>stopped</code> / <code>exited(oom)</code></td><td>container stopped / killed for memory</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="note">
+        <span class="t">The one status worth checking yourself</span>
+        <p><b>idle does not distinguish "finished" from "stuck waiting for a human."</b> Combined with <code>AHEAD 0</code> — not a single commit — you can be fairly sure it is parked on a confirmation.</p>
+      </div>
+    </div>
+
+    <div class="qa">
+      <p class="q">Does closing the terminal kill the agent?</p>
+      <div class="a">
+        <p>No. Claude runs in a <strong>tmux session inside the container</strong>, so closing the terminal or rebooting the host changes nothing; <code>sbx attach</code> gets you back.</p>
+        <p>Note that <kbd>Ctrl-D</kbd> exits Claude rather than detaching — to leave, press <kbd>Ctrl-b</kbd>, release, then <kbd>d</kbd>. Even so, the tmux session survives an exit, and <code>sbx run</code> restarts Claude and continues the previous conversation, so a slip of the finger costs nothing.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="qgroup">
+    <div class="gl">Everything else</div>
+
+    <div class="qa">
+      <p class="q">Can it see my ~/.ssh?</p>
+      <div class="a">
+        <p>No. A container has exactly this: its worktree, the main repo's <code>.git</code>, <code>sbx-home</code>, <code>sbx-cache</code>, <code>/sbx/state</code>, a read-only <code>/sbx/gen</code>, and a read-only copy of <code>~/.claude/{skills,agents,commands}</code>. <strong>Nothing else from the host is mounted.</strong> Each task is capped at 2 CPUs, 3g of memory and 1024 processes.</p>
+      </div>
+    </div>
+
+    <div class="qa">
+      <p class="q">How are images handled? Does every run rebuild?</p>
+      <div class="a">
+        <p>Two layers: a profile layer (Debian + Go + Node + Python) and an agent layer (tmux, git, jq, claude-code, the <code>agent</code> user). The tag is <strong>a hash of the inputs</strong>, so an unchanged input reuses the image and a changed one rebuilds automatically.</p>
+        <p>Claude inside the container <strong>never auto-updates</strong>; <code>sbx upgrade</code> does it. Existing tasks keep their old image until they are torn down and recreated — which is what keeps one task on one version for its whole life.</p>
+      </div>
+    </div>
+
+    <div class="qa">
+      <p class="q">Does what Claude learns in the sandbox come back?</p>
+      <div class="a">
+        <p>Every <code>sbx run</code> imports this repo's project memory from your host into the sandbox. The reverse is <strong>not automatic</strong> — <code>sbx memory pull</code> shows you the diff first and writes only after you confirm, marking anything edited on both sides as <code>conflict</code> instead of merging it.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 05 -->
+<section>
+  <div class="sec-head">
+    <div class="num">05</div>
+    <div>
+      <h2>Find it by scenario</h2>
+      <p>Each row maps to an act in walkthrough.md, where every command is broken down into what Docker, git and squid each do.</p>
+    </div>
+  </div>
+
+  <div class="tw">
+    <table>
+      <thead><tr><th>I want to…</th><th>Command</th><th>Detail</th></tr></thead>
+      <tbody>
+        <tr><td>install and log in for the first time</td><td><code>make build</code> → <code>sbx run</code> → <code>claude auth login</code></td><td class="k">acts 0–2</td></tr>
+        <tr><td>start a new task</td><td><code>sbx run fix-login</code></td><td class="k">act 3</td></tr>
+        <tr><td>start a second one alongside it</td><td><code>sbx run add-search --detach</code></td><td class="k">act 4</td></tr>
+        <tr><td>understand what happens while the agent works</td><td>—</td><td class="k">act 5</td></tr>
+        <tr><td>step away and check progress later</td><td><code>sbx ls</code> → <code>sbx attach</code></td><td class="k">act 6</td></tr>
+        <tr><td>stop for the day without losing progress</td><td><code>sbx stop &lt;task&gt;</code></td><td class="k">act 7</td></tr>
+        <tr><td>pick it up tomorrow</td><td><code>sbx run &lt;task&gt;</code> (continues the conversation)</td><td class="k">act 8</td></tr>
+        <tr><td>bring sandbox memory back to the host</td><td><code>sbx memory pull</code></td><td class="k">act 9</td></tr>
+        <tr><td>wrap up and merge</td><td><code>sbx done</code> → <code>git merge sbx/&lt;task&gt;</code></td><td class="k">act 10</td></tr>
+        <tr><td>upgrade Claude inside the sandbox</td><td><code>sbx upgrade</code></td><td class="k">act 11</td></tr>
+        <tr><td>recover after hitting Ctrl-D</td><td><code>sbx run &lt;task&gt;</code> again</td><td class="k">act 12</td></tr>
+        <tr><td>see what the proxy blocked</td><td><code>sbx net denied [task] [--all] [--since 2h]</code></td><td class="k">commands.md</td></tr>
+        <tr><td>allow a host</td><td><code>sbx net allow &lt;host&gt;</code></td><td class="k">commands.md</td></tr>
+        <tr><td>work in the repo directory itself</td><td><code>sbx run</code> (no task name)</td><td class="k">commands.md</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- 06 -->
+<section>
+  <div class="sec-head">
+    <div class="num">06</div>
+    <div>
+      <h2>Where it stands today</h2>
+      <p>M1 (the MVP) is done; M2 is in progress.</p>
+    </div>
+  </div>
+
+  <div class="body">
+    <p>Available commands: <code>run / attach / shell / stop / ls / path / done / net / memory / upgrade</code>.</p>
+    <h3>Limits worth knowing up front</h3>
+    <ul class="limits">
+      <li><code>web-go</code> is the only built-in profile (Go + Node + Python); other stacks need their own Dockerfile</li>
+      <li>networking is shared-proxy only; a dedicated proxy is M2-7</li>
+      <li>configuration has two layers, built-in defaults and your global file — <b>no project-level config yet</b> (M2-1)</li>
+      <li><code>sbx login</code> still means running one docker command by hand (M2-12)</li>
+      <li>there is no <code>sbx merge</code>; merging is always done by a person in the main repo</li>
+    </ul>
+  </div>
+</section>
+
+<footer>
+  In-repo docs: <code>README.md</code> getting started · <code>docs/intro.md</code> this page in Chinese · <code>docs/commands.md</code> commands and flags · <code>docs/walkthrough.md</code> act-by-act breakdown · <code>docs/architecture.md</code> implementation · <code>docs/design.md</code> design decisions
+</footer>
+
+</div>
+</body>
+</html>
