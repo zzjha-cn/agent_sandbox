@@ -13,7 +13,7 @@
 <p align="center">
   <img alt="Go" src="https://img.shields.io/badge/Go-1.27-00ADD8?logo=go&logoColor=white">
   <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue">
-  <img alt="Status" src="https://img.shields.io/badge/status-M1%20%2B%20part%20of%20M2-orange">
+  <img alt="Status" src="https://img.shields.io/badge/status-M1%20%2B%20M2%20done-brightgreen">
 </p>
 
 ---
@@ -116,12 +116,13 @@ All a container can see is: its worktree, the shared `sbx-home` (login state and
 
 ## Networking
 
-All egress goes through one shared Squid proxy (`sbx-proxy`), which is **open by default**.
+All egress goes through a Squid proxy — by default one shared instance (`sbx-proxy`) for every task — which is **open by default**.
 
 ```bash
 sbx net denied                     # what got blocked (--all for every category, --since 2h to narrow)
 sbx net allow fastdl.mongodb.org   # allow a host and hot-reload it into running tasks
 sbx run t1 --net allowlist         # allowlist mode, just for this run
+sbx run t1 --proxy dedicated       # give this task its own proxy sidecar
 ```
 
 Allowlist mode (`network.mode = "allowlist"`) permits only the built-in list plus whatever you configure — the right choice when running untrusted code. Both modes go through Squid, so the logs are always there, and the cloud-MCP policy block applies either way ([ADR 0015](docs/CONTEXT.md)).
@@ -171,9 +172,9 @@ The project layer travels with the repo, so **secret-looking keys and absolute p
 
 ## Status
 
-**M1 (MVP) is done; M2 is in progress.** Available commands: `run / attach / shell / stop / ls / path / done / net / memory / login / config / upgrade`.
+**M1 (the MVP) and M2 (security and configuration) are done; M3 is next.** Available commands: `run / attach / shell / stop / ls / path / done / net / memory / login / config / trust / upgrade`.
 
-Known limits: `web-go` is the only built-in profile; networking is shared-proxy only (dedicated is M2-7); there is no `sbx merge`.
+Known limits: `web-go` is the only built-in profile; there is no `sbx merge`; a host proxy has to speak HTTP (SOCKS-only needs a shim of your own).
 
 Roadmap: [implementation-checklist.md](docs/implementation-checklist.md).
 

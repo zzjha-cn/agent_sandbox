@@ -48,6 +48,12 @@ func (t Task) prefix() string { return "sbx-" + t.WS.ID + "-" + t.Name }
 
 func (t Task) Container() string { return t.prefix() }
 func (t Task) Network() string   { return t.prefix() + "-net" }
+
+// Proxy 是 dedicated 模式下这个 Task 独占的 squid 容器名（design §6.2）。
+func (t Task) Proxy() string { return t.prefix() + "-proxy" }
+
+// ProxyDir 是 dedicated 实例的配置目录，整个目录只读挂进容器。
+func (t Task) ProxyDir() string { return filepath.Join(t.StateDir(), "proxy") }
 func (t Task) DepVolume(i int) string {
 	return fmt.Sprintf("%s-dep-%d", t.prefix(), i)
 }

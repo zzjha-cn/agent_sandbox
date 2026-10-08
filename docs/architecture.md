@@ -184,13 +184,14 @@ agent 容器 ──(Task 网络 --internal)──▶ sbx-proxy:3128 ──(sbx-e
 
   | 操作 | 时机 | 做什么 |
   |---|---|---|
-  | `EnsureShared` | 每次 run | 代理容器不存在就创建，停止了就启动；等待就绪；access.log 超过 20MB 就轮转 |
+  | `Ensure` | 每次 run | 代理容器不存在就创建，停止了就启动；等待就绪；access.log 超过 20MB 就轮转 |
   | `AttachTask` | 每次 run | 写入片段、名单和密码；把代理接入 Task 网络；热加载 |
   | `DetachTask` | done | 反向操作 |
   | `StopIfIdle` | stop、done | 没有运行中的 Task 时停掉代理 |
 
   - 热加载先用 `squid -k parse` 检查配置，通过后再 `reconfigure`。
   - 修改代理配置时用文件锁串行化，多个 sbx 进程同时操作不会冲突。
+  - 这四个操作是接口 `proxy.Egress`，shared 和 dedicated 各实现一份；`run`/`stop`/`done`/`net` 只认接口，不分支判断模式。dedicated 下 `AttachTask` 建的是这个 Task 独占的 sidecar（`sbx-<ws>-<task>-proxy`，不做代理认证），`DetachTask` 把它连同配置目录一起删掉（design §6.2、M2-7）。
 
 ---
 
@@ -264,7 +265,7 @@ claude 的自动记忆在宿主机上存于 `~/.claude/projects/<key>/memory/`�
 1. **worktree**（§3）
 2. **镜像**：hash 命中就跳过，否则构建（§4.1）
 3. **state 目录**
-4. **代理**：`EnsureShared`，创建 internal 网络，`AttachTask`，拿到代理地址（§5）
+4. **代理**：`Ensure`，创建 internal 网络，`AttachTask`，拿到代理地址（§5）
 5. **volume**：共享 volume 第一次创建时 chown 成 agent 用户；每个依赖遮盖目录建一个 volume
 6. **生成文件**：hooks、settings、CLAUDE.md 快照
 7. **容器**：`docker run -d`，带上挂载表（§4.2）、代理地址、git 身份和资源上限
@@ -411,7 +412,7 @@ core/
 | 层 | 命令 | 覆盖 |
 |---|---|---|
 | 单元 + golden | `make test` | 命名、配置、状态推导、docker 参数、squid 渲染、apr1、预置幂等、记忆比较 |
-| Docker 集成 | `make test-docker` | 镜像内容；代理隔离矩阵（200/403/407）、热加载、日志轮转 |
+| Docker 集成 | `make test-docker` | 镜像内容；shared 的代理隔离矩阵（200/403/407）、热加载、日志轮转；dedicated 的白名单、策略拦截、生命周期 |
 | 端到端 | `make e2e` | 两个并行 Task 由真实的 claude 各提交一次，覆盖 §7 全流程和 §8 的检查，共 32 项 |
 | 真实仓库 | 手动 | 交互模式已通过；无人值守（离开 30 分钟以上）待做 |
 
@@ -419,11 +420,10 @@ core/
 
 | 项 | 计划 |
 |---|---|
-| 项目级配置 `.sbx/sandbox.toml` 和信任确认 | M2-1～5、M2-9 |
-| `sbx login` | M2-12 |
-| 查看和放行被拒请求：`sbx net denied/allow` | M2-10、M2-11 |
-| `max_running` 和内存预算检查 | M2-14、M2-15 |
-| open 模式、dedicated 代理、API key | M2 |
-| Codex、`port`、`doctor`、通知 | M3 |
+| Codex、`port`、`doctor`、通知、headless | M3 |
+| 更多 Profile、自定义镜像 | M3-1、M3-2 |
+| 发布物和 CI | M3-14 |
+
+M2 的内容（项目级配置和信任确认、`login`、`net denied/allow`、open 模式、dedicated 代理、API key、`max_running` 和内存预算）已全部完成。
 
 已知现象：claude 画面会提示 `Remote managed settings failed to load (401)`，暂不影响使用，继续观察。

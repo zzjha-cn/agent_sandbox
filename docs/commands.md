@@ -93,6 +93,7 @@ git branch -D sbx/fix-login
 | `-d, --detach` | 只启动不进入，适合批量铺任务 |
 | `--fresh` | 重新拉起时开一段新对话（默认接上这个 Task 的上次对话） |
 | `--net open\|allowlist` | 只影响本次，不写配置 |
+| `--proxy shared\|dedicated` | 只影响本次，不写配置；Task 建好之后换不了（见下文） |
 
 `--base` 用在从某个历史提交或另一分支起步：`sbx run hotfix --base v1.2.0`。分支已存在时，`ls` 里的 AHEAD/DIFF 基准自动取它和 HEAD 的分叉点（merge-base）。
 
@@ -105,7 +106,7 @@ git branch -D sbx/fix-login
 - **未提交的改动** → 直接报错，让你先去提交；`--force` 才丢弃。
 - **已提交未合并** → 分支和 commit 都在 `.git` 里，删 worktree 不影响。
 
-删的是：容器、Task 网络、proxy 上的这个用户、`sbx.kind=dep` 的依赖 volume、worktree、state 目录。**不删**：分支、`sbx-home`、`sbx-cache`、镜像。最后一个 Task 结束时顺带停掉 `sbx-proxy`。
+删的是：容器、Task 网络、proxy 上的这个用户（dedicated 模式下是整个 sidecar 容器）、`sbx.kind=dep` 的依赖 volume、worktree、state 目录。**不删**：分支、`sbx-home`、`sbx-cache`、镜像。最后一个 shared Task 结束时顺带停掉 `sbx-proxy`。
 
 同时会提醒一次项目记忆（见 `sbx memory pull`）——趁容器还在的时候读，所以提醒发生在删之前。
 
@@ -212,7 +213,7 @@ STATUS 由容器状态和 claude hooks 写的 `status.json` 共同推导：
 
 ## 第 5 层：网络
 
-**默认不拦截**（`network.mode = "open"`，2026-10-08 起）。两种模式都走同一个 Squid（`sbx-proxy`），所以日志一直有，云端 MCP 的策略拦截在两种模式下都生效。
+**默认不拦截**（`network.mode = "open"`，2026-10-08 起）。两种模式都走 Squid（默认是共用的 `sbx-proxy`），所以日志一直有，云端 MCP 的策略拦截在两种模式下都生效。
 
 ```bash
 sbx net denied                 # Agent 被代理拦了什么
@@ -221,6 +222,7 @@ sbx net denied --since 2h      # 只看最近两小时
 sbx net denied --all           # 连策略拦截、遥测、认证失败一起显示
 sbx net allow repo.mongodb.org # 放行域名，写进 ~/.sbx/config.toml 并热加载
 sbx run t1 --net allowlist     # 本次用白名单模式
+sbx run t1 --proxy dedicated   # 本次用独占的代理 sidecar
 ```
 
 `net denied` 默认只显示**"不在白名单"**这一类 —— 也就是真正可能挡住 Agent 干活的。另外两类折叠成一行计数（`--all` 展开）：
@@ -236,6 +238,25 @@ sbx run t1 --net allowlist     # 本次用白名单模式
 内置白名单（`core/assets/allowlist/`，allowlist 模式下自动生效，不用你写）：`builtin.txt`（anthropic / claude.ai / openai）、`<profile>.txt`（web-go：npm、pypi、goproxy 等）。你在配置里写的 `network.allow` 是**追加**。域名以 `.` 开头表示连子域一起放行（Squid `dstdomain` 语义）。
 
 > **选哪个模式**：默认 open 换来的是 Agent 能 web search、能装任意依赖，代价是 design §8.2 的"数据外传"缓解在默认配置下不生效。要跑不信任的代码或在意外传，就 `--net allowlist`。理由和放弃了什么，记在 ADR 0005 的 2026-10-08 修订里。
+
+### 共用一个代理，还是一个 Task 一个（M2-7、design §6.2）
+
+默认所有 Task 共用 `sbx-proxy`，靠代理认证区分谁是谁。`network.proxy = "dedicated"`（或 `sbx run <task> --proxy dedicated`）改成每个 Task 一个 sidecar：
+
+|  | shared（默认） | dedicated |
+|---|---|---|
+| squid 实例 | 全局一个 `sbx-proxy` | `sbx-<ws>-<task>-proxy`，跟着 Task 生死 |
+| 代理地址 | `http://<ws>.<task>:<token>@proxy:3128` | `http://proxy:3128`（没有认证） |
+| 配置位置 | `~/.sbx/proxy/`，一个 Task 一个片段 | `~/.sbx/state/<ws>/<task>/proxy/`，整份独立 |
+| 日志 | 共用 access.log，按用户名拆 | 自己一份，`net denied` 读法一样 |
+| 多占的内存 | 一共 128m | **每个 Task 128m** |
+| 什么时候用 | 日常 | 要排查代理本身、或者不想和别的 Task 共担故障（R8） |
+
+不做认证是因为用不上：这个 sidecar 只接在这一个 Task 的 internal 网络上，除了它没人连得到。
+
+**模式是建容器时定的**，记在 `state/<ws>/<task>/meta.json` 里。之后改配置不会把一个已经在跑的 Task 搬到另一种代理上——要换就 `sbx done` 之后重新 `run`。`sbx stop` 在 dedicated 下停掉这个 Task 自己的 sidecar，shared 下还是等最后一个 Task 停了才停 `sbx-proxy`。
+
+`network.upstream` 两种模式都生效，但 shared 下只有一个上游（来自个人全局配置）。要给某个 Task 配不一样的上游，用 dedicated。
 
 ---
 
@@ -293,6 +314,7 @@ sbx trust             # 确认这个仓库的 .sbx/ 内容（见下）
 | | `-d, --detach` | false |
 | | `--fresh` | false（接上次对话） |
 | | `--net open\|allowlist` | 跟随配置 |
+| | `--proxy shared\|dedicated` | 跟随配置 |
 | | `--cloud-mcp` | false（云端 MCP 被拦；只能开不能关） |
 | `done <task>...` | `--force` | false（脏就报错） |
 | `net denied [task]` | `--all` | false（只看"不在白名单"） |
@@ -395,7 +417,7 @@ max_running   = 3             # 同时运行的 Task 上限，跨 Workspace 计�
 
 [network]
 upstream  = ""                # 宿主机代理，空=直连。只支持 http 上游
-proxy     = "shared"          # dedicated 未实现，写了会报错
+proxy     = "shared"          # shared（默认，全局一个 squid）| dedicated（每个 Task 一个 sidecar）
 mode      = "open"            # open（默认，全放行）| allowlist（只放白名单）
 cloud_mcp = false             # true 则不注入 disableClaudeAiConnectors，也不拦 mcp-proxy
 allow     = []                # 追加到内置白名单，只在 allowlist 模式下起作用
@@ -414,9 +436,9 @@ version      = "latest"       # 写死版本会让 sbx upgrade 拒绝执行
 # api_key_file = "~/.keys/anthropic"   # 或者从文件读。两者只能二选一
 ```
 
-**生效优先级**：命令行 flag（`--net`）> 配置文件 > 内置默认值。`--net` 只改这一次执行，不落盘；`sbx net allow` 落盘。
+**生效优先级**：命令行 flag（`--net`、`--proxy`）> 配置文件 > 内置默认值。这两个 flag 只改这一次执行，不落盘；`sbx net allow` 落盘。
 
-**改了配置什么时候生效**：`network.allow` 对运行中的 Task 可以用 `net allow` 热加载；`resources`、`deps.mask`、`profile` 是建容器时定的，要 `done` 后重建；`mode` 下次 `run` 时重新渲染 proxy 片段。
+**改了配置什么时候生效**：`network.allow` 对运行中的 Task 可以用 `net allow` 热加载；`resources`、`deps.mask`、`profile`、`network.proxy` 是建容器时定的，要 `done` 后重建；`mode` 和 `upstream` 下次 `run` 时重新渲染 proxy 配置。
 
 ## 用 API key 代替订阅登录（M2-13、design §7.1）
 
@@ -484,7 +506,7 @@ sbx: 已经有 3 个 Task 在跑，达到 max_running = 3：shop-e76272.main、s
 并发跑满时可能触发 VM 级 OOM；调小 max_running 或 memory，或者把 Docker 的内存调大。
 ```
 
-VM 内存取自 `docker info` 的 `MemTotal`，Docker Desktop 下就是那台 VM 的内存，不是你机器的内存。
+VM 内存取自 `docker info` 的 `MemTotal`，Docker Desktop 下就是那台 VM 的内存，不是你机器的内存。算的是 agent 容器，代理不算在内：`sbx-proxy` 固定 128m，dedicated 模式下每个 Task 的 sidecar 各 128m，这部分算在留给 VM 的余量里。
 
 阈值本来定的是 85%（R10），2026-10-09 放宽到 95%：85% 下推荐配置（10GB VM + 3 × 3g = 9g）自己就会报警，每次 `sbx run` 都刷一条，等于没有警告。95% 下推荐配置安静，而 `4 × 3g` 或 VM 只给 8GB 这类真的配过头的仍然会响。
 
@@ -501,5 +523,5 @@ VM 内存取自 `docker info` 的 `MemTotal`，Docker Desktop 下就是那台 VM
 ## 当前的边界
 
 - **没有 `sbx merge`**，合并永远是你在主仓库手动做；分支有 commit 没合并时 `done` 不会提醒。
-- `network.proxy = "dedicated"` 会明确报错，不是静默失败。
+- 上游代理只支持 http；只有 SOCKS 的宿主机代理需要你自己加一层转发（design §6.4）。
 - `sbx ls` 的 CJK 列宽对不齐（tabwriter 按字节算宽度）。

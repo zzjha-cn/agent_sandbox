@@ -20,7 +20,7 @@ import (
 const smokeTimeout = 30 * time.Second
 
 func (a *App) runCmd() *cobra.Command {
-	var base, netMode string
+	var base, netMode, proxyMode string
 	var detach, fresh, cloudMCP bool
 	cmd := &cobra.Command{
 		Use:   "run [task]",
@@ -43,6 +43,11 @@ func (a *App) runCmd() *cobra.Command {
 			}
 			if netMode != "" {
 				a.Cfg.Network.Mode = netMode
+			}
+			if proxyMode != "" {
+				a.Cfg.Network.Proxy = proxyMode
+			}
+			if netMode != "" || proxyMode != "" {
 				if err := a.Cfg.Validate(); err != nil {
 					return err
 				}
@@ -62,6 +67,7 @@ func (a *App) runCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&detach, "detach", "d", false, "start the task without attaching to it")
 	cmd.Flags().BoolVar(&fresh, "fresh", false, "start a new conversation instead of continuing this task's last one")
 	cmd.Flags().StringVar(&netMode, "net", "", "network mode for this run: open (default, everything allowed) or allowlist")
+	cmd.Flags().StringVar(&proxyMode, "proxy", "", "egress proxy for this task: shared (default, one squid for everyone) or dedicated (its own sidecar)")
 	cmd.Flags().BoolVar(&cloudMCP, "cloud-mcp", false, "let this task reach Claude's cloud connectors (off by default; see ADR 0015)")
 	return cmd
 }
@@ -114,11 +120,11 @@ func (a *App) resume(t task.Task, st docker.State, fresh bool) error {
 	if !ok {
 		return fmt.Errorf("容器 %s 存在但缺少 %s/meta.json；请先 sbx done %s 再重新 run", t.Container(), t.StateDir(), t.Name)
 	}
-	p := a.proxy()
-	if err := p.EnsureShared(); err != nil {
+	p := a.egress(t)
+	if err := p.Ensure(); err != nil {
 		return err
 	}
-	// 重新写入片段（token 复用），保证 proxy 被重建过时也能恢复
+	// 重新写入配置（shared 下 token 复用），保证代理被重建过时也能恢复
 	if _, err := p.AttachTask(a.proxySpec(t, meta.TaskID)); err != nil {
 		return err
 	}
@@ -158,9 +164,6 @@ func (a *App) proxySpec(t task.Task, taskID string) proxy.TaskSpec {
 }
 
 func (a *App) create(t task.Task, base string, fresh bool) (err error) {
-	if a.Cfg.Network.Proxy != "shared" {
-		return fmt.Errorf("M1 只支持 network.proxy = \"shared\"")
-	}
 	var u undo
 	step := "准备 worktree"
 	defer func() {
@@ -191,9 +194,9 @@ func (a *App) create(t task.Task, base string, fresh bool) (err error) {
 	os.Remove(filepath.Join(t.StateDir(), "status.json"))
 
 	// 4. 网络与 proxy
-	step = "启动 shared proxy"
-	p := a.proxy()
-	if err := p.EnsureShared(); err != nil {
+	step = "准备出网代理"
+	p := a.egressOf(t, a.Cfg.Network.Proxy)
+	if err := p.Ensure(); err != nil {
 		return err
 	}
 	step = "创建 Task 网络"
@@ -207,7 +210,7 @@ func (a *App) create(t task.Task, base string, fresh bool) (err error) {
 		}
 		u.add(func() { a.Docker.NetworkRm(t.Network()) })
 	}
-	step = "接入 shared proxy"
+	step = "接入出网代理"
 	u.add(func() { p.DetachTask(t.ID(), t.Network()); p.StopIfIdle() })
 	proxyURL, err := p.AttachTask(a.proxySpec(t, t.ID()))
 	if err != nil {
@@ -244,7 +247,9 @@ func (a *App) create(t task.Task, base string, fresh bool) (err error) {
 	}
 	labels := t.Labels()
 	labels["sbx.role"] = "agent"
-	labels["sbx.proxy"] = "shared"
+	// 这个 label 是 Shared.StopIfIdle 数"还有没有 shared Task 在跑"的依据，
+	// dedicated 的 Task 不能混进去，否则共享代理永远停不掉
+	labels["sbx.proxy"] = a.Cfg.Network.Proxy
 	spec := docker.RunSpec{
 		Name:    t.Container(),
 		Image:   tag,
@@ -270,7 +275,7 @@ func (a *App) create(t task.Task, base string, fresh bool) (err error) {
 	step = "写入 meta"
 	if err := t.WriteMeta(task.Meta{
 		Task: t.Name, WS: t.WS.ID, Root: t.WS.Root, Base: baseSHA, Profile: a.Cfg.Profile, Image: tag,
-		Proxy: "shared", TaskID: t.ID(), DepMasks: a.Cfg.Deps.Mask, CreatedAt: time.Now().UTC(),
+		Proxy: a.Cfg.Network.Proxy, TaskID: t.ID(), DepMasks: a.Cfg.Deps.Mask, CreatedAt: time.Now().UTC(),
 	}); err != nil {
 		return err
 	}

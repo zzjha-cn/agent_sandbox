@@ -72,7 +72,7 @@ git worktree add -b sbx/fix-login ~/.sbx/worktrees/shop-e76272/fix-login <HEAD �
 
 **⑤ 写 state 目录。** 创建 `~/.sbx/state/shop-e76272/fix-login/gen/`。
 
-**⑥ 启动共享代理（`EnsureShared`）。**
+**⑥ 启动共享代理（`Ensure`）。**
 
 1. 渲染 `~/.sbx/proxy/squid.conf`，其中包括上游代理那行 `cache_peer host.docker.internal parent 7890 …`。
 2. 写入占位片段 `tasks/00-empty.conf`。
@@ -311,7 +311,7 @@ sbx run fix-login
 容器已经存在，所以走恢复流程：
 
 1. 读 `meta.json`，取得 task-id。
-2. `EnsureShared`：sbx-proxy 已停止，执行 `docker start`。squid 的启动命令会先删掉残留的 PID 文件，所以即使昨天它是被强杀的，也能正常启动。如果 access.log 超过 20MB，顺便轮转一次。
+2. `Ensure`：sbx-proxy 已停止，执行 `docker start`。squid 的启动命令会先删掉残留的 PID 文件，所以即使昨天它是被强杀的，也能正常启动。如果 access.log 超过 20MB，顺便轮转一次。
 3. `AttachTask`：用 `proxy.cred` 里原来的 token 重新写入片段和白名单。昨天改过 `network.allow` 的话，这时生效。
 4. 重新渲染 gen 目录。宿主机 `CLAUDE.md` 的改动这时同步进来。
 5. `docker start` 启动容器。

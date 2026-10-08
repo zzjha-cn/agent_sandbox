@@ -34,7 +34,7 @@ func TestIntegrationSharedIsolation(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := s.EnsureShared(); err != nil {
+	if err := s.Ensure(); err != nil {
 		t.Fatal(err)
 	}
 	block := BuiltinList("policy-block")

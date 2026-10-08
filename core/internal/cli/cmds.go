@@ -15,6 +15,7 @@ import (
 
 	"sandx/internal/agent"
 	"sandx/internal/docker"
+	"sandx/internal/proxy"
 	"sandx/internal/task"
 	"sandx/internal/workspace"
 )
@@ -107,10 +108,11 @@ func (a *App) stopCmd() *cobra.Command {
 				}
 			}
 			fmt.Fprintf(a.Out, "已停止 %s\n", t.Name)
-			if stopped, err := a.proxy().StopIfIdle(); err != nil {
+			// dedicated 下停的是这个 Task 自己的 sidecar，shared 下只有最后一个 Task 停了才停
+			if stopped, err := a.egress(t).StopIfIdle(); err != nil {
 				return err
 			} else if stopped {
-				fmt.Fprintln(a.Out, "没有运行中的 Task 了，已停止 sbx-proxy")
+				fmt.Fprintf(a.Out, "已停止 %s\n", a.proxyName(t))
 			}
 			return nil
 		},
@@ -321,10 +323,11 @@ func (a *App) doneCmd() *cobra.Command {
 					errs = append(errs, fmt.Errorf("%s: %w", n, err))
 				}
 			}
+			// dedicated 的 sidecar 在各自的 done 里已经删掉了，这里只管共享的那个
 			if stopped, err := a.proxy().StopIfIdle(); err != nil {
 				errs = append(errs, err)
 			} else if stopped {
-				fmt.Fprintln(a.Out, "没有运行中的 Task 了，已停止 sbx-proxy")
+				fmt.Fprintln(a.Out, "没有运行中的 Task 了，已停止 "+proxy.SharedName)
 			}
 			return errors.Join(errs...)
 		},
@@ -355,7 +358,7 @@ func (a *App) done(t task.Task, force bool) error {
 	if err := a.Docker.Rm(t.Container()); err != nil && !docker.IsNotFound(err) {
 		return err
 	}
-	if err := a.proxy().DetachTask(taskID, t.Network()); err != nil {
+	if err := a.egress(t).DetachTask(taskID, t.Network()); err != nil {
 		return err
 	}
 	if err := a.Docker.NetworkRm(t.Network()); err != nil {

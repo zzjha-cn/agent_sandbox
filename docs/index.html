@@ -251,7 +251,7 @@ footer code{font-size:12.5px}
   <p class="subline">One container, one git worktree and one branch per task. Inside, <code>--dangerously-skip-permissions</code> is fine. Outside, nothing changed.</p>
   <div class="meta">
     <span class="chip on">M1 complete</span>
-    <span class="chip">M2 in progress</span>
+    <span class="chip">M2 done</span>
     <span class="chip">Go 1.27</span>
     <span class="chip">Apache-2.0</span>
   </div>
@@ -850,7 +850,7 @@ core/assets/agent-layer/Dockerfile       <span class="c"># tmux, git, jq, claude
     <div class="num">07</div>
     <div>
       <h2>Where it stands today</h2>
-      <p>M1 (the MVP) is done; M2 is in progress.</p>
+      <p>M1 (the MVP) and M2 (security and configuration) are done; M3 is next.</p>
     </div>
   </div>
 
@@ -859,7 +859,7 @@ core/assets/agent-layer/Dockerfile       <span class="c"># tmux, git, jq, claude
     <h3>Limits worth knowing up front</h3>
     <ul class="limits">
       <li><code>web-go</code> is the only profile (Go + Node + Python); changing the image means editing sbx's own Dockerfiles and rebuilding — per-project images are M2/M3 work (M3-2)</li>
-      <li>networking is shared-proxy only; a dedicated proxy is M2-7</li>
+      <li>a host proxy has to speak HTTP; a SOCKS-only proxy needs a shim of your own</li>
       <li>there is no <code>sbx merge</code>; merging is always done by a person in the main repo</li>
       <li>there is no <code>sbx logs</code> and no headless mode yet (M3-7); read the agent's output with <code>sbx attach</code></li>
     </ul>

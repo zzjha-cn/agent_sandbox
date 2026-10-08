@@ -243,6 +243,15 @@ Workspace (git 仓库) 1 ──── * Task 1 ──── 1 Sandbox
 
 选择方式：`network.proxy = "shared" | "dedicated"`，可以写在任意配置层，`sbx run --proxy dedicated` 按 Task 覆盖。
 
+实现补充（M2-7）：
+
+- 两种部署在代码里是同一个接口（`proxy.Egress`：`Ensure` / `AttachTask` / `DetachTask` / `StopIfIdle` / `AccessLog`），`run`、`stop`、`done`、`net` 都只认这组操作，不去分支判断模式。
+- **模式在建容器时定下，记进 `meta.json`**。已经建好的 Task 之后一律按 meta 走：容器和网络是按那个模式建的，中途改配置把它搬过去只会搬一半。要换就 `done` 之后重建。新建时反过来只看生效配置，不理会上一轮残留的 meta。
+- dedicated 的配置目录是 `state/<ws>/<task>/proxy/`（`squid.conf` + `allow.txt` + `block.txt`），整个目录只读挂到 `/etc/sbx`，和 shared 的挂法一致。容器建的时候直接接 Task 网络（别名 `proxy`），再 `network connect` 到 `sbx-egress` 出网。
+- agent 容器的 `sbx.proxy` label 跟着实际模式写。这个 label 是 `Shared.StopIfIdle` 判断"还有没有 shared Task 在跑"的依据，dedicated 的 Task 混进去会让共享代理永远停不掉（M2-7 实测踩到）。
+- dedicated 没有代理认证，access.log 里的 `%un` 恒为 `-`，读日志时由 sbx 按实例归属补上 TaskID，所以 `net denied` 的筛选和分类只有一套。`sbx net denied` 不带 Task 名时，会把共享代理和本 Workspace 里每个 dedicated sidecar 的日志合起来看，读不到的（Task 停了 sidecar 也停了）跳过。
+- 内存：`sbx-proxy` 一共 128m，dedicated 则是**每个 Task 128m**。这部分不计入 §11 的内存预算公式，算在留给 VM 的余量里。
+
 **安全性**：
 - 每个 Task 的容器只拿得到自己的 token，没法冒用其他 Task 的白名单。
 - Task 的 internal 网络之间互不相通，只有共享 proxy 同时接在这些网络上，而 proxy 不转发 Task 之间的流量（只有 `http_port` 一个入口）。
@@ -320,6 +329,7 @@ http_access allow u_<id>
 - 白名单改动后执行 `docker exec <proxy> squid -k reconfigure` 热加载，不需要重启 Task。
 - Linux 宿主机上，squid 容器需要加 `--add-host=host.docker.internal:host-gateway`。
 - ✅ M0-3 已验证：Clash 一类的混合端口（`7890`）可以直接当 HTTP 上游，日志里能看到 `FIRSTUP_PARENT`。如果宿主机代理只提供 SOCKS，仍然需要一个转发层（暂不实现）。
+- 上游（M2-8）：`network.upstream` 解析成 host + port 渲染进 `cache_peer`，两种部署都支持；只接受 http scheme，缺端口或写成 socks5:// 在配置校验阶段就报错，并指出是哪一层写的。改了上游不用重建容器——下次 `run` 时主配置变了会自动 reconfigure。
 - tasks 片段里的策略拦截要写在放行规则之前：`http_access deny u_<id> cloud_mcp`，然后才是 `http_access allow u_<id> a_<id>`（M0-5 已验证）。
 
 ### 6.5 被拒请求

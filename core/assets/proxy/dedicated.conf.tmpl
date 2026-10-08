@@ -1,0 +1,32 @@
+# sbx dedicated proxy（Task {{.TaskID}}，由 sbx 渲染，勿手改）
+# 整个目录挂载到 /etc/sbx。只服务这一个 Task，所以不需要代理认证：
+# 能连到这个容器的只有这个 Task 的 internal 网络（design §6.2）
+http_port 3128
+acl SSL_ports port 443
+acl CONNECT method CONNECT
+http_access deny CONNECT !SSL_ports
+{{- if .Block}}
+acl blocked dstdomain "/etc/sbx/block.txt"
+http_access deny blocked
+{{- end}}
+{{- if .Open}}
+http_access allow all
+{{- else}}
+acl allowed dstdomain "/etc/sbx/allow.txt"
+http_access allow CONNECT SSL_ports allowed
+http_access allow allowed
+{{- end}}
+http_access deny all
+{{- if .UpstreamHost}}
+
+cache_peer {{.UpstreamHost}} parent {{.UpstreamPort}} 0 no-query no-digest default
+never_direct allow all
+{{- end}}
+
+# 和 shared 用同一个 logformat，这样 access.log 的解析只有一套；
+# 没有认证，%un 恒为 -，Task 由 sbx 在读日志时补上
+logformat sbx %ts.%03tu %un %>a %Ss/%>Hs %rm %ru %Sh/%<a
+access_log stdio:/var/log/squid/access.log sbx
+logfile_rotate 1
+cache deny all
+shutdown_lifetime 1 seconds

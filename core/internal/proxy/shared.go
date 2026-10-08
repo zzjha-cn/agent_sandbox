@@ -50,7 +50,20 @@ func (s Shared) egress() string {
 	return EgressNet
 }
 
-// TaskSpec 描述一个接入 shared proxy 的 Task。
+// Egress 是一个 Task 的出网代理。shared 下是全局共用的 sbx-proxy，dedicated 下是
+// 这个 Task 独占的 sidecar（design §6.2）；run / stop / done / net 只认这组操作，
+// 不关心背后是哪一种。
+type Egress interface {
+	Ensure() error
+	AttachTask(TaskSpec) (string, error)
+	DetachTask(taskID, network string) error
+	StopIfIdle() (stopped bool, err error)
+	AccessLog() ([]Entry, error)
+}
+
+var _, _ Egress = Shared{}, Dedicated{}
+
+// TaskSpec 描述一个接入 proxy 的 Task。
 type TaskSpec struct {
 	TaskID   string // <ws>.<task>
 	Network  string // Task 的 internal 网络
@@ -109,8 +122,8 @@ func (s Shared) writeBase() (changed bool, err error) {
 	return changed, nil
 }
 
-// EnsureShared 确保 sbx-egress 网络和 sbx-proxy 容器存在并在运行。
-func (s Shared) EnsureShared() error {
+// Ensure 确保 sbx-egress 网络和 sbx-proxy 容器存在并在运行。
+func (s Shared) Ensure() error {
 	unlock, err := s.lock()
 	if err != nil {
 		return err

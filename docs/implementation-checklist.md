@@ -109,8 +109,8 @@
 
 ### 网络
 - [x] **M2-6** open 模式：`--net open` 和配置项 `network.mode`；shared 模式下生成 open 片段。**默认值已改为 `open`**（2026-10-08，ADR 0005 修订）。
-- [ ] **M2-7** dedicated 模式：sidecar 的创建和销毁，`--proxy dedicated` 和配置项 `network.proxy`。
-- [ ] **M2-8** 上游代理：`network.upstream` 对应 `cache_peer`；Linux 上给 squid 容器加 `--add-host host-gateway`。
+- [x] **M2-7** dedicated 模式：sidecar 的创建和销毁，`--proxy dedicated` 和配置项 `network.proxy`。两种部署收敛到一个 `proxy.Egress` 接口，`run`/`stop`/`done`/`net` 不做模式分支。**模式建容器时定下并记进 meta.json**，之后改配置不会把已有 Task 搬过去（要换得 `done` 后重建）。sidecar 不做代理认证（只有本 Task 的 internal 网络连得到它），配置整份写在 `state/<ws>/<task>/proxy/`。agent 容器的 `sbx.proxy` label 跟着实际模式写，否则 dedicated 的 Task 会让 `sbx-proxy` 永远停不掉（实测踩到）。`net denied` 对两种模式用同一套解析：dedicated 日志里没有用户名，由 sbx 按实例补上 TaskID。
+- [x] **M2-8** 上游代理：`network.upstream` 对应 `cache_peer`，shared 和 dedicated 都支持；Linux 上给 squid 容器加 `--add-host host.docker.internal:host-gateway`。只接受 http 上游，缺端口或写成 socks5:// 在配置校验阶段报错并指出是哪一层写的。改了上游不用重建容器，下次 `run` 主配置变了会自动 reconfigure。
 - [x] **M2-9** 项目层白名单 `network.allow`：随 M2-1 的列表并集生效。
 - [x] **M2-10** `sbx net denied [task]`：解析 access.log，shared 模式下按用户名过滤；**分三类**统计：不在白名单（默认展示）/ 策略拦截和遥测（`--all`）/ 407 认证失败（§6.5）。
 - [x] **M2-10a** `network.cloud_mcp` 和 `sbx run --cloud-mcp` 解除云端 MCP 拦截（ADR 0015）。flag 只能打开不能关——关是默认值。R11 已解决：`cloud_mcp = false`（默认）时在注入的 settings 里写 `disableClaudeAiConnectors: true`，claude 不再去取云端连接器，重试风暴消失。
@@ -122,7 +122,7 @@
 
 ### 资源
 - [x] **M2-14** 并发检查：正在运行的 agent 容器数达到 `max_running` 时拒绝启动（**跨 Workspace 计数**，因为 Docker VM 的内存是共用的；限额取自当前 Workspace 的配置）。`sbx run` 一个已经在跑的 Task 只是 attach，不受限。`max_running × memory > Docker VM 内存 × 0.95` 时警告（R10；**阈值 2026-10-09 从 0.85 放宽到 0.95**，否则 design §11 推荐的 3 × 3g + 10GB VM 自己就会报警，每次 run 都刷一条）。
-- [ ] **M2-15** 资源上限支持在各配置层覆盖。
+- [x] **M2-15** 资源上限支持在各配置层覆盖：`resources.cpus/memory/pids` 三个字段都走 `bindings` 表，四层都能写，`sbx config show` 能看出每个值来自哪一层；非法值在合并之后校验，报错指出来源层。项目层也能写（不是红线字段，而且 `.sbx/` 的改动要过信任确认）。
 
 ---
 

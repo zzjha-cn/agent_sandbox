@@ -93,6 +93,7 @@ func ACLName(taskID string) string {
 var (
 	mainTmpl = template.Must(template.New("squid").Parse(string(assets.Read("proxy/squid.conf.tmpl"))))
 	taskTmpl = template.Must(template.New("task").Parse(string(assets.Read("proxy/task.conf.tmpl"))))
+	dedTmpl  = template.Must(template.New("dedicated").Parse(string(assets.Read("proxy/dedicated.conf.tmpl"))))
 )
 
 // RenderMain 渲染主配置。upstreamHost 为空时不串联上游。
@@ -112,6 +113,20 @@ func RenderTask(taskID string, block, open bool) []byte {
 		panic(err)
 	}
 	b.WriteByte('\n')
+	return b.Bytes()
+}
+
+// RenderDedicated 渲染 dedicated 模式下某个 Task 独占实例的整份配置。
+// 和 shared 不同，这里没有 include 片段，白名单和拦截表就在同一个目录里。
+func RenderDedicated(taskID string, block, open bool, upstreamHost, upstreamPort string) []byte {
+	var b bytes.Buffer
+	err := dedTmpl.Execute(&b, map[string]any{
+		"TaskID": taskID, "Block": block, "Open": open,
+		"UpstreamHost": upstreamHost, "UpstreamPort": upstreamPort,
+	})
+	if err != nil {
+		panic(err)
+	}
 	return b.Bytes()
 }
 

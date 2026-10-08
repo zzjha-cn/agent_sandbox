@@ -111,12 +111,13 @@ git merge sbx/fix-login        # 合并（sbx 不会自动合并）
 
 ## 网络
 
-出网一律经过一个共享的 Squid（`sbx-proxy`），**默认不拦截**。
+出网一律经过 Squid，默认是所有 Task 共用一个（`sbx-proxy`），**默认不拦截**。
 
 ```bash
 sbx net denied                 # 它被拦了什么（--all 看全部分类，--since 2h 限时间）
 sbx net allow fastdl.mongodb.org   # 放行，并对运行中的 Task 热加载，不用重启
 sbx run t1 --net allowlist     # 这一次按白名单跑
+sbx run t1 --proxy dedicated   # 这一次用独占的代理 sidecar
 ```
 
 白名单模式（`network.mode = "allowlist"`）只放行内置名单加你配的域名，适合跑不信任的代码。两种模式都经过 Squid，所以日志一直有；云端 MCP 的策略拦截两种模式下都生效（[ADR 0015](docs/CONTEXT.md)）。
@@ -164,9 +165,9 @@ sbx trust          # 确认这个仓库的 .sbx/ 内容
 
 ## 项目状态
 
-**M1（MVP）完成，M2 进行中。** 可用命令：`run / attach / shell / stop / ls / path / done / net / memory / login / config / upgrade`。
+**M1（MVP）和 M2（安全与配置）都已完成，下一步是 M3。** 可用命令：`run / attach / shell / stop / ls / path / done / net / memory / login / config / trust / upgrade`。
 
-已知边界：内置 Profile 只有 `web-go`；网络只有 shared proxy（dedicated 待 M2-7）；没有 `sbx merge`。
+已知边界：内置 Profile 只有 `web-go`；没有 `sbx merge`；上游代理只支持 http（只有 SOCKS 的话要自己加一层转发）。
 
 路线图见 [implementation-checklist.md](docs/implementation-checklist.md)。
 

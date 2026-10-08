@@ -12,6 +12,7 @@ import (
 
 	"sandx/internal/config"
 	"sandx/internal/proxy"
+	"sandx/internal/task"
 )
 
 func (a *App) netCmd() *cobra.Command {
@@ -78,7 +79,6 @@ func (a *App) reloadAllow() (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	p := a.proxy()
 	n := 0
 	for _, name := range names {
 		t, err := a.task(name)
@@ -89,12 +89,7 @@ func (a *App) reloadAllow() (int, error) {
 		if err != nil || !exists || !st.Running {
 			continue
 		}
-		meta, ok, _ := t.ReadMeta()
-		taskID := t.ID()
-		if ok && meta.TaskID != "" {
-			taskID = meta.TaskID
-		}
-		if _, err := p.AttachTask(a.proxySpec(t, taskID)); err != nil {
+		if _, err := a.egress(t).AttachTask(a.proxySpec(t, a.taskID(t))); err != nil {
 			return n, err
 		}
 		n++
@@ -115,16 +110,17 @@ func (a *App) netDeniedCmd() *cobra.Command {
 			}
 			// 日志里的用户名是 TaskID（<ws>.<task>）。省略 task 时按 ws 前缀过滤。
 			taskID, prefix := "", a.WS.ID+"."
+			var only *task.Task
 			if len(args) == 1 {
 				t, err := a.task(args[0])
 				if err != nil {
 					return err
 				}
-				taskID = t.ID()
+				taskID, only = a.taskID(t), &t
 			}
-			entries, err := a.proxy().AccessLog()
+			entries, err := a.accessLogs(only)
 			if err != nil {
-				return fmt.Errorf("读不到 sbx-proxy 的日志（代理没在运行？）：%w", err)
+				return err
 			}
 			var from time.Time
 			if since > 0 {

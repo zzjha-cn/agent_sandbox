@@ -63,6 +63,31 @@ func TestRenderGolden(t *testing.T) {
 	golden(t, "squid-direct.conf.golden", RenderMain("", ""))
 	golden(t, "task-block.conf.golden", RenderTask("demo-abc123.t1", true, false))
 	golden(t, "task-cloudmcp.conf.golden", RenderTask("demo-abc123.t1", false, false))
+	golden(t, "dedicated.conf.golden", RenderDedicated("demo-abc123.t1", true, false, "host.docker.internal", "7890"))
+	golden(t, "dedicated-open.conf.golden", RenderDedicated("demo-abc123.t1", true, true, "", ""))
+}
+
+// dedicated 实例只服务一个 Task，所以不能有认证，也不能有 include 片段；
+// 拦截规则必须排在放行之前，否则 policy-block 会被白名单放过去（M0-5）。
+func TestRenderDedicatedShape(t *testing.T) {
+	conf := string(RenderDedicated("demo.t1", true, false, "", ""))
+	for _, no := range []string{"auth_param", "proxy_auth", "include ", "cache_peer"} {
+		if strings.Contains(conf, no) {
+			t.Errorf("dedicated conf should not contain %q:\n%s", no, conf)
+		}
+	}
+	deny := strings.Index(conf, "http_access deny blocked")
+	allow := strings.Index(conf, "http_access allow CONNECT SSL_ports allowed")
+	if deny < 0 || allow < 0 || deny > allow {
+		t.Fatalf("block rule must come before allow rules:\n%s", conf)
+	}
+	open := string(RenderDedicated("demo.t1", false, true, "", ""))
+	if !strings.Contains(open, "http_access allow all") || strings.Contains(open, "allow.txt") {
+		t.Fatalf("open mode:\n%s", open)
+	}
+	if up := string(RenderDedicated("demo.t1", false, false, "host.docker.internal", "7890")); !strings.Contains(up, "cache_peer host.docker.internal parent 7890") || !strings.Contains(up, "never_direct allow all") {
+		t.Fatalf("upstream:\n%s", up)
+	}
 }
 
 func TestUpsertPasswd(t *testing.T) {

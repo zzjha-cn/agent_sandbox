@@ -179,3 +179,57 @@ func TestProjectLayerRejectsAPIKeyFields(t *testing.T) {
 		t.Fatal("项目层写 api_key_env 应该直接报错")
 	}
 }
+
+// M2-15：资源上限在每一层都能覆盖，三个字段都算。
+// 项目层也能写——它们不是红线字段，而且 .sbx/ 的改动要过信任确认（design §9.3）。
+func TestResourceLayers(t *testing.T) {
+	d := t.TempDir()
+	global := write(t, d, "g.toml", "[resources]\ncpus = 4\nmemory = \"5g\"\npids = 2048\n", false)
+	project := write(t, d, "p.toml", "[resources]\nmemory = \"6g\"\n", true)
+	ws := write(t, d, "w.toml", "[resources]\ncpus = 8\n", false)
+
+	ld, err := LoadLayers([]Layer{global, project, ws})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := ld.Config.Resources
+	if r.CPUs != 8 || r.Memory != "6g" || r.Pids != 2048 {
+		t.Fatalf("%+v", r)
+	}
+	for key, want := range map[string]string{
+		"resources.cpus":   "w.toml",
+		"resources.memory": "p.toml",
+		"resources.pids":   "g.toml",
+	} {
+		if got := ld.Sources[key].String(); got != want {
+			t.Errorf("%s 来自 %q，期望 %q", key, got, want)
+		}
+	}
+	// 非法值照样要报错，并指出是哪一层写的
+	bad := write(t, d, "bad.toml", "[resources]\nmemory = \"3 gigs\"\n", false)
+	if _, err := LoadLayers([]Layer{global, bad}); err == nil || !strings.Contains(err.Error(), "bad.toml") {
+		t.Fatalf("非法的 memory 要报错并指出来源，得到：%v", err)
+	}
+}
+
+// M2-7 / M2-8：代理模式和上游地址也是分层的。
+func TestProxyAndUpstreamLayers(t *testing.T) {
+	d := t.TempDir()
+	global := write(t, d, "g2.toml", "[network]\nupstream = \"http://host.docker.internal:7890\"\n", false)
+	ws := write(t, d, "w2.toml", "[network]\nproxy = \"dedicated\"\n", false)
+	ld, err := LoadLayers([]Layer{global, ws})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ld.Config.Network.Proxy != "dedicated" {
+		t.Fatalf("proxy = %q", ld.Config.Network.Proxy)
+	}
+	host, port, err := ld.Config.Upstream()
+	if err != nil || host != "host.docker.internal" || port != "7890" {
+		t.Fatalf("upstream = %s:%s %v", host, port, err)
+	}
+	bad := write(t, d, "bad2.toml", "[network]\nproxy = \"sidecar\"\n", false)
+	if _, err := LoadLayers([]Layer{global, bad}); err == nil || !strings.Contains(err.Error(), "bad2.toml") {
+		t.Fatalf("非法的 proxy 要报错并指出来源，得到：%v", err)
+	}
+}
