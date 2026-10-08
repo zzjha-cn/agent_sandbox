@@ -23,8 +23,13 @@ func (r Runtime) exec(cmd ...string) (string, error) {
 }
 
 // Preseed 预置首次启动状态并建立宿主机配置的软链接。
-func (r Runtime) Preseed() (string, error) {
-	return r.Docker.Exec(r.Container, docker.ExecOpts{User: "agent", Env: []string{"SBX_WORKTREE=" + r.Worktree}},
+// apiKey 非空时顺带把它记成"已批准的自定义 API key"，否则交互模式会卡在确认框上。
+func (r Runtime) Preseed(apiKey string) (string, error) {
+	env := []string{"SBX_WORKTREE=" + r.Worktree}
+	if v := APIKeyApproval(apiKey); v != "" {
+		env = append(env, "SBX_API_KEY_APPROVE="+v)
+	}
+	return r.Docker.Exec(r.Container, docker.ExecOpts{User: "agent", Env: env},
 		"bash", "-c", Preseed()+"\n")
 }
 

@@ -166,6 +166,8 @@ type EnvInput struct {
 	GitName, GitMail string
 	WS, Task         string
 	TZ               string // 宿主机时区名，空则留给容器默认（UTC）
+	APIKeyEnv        string // 注入 API key 的环境变量名，空表示走订阅登录（M2-13）
+	APIKey           string
 }
 
 // Env 生成 agent 容器的环境变量。
@@ -186,6 +188,11 @@ func Env(in EnvInput) []string {
 	}
 	if in.GitMail != "" {
 		env = append(env, "GIT_AUTHOR_EMAIL="+in.GitMail, "GIT_COMMITTER_EMAIL="+in.GitMail)
+	}
+	// API key 配了就注入，优先级高于 sbx-home 里的订阅登录（design §7.1）。
+	// 注意它会留在容器的 Config 里，docker inspect 看得到——这是环境变量注入的固有代价。
+	if in.APIKeyEnv != "" && in.APIKey != "" {
+		env = append(env, in.APIKeyEnv+"="+in.APIKey)
 	}
 	return env
 }

@@ -24,12 +24,14 @@ type authCLI struct {
 	login  func(console bool, email string) []string // 走登录流程的子命令
 	logout []string                                  // 退出登录的子命令
 	parse  func(out string, err error) (agent.Status, error)
+	keyEnv string // 注入 API key 用的环境变量名（M2-13）
 }
 
 // authCLIs 是已经实现的 Agent。加一个新的 Agent = 在这里加一条。
 var authCLIs = map[string]authCLI{
 	"claude": {
 		bin:    "claude",
+		keyEnv: "ANTHROPIC_API_KEY",
 		status: []string{"auth", "status"},
 		login: func(console bool, email string) []string {
 			sub := []string{"auth", "login"}

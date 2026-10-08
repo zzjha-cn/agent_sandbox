@@ -141,3 +141,41 @@ func TestPaths(t *testing.T) {
 		t.Fatalf("%+v", got)
 	}
 }
+
+// api_key_env 跟 version 一样按层合并；而项目层根本不许出现它（M2-2）。
+func TestAPIKeyLayers(t *testing.T) {
+	dir := t.TempDir()
+	global := filepath.Join(dir, "config.toml")
+	ws := filepath.Join(dir, "ws.toml")
+	os.WriteFile(global, []byte("[agents.claude]\napi_key_env = \"GLOBAL_KEY\"\nversion = \"1.2.3\"\n"), 0o644)
+	os.WriteFile(ws, []byte("[agents.claude]\napi_key_env = \"WS_KEY\"\n"), 0o644)
+
+	ld, err := LoadLayers([]Layer{
+		{Name: LayerGlobal, Path: global},
+		{Name: LayerWorkspace, Path: ws},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ag := ld.Config.Agents["claude"]
+	if ag.APIKeyEnv != "WS_KEY" {
+		t.Errorf("工作区层应该覆盖全局层：%q", ag.APIKeyEnv)
+	}
+	// 只在全局层写过的 version 不该被工作区层清空
+	if ag.Version != "1.2.3" {
+		t.Errorf("version 被覆盖没写的层清掉了：%q", ag.Version)
+	}
+	if got := ld.Sources["agents.claude.api_key_env"].Last(); got != LayerWorkspace {
+		t.Errorf("来源标错了：%q", got)
+	}
+}
+
+func TestProjectLayerRejectsAPIKeyFields(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "sandbox.toml")
+	os.WriteFile(p, []byte("[agents.claude]\napi_key_env = \"ANTHROPIC_API_KEY\"\n"), 0o644)
+	_, err := LoadLayers([]Layer{{Name: LayerProject, Path: p, Project: true}})
+	if err == nil {
+		t.Fatal("项目层写 api_key_env 应该直接报错")
+	}
+}

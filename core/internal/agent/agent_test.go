@@ -202,3 +202,74 @@ func TestEnvTZ(t *testing.T) {
 		}
 	}
 }
+
+func TestEnvInjectsAPIKey(t *testing.T) {
+	env := Env(EnvInput{ProxyURL: "http://p", APIKeyEnv: "ANTHROPIC_API_KEY", APIKey: "sk-x"})
+	var found bool
+	for _, e := range env {
+		if e == "ANTHROPIC_API_KEY=sk-x" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("API key 没有注入：%v", env)
+	}
+	// 没配的时候不该凭空出现一个空变量
+	for _, e := range Env(EnvInput{ProxyURL: "http://p"}) {
+		if strings.HasPrefix(e, "ANTHROPIC_API_KEY") {
+			t.Fatalf("没配 API key 却注入了 %q", e)
+		}
+	}
+}
+
+func TestAPIKeyApproval(t *testing.T) {
+	// claude 记的是 key 的后 20 个字符，弹窗里显示的也是这一段（M2-13 实测）
+	if got := APIKeyApproval("sk-ant-probe-not-a-real-key-0000000000"); got != "-real-key-0000000000" {
+		t.Errorf("想要 -real-key-0000000000，得到 %q", got)
+	}
+	if got := APIKeyApproval("short"); got != "short" {
+		t.Errorf("太短的 key 应该原样返回，得到 %q", got)
+	}
+	if got := APIKeyApproval(""); got != "" {
+		t.Errorf("空 key 应该返回空，得到 %q", got)
+	}
+}
+
+// 注入 API key 时要把确认框先按掉，否则无人值守会卡在 "Do you want to use this API key?"。
+func TestPreseedApprovesAPIKey(t *testing.T) {
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("jq not found")
+	}
+	home := t.TempDir()
+	os.WriteFile(filepath.Join(home, ".claude.json"),
+		[]byte(`{"customApiKeyResponses":{"approved":[],"rejected":["-real-key-0000000000"]}}`), 0o600)
+	run := func(approve string) map[string]any {
+		cmd := exec.Command("bash", "-c", Preseed())
+		cmd.Env = append(os.Environ(), "HOME="+home, "SBX_WORKTREE=/w/t1", "SBX_API_KEY_APPROVE="+approve)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%v: %s", err, out)
+		}
+		b, _ := os.ReadFile(filepath.Join(home, ".claude.json"))
+		var cj map[string]any
+		json.Unmarshal(b, &cj)
+		return cj["customApiKeyResponses"].(map[string]any)
+	}
+	got := run("-real-key-0000000000")
+	approved := got["approved"].([]any)
+	if len(approved) != 1 || approved[0] != "-real-key-0000000000" {
+		t.Fatalf("没有记成已批准：%v", got)
+	}
+	// 之前被拒过的同一个 key 要从 rejected 里拿掉，否则 claude 还是不用它
+	if len(got["rejected"].([]any)) != 0 {
+		t.Errorf("rejected 没清干净：%v", got)
+	}
+	// 跑第二遍不该重复追加
+	if again := run("-real-key-0000000000"); len(again["approved"].([]any)) != 1 {
+		t.Errorf("不幂等：%v", again)
+	}
+	// 没配 key 时不动这一段
+	before := run("")
+	if len(before["approved"].([]any)) != 1 {
+		t.Errorf("没配 key 时不该改动已有记录：%v", before)
+	}
+}

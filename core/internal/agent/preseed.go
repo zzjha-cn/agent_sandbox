@@ -24,6 +24,15 @@ edit() { # edit <file> <jq filter>
 edit "$HOME/.claude.json" '.hasCompletedOnboarding = true | .projects[$wt].hasTrustDialogAccepted = true'
 edit "$HOME/.claude/settings.json" '.theme //= "dark" | .skipDangerousModePermissionPrompt = true'
 
+# 注入了 API key 时，claude 会弹"Detected a custom API key … Do you want to use this API key?"
+# 并默认停在 No 上，无人值守就卡死在这里（M2-13 实测）。它记在 ~/.claude.json 的
+# customApiKeyResponses.approved 里，值是 key 的后 20 个字符。
+if [ -n "${SBX_API_KEY_APPROVE:-}" ]; then
+  edit "$HOME/.claude.json" --arg k "$SBX_API_KEY_APPROVE" \
+    '.customApiKeyResponses.approved = ((.customApiKeyResponses.approved // []) + [$k] | unique)
+     | .customApiKeyResponses.rejected = ((.customApiKeyResponses.rejected // []) - [$k])'
+fi
+
 link() { # link <name> <target>
   dst="$HOME/.claude/$1"
   if [ -L "$dst" ] || [ ! -e "$dst" ]; then
@@ -46,3 +55,16 @@ func linkLines() string {
 
 // Preseed 返回完整脚本。
 func Preseed() string { return PreseedScript + linkLines() }
+
+// APIKeyApproval 返回写进 customApiKeyResponses.approved 的值：key 的后 20 个字符
+// （claude 自己就是这么记的，弹窗里显示的也是这一段）。key 太短时原样返回。
+func APIKeyApproval(key string) string {
+	if key == "" {
+		return ""
+	}
+	r := []rune(key)
+	if len(r) <= 20 {
+		return key
+	}
+	return string(r[len(r)-20:])
+}

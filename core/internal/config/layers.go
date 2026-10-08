@@ -140,7 +140,7 @@ type binding struct {
 }
 
 // bindings 列出所有可配置字段，顺序就是 sbx config show 的输出顺序。
-// agents.<name>.version 是 map，单独处理。
+// agents.<name>.* 是 map，由 agentFields 单独处理。
 func bindings(c *Config) []binding {
 	return []binding{
 		{Key: "default_agent", Str: &c.DefaultAgent},
@@ -180,16 +180,32 @@ func mergeLayer(dst *Config, src Config, md toml.MetaData, layer string, srcs ma
 		mark(srcs, d.Key, layer, d.List != nil)
 	}
 	for name, a := range src.Agents {
-		if !md.IsDefined("agents", name, "version") {
+		cur, touched := dst.Agents[name], false
+		df, sf := agentFields(&cur), agentFields(&a)
+		for i := range df {
+			if !md.IsDefined("agents", name, df[i].Key) {
+				continue
+			}
+			*df[i].Str = *sf[i].Str
+			mark(srcs, "agents."+name+"."+df[i].Key, layer, false)
+			touched = true
+		}
+		if !touched {
 			continue
 		}
 		if dst.Agents == nil {
 			dst.Agents = map[string]Agent{}
 		}
-		cur := dst.Agents[name]
-		cur.Version = a.Version
 		dst.Agents[name] = cur
-		mark(srcs, "agents."+name+".version", layer, false)
+	}
+}
+
+// agentFields 是 agents.<name> 下可配置的字段，顺序就是 sbx config show 的输出顺序。
+func agentFields(a *Agent) []binding {
+	return []binding{
+		{Key: "version", Str: &a.Version},
+		{Key: "api_key_env", Str: &a.APIKeyEnv},
+		{Key: "api_key_file", Str: &a.APIKeyFile},
 	}
 }
 
@@ -231,8 +247,15 @@ func (ld Loaded) Show() [][3]string {
 	}
 	sort.Strings(names)
 	for _, n := range names {
-		key := "agents." + n + ".version"
-		rows = append(rows, [3]string{key, strconv.Quote(ld.Config.Agents[n].Version), ld.Sources[key].String()})
+		ag := ld.Config.Agents[n]
+		for _, f := range agentFields(&ag) {
+			// 没配过的 api_key_* 不占一行，免得把表撑开
+			if *f.Str == "" && f.Key != "version" {
+				continue
+			}
+			key := "agents." + n + "." + f.Key
+			rows = append(rows, [3]string{key, strconv.Quote(*f.Str), ld.Sources[key].String()})
+		}
 	}
 	return rows
 }

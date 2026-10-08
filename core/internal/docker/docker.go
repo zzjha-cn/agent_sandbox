@@ -313,6 +313,11 @@ func (c *Client) ListByLabel(kind string, selectors ...string) ([]Item, error) {
 	if err != nil {
 		return nil, err
 	}
+	return parseItems(out)
+}
+
+// parseItems 解析 --format "{{json .}}" 的逐行输出。
+func parseItems(out string) ([]Item, error) {
 	var items []Item
 	sc := bufio.NewScanner(strings.NewReader(out))
 	sc.Buffer(make([]byte, 1<<20), 1<<20)
@@ -323,11 +328,53 @@ func (c *Client) ListByLabel(kind string, selectors ...string) ([]Item, error) {
 		}
 		var it Item
 		if err := json.Unmarshal([]byte(line), &it); err != nil {
-			return nil, fmt.Errorf("parse %s ls: %w", kind, err)
+			return nil, fmt.Errorf("parse docker ls output: %w", err)
 		}
 		items = append(items, it)
 	}
 	return items, nil
+}
+
+// HasEnv 报告容器的 Config.Env 里有没有这个变量名。
+func (c *Client) HasEnv(name, key string) (bool, error) {
+	out, err := c.Run("inspect", "-f", "{{range .Config.Env}}{{println .}}{{end}}", name)
+	if err != nil {
+		return false, err
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if k, _, ok := strings.Cut(strings.TrimSpace(line), "="); ok && k == key {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// Info 返回 docker info 的 json。Docker Desktop 下 MemTotal 是那台 VM 的内存，
+// 不是宿主机的内存——sbx 的内存预算算的就是 VM。
+func (c *Client) Info() (Item, error) {
+	out, err := c.Run("info", "--format", "{{json .}}")
+	if err != nil {
+		return nil, err
+	}
+	var it Item
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &it); err != nil {
+		return nil, fmt.Errorf("parse docker info: %w", err)
+	}
+	return it, nil
+}
+
+// Running 列出当前正在运行的、带这些 label 的容器。
+func (c *Client) Running(selectors ...string) ([]Item, error) {
+	args := []string{"ps"}
+	for _, s := range selectors {
+		args = append(args, "--filter", "label="+s)
+	}
+	args = append(args, "--format", "{{json .}}")
+	out, err := c.Run(args...)
+	if err != nil {
+		return nil, err
+	}
+	return parseItems(out)
 }
 
 // ---- helpers ----

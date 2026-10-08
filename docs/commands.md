@@ -293,6 +293,7 @@ sbx trust             # 确认这个仓库的 .sbx/ 内容（见下）
 | | `-d, --detach` | false |
 | | `--fresh` | false（接上次对话） |
 | | `--net open\|allowlist` | 跟随配置 |
+| | `--cloud-mcp` | false（云端 MCP 被拦；只能开不能关） |
 | `done <task>...` | `--force` | false（脏就报错） |
 | `net denied [task]` | `--all` | false（只看"不在白名单"） |
 | | `--since <dur>` | 0（全部），例如 `2h`、`30m` |
@@ -390,7 +391,7 @@ sbx trust -y       # 不询问直接记下
 ```toml
 profile       = "web-go"      # 内置 Profile，目前只有这一个
 default_agent = "claude"
-max_running   = 3             # 注意：当前代码只校验合法性，还没有真正限流
+max_running   = 3             # 同时运行的 Task 上限，跨 Workspace 计数
 
 [network]
 upstream  = ""                # 宿主机代理，空=直连。只支持 http 上游
@@ -408,12 +409,86 @@ pids   = 1024
 mask = ["node_modules"]       # 每一项在容器里挂一个独立 volume 遮住，避免污染宿主机
 
 [agents.claude]
-version = "latest"            # 写死版本会让 sbx upgrade 拒绝执行
+version      = "latest"       # 写死版本会让 sbx upgrade 拒绝执行
+# api_key_env  = "ANTHROPIC_API_KEY"   # 从宿主机环境变量读，优先于订阅登录
+# api_key_file = "~/.keys/anthropic"   # 或者从文件读。两者只能二选一
 ```
 
 **生效优先级**：命令行 flag（`--net`）> 配置文件 > 内置默认值。`--net` 只改这一次执行，不落盘；`sbx net allow` 落盘。
 
 **改了配置什么时候生效**：`network.allow` 对运行中的 Task 可以用 `net allow` 热加载；`resources`、`deps.mask`、`profile` 是建容器时定的，要 `done` 后重建；`mode` 下次 `run` 时重新渲染 proxy 片段。
+
+## 用 API key 代替订阅登录（M2-13、design §7.1）
+
+```toml
+# ~/.sbx/config.toml 或 ~/.sbx/workspaces/<ws>.toml —— 不能写在项目层
+[agents.claude]
+api_key_env = "ANTHROPIC_API_KEY"     # 从宿主机的这个环境变量读
+# api_key_file = "~/.keys/anthropic"  # 或者从文件读；两者只能二选一
+```
+
+配上之后 `sbx run` 就不查订阅登录态了，key 在建容器时以 `ANTHROPIC_API_KEY` 注入容器：
+
+```
+$ sbx run api
+用 API key 启动（来自环境变量 ANTHROPIC_API_KEY），不走订阅登录
+```
+
+几个要点：
+
+- **配了但取不到值会直接报错**（环境变量没设、文件不存在或为空），不会静默退回订阅登录——否则你以为在用 API key，账单却记到订阅账号上。
+- **这两个键只能写在全局层或工作区层。** 项目层的红线（M2-2）会拦住它们，键名里有 `key` 就不行。
+- **key 会留在容器的 `Config.Env` 里**，`docker inspect` 看得到。这是环境变量注入的固有代价，design §7.1 选的就是这条路。
+- **环境变量只能在建容器时注入。** 已经建好的 Task 不会因为你改了配置就拿到 key；`sbx run` 会检测到并明确告诉你要 `sbx done` 之后重建，而不是让 claude 自己报一个莫名其妙的认证错误。
+- claude 看到环境里有自定义 key 时会弹一个 “Detected a custom API key … Do you want to use this API key?” 并**默认停在 No** 上，无人值守会卡死。sbx 在 preseed 阶段把 key 的后 20 个字符写进 `~/.claude.json` 的 `customApiKeyResponses.approved`，把这个框按掉（M2-13 实测）。
+
+---
+
+## 云端 MCP（M2-10a、ADR 0015）
+
+默认**不**让 Task 连 Claude 的云端连接器：代理拦 `mcp-proxy.anthropic.com`，同时在注入的 settings 里写 `disableClaudeAiConnectors: true`（不从源头关掉的话 claude 会反复重试，实测一分钟撞出三百多次 403，R11）。
+
+要用就打开：
+
+```bash
+sbx run api --cloud-mcp          # 只这一次
+```
+
+```toml
+[network]
+cloud_mcp = true                 # 一直打开
+```
+
+`--cloud-mcp` 只能打开不能关——关是默认值，不加就是关。
+
+---
+
+## 并发与内存（M2-14、design §11、R10）
+
+`sbx run` 在真要启动一个容器之前查两件事：
+
+**并发**：正在运行的 agent 容器数达到 `max_running`（默认 3）就拒绝，并列出是谁占着。
+
+```
+$ sbx run api
+sbx: 已经有 3 个 Task 在跑，达到 max_running = 3：shop-e76272.main、shop-e76272.fix、blog-a1b2c3.main
+先 sbx stop 掉一个，或者在 ~/.sbx/config.toml 里调大 max_running（注意内存：每个 Task 上限 3g）
+```
+
+计数是**跨 Workspace 的**——`max_running` 管的是 Docker VM 的内存，而那是所有仓库共用的；限额本身取自你当前所在仓库的配置。`sbx run` 一个已经在跑的 Task 只是 attach，不占新名额，不会被自己挡住。启动一个已停止的 Task 同样要过这一关（design §10.1 把这步画在"新建"分支里，但重启一样多占一份内存）。
+
+**内存预算**：`max_running × resources.memory` 超过 Docker VM 内存的 95% 时警告一次，不拒绝——`--memory` 是上限不是预留，用不满是常态。
+
+```
+警告: max_running(4) × resources.memory(3g) = 12.0g，超过 Docker VM 内存 9.7g 的 95%。
+并发跑满时可能触发 VM 级 OOM；调小 max_running 或 memory，或者把 Docker 的内存调大。
+```
+
+VM 内存取自 `docker info` 的 `MemTotal`，Docker Desktop 下就是那台 VM 的内存，不是你机器的内存。
+
+阈值本来定的是 85%（R10），2026-10-09 放宽到 95%：85% 下推荐配置（10GB VM + 3 × 3g = 9g）自己就会报警，每次 `sbx run` 都刷一条，等于没有警告。95% 下推荐配置安静，而 `4 × 3g` 或 VM 只给 8GB 这类真的配过头的仍然会响。
+
+---
 
 ## 环境变量
 
@@ -426,6 +501,5 @@ version = "latest"            # 写死版本会让 sbx upgrade 拒绝执行
 ## 当前的边界
 
 - **没有 `sbx merge`**，合并永远是你在主仓库手动做；分支有 commit 没合并时 `done` 不会提醒。
-- `max_running` 可配但**没有实际限流**。
 - `network.proxy = "dedicated"` 会明确报错，不是静默失败。
 - `sbx ls` 的 CJK 列宽对不齐（tabwriter 按字节算宽度）。

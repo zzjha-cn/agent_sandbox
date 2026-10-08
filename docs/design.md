@@ -342,6 +342,14 @@ http_access allow u_<id>
 | 订阅登录（默认） | `sbx login [claude\|codex]`（省略即 claude）：启动一个临时 agent 容器（挂载 `sbx-home`），执行 `claude auth login`，凭据落到 `sbx-home`，所有 Task 共享。这个容器没有 Task，不接 Task 网络和 `sbx-proxy`，走上游代理或直连。`--status / --logout / --force / --console / --email`；Codex 待 M3-6 |
 | API key | `~/.sbx/config.toml` 里写 `agents.claude.api_key_env = "ANTHROPIC_API_KEY"`（从宿主机环境变量读取）或 `api_key_file = "..."`，启动时以环境变量注入，优先级高于订阅登录 |
 
+实现补充（M2-13）：
+
+- 两个键二选一，同时配直接报错。**配了但取不到值也报错**（环境变量没设、文件不存在或为空），不静默退回订阅登录——否则用户以为在用 API key，账单却记到订阅账号上。
+- 注入用的环境变量名（claude → `ANTHROPIC_API_KEY`）跟登录流程一样是表驱动的（`authCLIs.keyEnv`），加 Agent 时在同一张表里加一行。
+- key 会留在容器的 `Config.Env` 里，`docker inspect` 看得到——这是环境变量注入的固有代价。
+- 环境变量只能在建容器时注入。已有容器不会因为改了配置就拿到 key，`sbx run` 会用 `docker inspect` 检出这种情况并提示 `done` 后重建，而不是让 claude 抛一个难懂的认证错误。
+- **claude 看到自定义 key 会弹 "Detected a custom API key … Do you want to use this API key?" 并默认停在 No**，无人值守会卡死（M2-13 实测，这一条设计稿里没有）。preseed 顺带把 key 的后 20 个字符写进 `~/.claude.json` 的 `customApiKeyResponses.approved`（并从 `rejected` 里移除），和 R9 说的"内部状态字段随版本变化"是同一类脆弱点，升级时要冒烟。
+
 **M0-1 结论**：
 - Claude：`claude auth login` 在容器里交互完成（显示 URL，粘贴授权码），**不需要回调端口**；全新容器能复用 volume 里的凭据。备选是 `claude setup-token`，生成长期 token 后作为环境变量注入。
 - Codex：使用 `codex login --device-auth`（设备码）。推迟到 M3-6 再验证。
@@ -526,10 +534,17 @@ memory = "4g"                 # 覆盖个人全局默认值（默认 3g）
 
 - 每个 Task 的默认值：`--cpus 2 --memory 3g --pids-limit 1024`，`max_running = 3`；squid 容器固定为 `--memory 128m`（shared 模式下全局只有一个）。
 - **推荐的 Docker VM 配置：10GB 内存**（宿主机 16GB）。3 × 3g + squid ≈ 9.1GB，在 VM 里留有余量，macOS 也还剩约 6GB（R10 已决定，2026-10-04）。
-- `--memory` 是上限而不是预留。`sbx run` 和 `sbx doctor` 在 `max_running × memory > VM 内存 × 0.85` 时给出警告。
+- `--memory` 是上限而不是预留。`sbx run` 和 `sbx doctor` 在 `max_running × memory > VM 内存 × 0.95` 时给出警告（**阈值 2026-10-09 从 0.85 放宽到 0.95**，理由见下）。
 - `max_running` 统计处于 running 或 idle 状态的 Task（以 agent 容器是否在运行为准）。超过上限时报错，不排队。
 - 用 `docker inspect` 读取 `State.OOMKilled`，在 `sbx ls` 里显示为 `exited(oom)`。
 - 端口默认不暴露；`sbx port` 只绑定到宿主机的 `127.0.0.1`。
+
+实现补充（M2-14）：
+
+- 并发计数**跨 Workspace**：`max_running` 要管的是 Docker VM 的内存，而那是所有仓库共用的。限额本身取自当前 Workspace 合并后的配置。
+- 检查点放在"即将启动一个容器"的位置，新建和重启一个已停止的 Task 都要过——§10.1 把它画在"Task 不存在"的分支里，但重启同样多占一份内存。`sbx run` 一个已经在跑的 Task 只是 attach，直接放行。
+- 数不出来（docker 调用失败）时打印警告并放行，不把正常使用挡在一次临时故障上。
+- **阈值从 R10 原本的 0.85 放宽到 0.95**（2026-10-09 决定）。0.85 和本节推荐的"10GB VM + 3 × 3g"自相矛盾：`9g > 10g × 0.85 = 8.5g`，照文档配置的人每次 `sbx run` 都会看到警告，而一个每次都响的警告等于没有警告（M1 的 e2e 跑一遍就刷了好几条）。0.95 下推荐配置安静（`9g ≤ 9.5g`），Docker Desktop 实际略小于标称的 VM（9.7g）也安静，而真正配过头的（`4 × 3g`、`3 × 4g`、VM 只有 8g）仍然会响。代价是留给 squid（128m）、镜像层缓存和 VM 自身的余量变薄，所以这条线上的 OOM 要靠 `sbx ls` 的 `exited(oom)` 事后发现。
 
 ---
 

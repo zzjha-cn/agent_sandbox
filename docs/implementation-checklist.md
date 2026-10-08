@@ -113,15 +113,15 @@
 - [ ] **M2-8** 上游代理：`network.upstream` 对应 `cache_peer`；Linux 上给 squid 容器加 `--add-host host-gateway`。
 - [x] **M2-9** 项目层白名单 `network.allow`：随 M2-1 的列表并集生效。
 - [x] **M2-10** `sbx net denied [task]`：解析 access.log，shared 模式下按用户名过滤；**分三类**统计：不在白名单（默认展示）/ 策略拦截和遥测（`--all`）/ 407 认证失败（§6.5）。
-- [ ] **M2-10a** `network.cloud_mcp` 和 `--cloud-mcp` 解除云端 MCP 拦截（ADR 0015）。<br>R11 已解决：`cloud_mcp = false`（默认）时在注入的 settings 里写 `disableClaudeAiConnectors: true`，claude 不再去取云端连接器，重试风暴消失。`--cloud-mcp` 命令行开关还没做。
+- [x] **M2-10a** `network.cloud_mcp` 和 `sbx run --cloud-mcp` 解除云端 MCP 拦截（ADR 0015）。flag 只能打开不能关——关是默认值。R11 已解决：`cloud_mcp = false`（默认）时在注入的 settings 里写 `disableClaudeAiConnectors: true`，claude 不再去取云端连接器，重试风暴消失。
 - [x] **M2-11** `sbx net allow <host>...`：写入个人全局配置（保留注释和排版），对运行中的 Task 重新下发白名单并 reconfigure。`--project` 写 `<repo>/.sbx/sandbox.toml`，写完重读四层并更新信任记录。
 
 ### 认证
 - [x] **M2-12** `sbx login [claude|codex]`：临时容器挂 `sbx-home` 跑 `claude auth login`，附 `--status / --logout / --force / --console / --email`；不需要在 git 仓库里执行。Agent 是表驱动的（`authCLIs`），codex 待 M3-6 验证后加一条。
-- [ ] **M2-13** API key 注入：`agents.<name>.api_key_env` 和 `api_key_file`，优先级高于订阅登录。
+- [x] **M2-13** API key 注入：`agents.<name>.api_key_env` / `api_key_file`（二选一，同时配报错），建容器时以 `ANTHROPIC_API_KEY` 注入，优先级高于订阅登录；配了但取不到值直接报错，不静默退回订阅。环境变量名是表驱动的（`authCLIs.keyEnv`）。**实测发现 claude 会弹 "Detected a custom API key … Do you want to use this API key?" 并默认停在 No**，所以 preseed 顺带把 key 的后 20 个字符写进 `~/.claude.json` 的 `customApiKeyResponses.approved`。环境变量只能在建容器时注入，配置后改了要 `done` 后重建——`sbx run` 会检测并明确提示。
 
 ### 资源
-- [ ] **M2-14** 并发检查：running 和 idle 的 Task 数达到 `max_running` 时拒绝启动；`max_running × memory > Docker VM 内存 × 0.85` 时给出警告（R10）。
+- [x] **M2-14** 并发检查：正在运行的 agent 容器数达到 `max_running` 时拒绝启动（**跨 Workspace 计数**，因为 Docker VM 的内存是共用的；限额取自当前 Workspace 的配置）。`sbx run` 一个已经在跑的 Task 只是 attach，不受限。`max_running × memory > Docker VM 内存 × 0.95` 时警告（R10；**阈值 2026-10-09 从 0.85 放宽到 0.95**，否则 design §11 推荐的 3 × 3g + 10GB VM 自己就会报警，每次 run 都刷一条）。
 - [ ] **M2-15** 资源上限支持在各配置层覆盖。
 
 ---

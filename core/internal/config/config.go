@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -33,8 +34,37 @@ type Deps struct {
 	Mask []string `toml:"mask"`
 }
 
+// MemoryBytes 把 resources.memory（3g / 512m / 1024）换成字节数。
+// 格式由 Validate 保证，这里解析不出来就返回 0，调用方按"算不出来"处理。
+func (r Resources) MemoryBytes() int64 {
+	m := strings.TrimSpace(r.Memory)
+	if m == "" {
+		return 0
+	}
+	unit := int64(1)
+	switch last := m[len(m)-1]; last {
+	case 'b', 'B':
+		m = m[:len(m)-1]
+	case 'k', 'K':
+		unit, m = 1<<10, m[:len(m)-1]
+	case 'm', 'M':
+		unit, m = 1<<20, m[:len(m)-1]
+	case 'g', 'G':
+		unit, m = 1<<30, m[:len(m)-1]
+	}
+	v, err := strconv.ParseFloat(m, 64)
+	if err != nil || v <= 0 {
+		return 0
+	}
+	return int64(v * float64(unit))
+}
+
 type Agent struct {
 	Version string `toml:"version"`
+	// APIKeyEnv / APIKeyFile 二选一，配了就优先于订阅登录（design §7.1）。
+	// 这两个键只能写在全局层或工作区层——项目层的红线会拦住它们（M2-2）。
+	APIKeyEnv  string `toml:"api_key_env"`
+	APIKeyFile string `toml:"api_key_file"`
 }
 
 type Config struct {
@@ -118,6 +148,12 @@ func (c Config) Validate() error {
 	}
 	if c.MaxRunning <= 0 {
 		return fieldf("max_running", "max_running 必须大于 0")
+	}
+	for name, ag := range c.Agents {
+		if ag.APIKeyEnv != "" && ag.APIKeyFile != "" {
+			return fieldf("agents."+name+".api_key_env",
+				"agents.%s 同时配了 api_key_env 和 api_key_file，只能二选一", name)
+		}
 	}
 	switch c.Network.Mode {
 	case "allowlist", "open":

@@ -21,7 +21,7 @@ const smokeTimeout = 30 * time.Second
 
 func (a *App) runCmd() *cobra.Command {
 	var base, netMode string
-	var detach, fresh bool
+	var detach, fresh, cloudMCP bool
 	cmd := &cobra.Command{
 		Use:   "run [task]",
 		Short: "Create or resume a task and start the agent in its sandbox (omit task for main)",
@@ -47,6 +47,10 @@ func (a *App) runCmd() *cobra.Command {
 					return err
 				}
 			}
+			// --cloud-mcp 只能打开，不能关：关掉是默认值，想关就别加这个 flag（ADR 0015）
+			if cloudMCP {
+				a.Cfg.Network.CloudMCP = true
+			}
 			// design §10.1 第 3 步：配置合并之后、碰容器之前先过信任检查
 			if err := a.requireTrust(); err != nil {
 				return err
@@ -58,6 +62,7 @@ func (a *App) runCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&detach, "detach", "d", false, "start the task without attaching to it")
 	cmd.Flags().BoolVar(&fresh, "fresh", false, "start a new conversation instead of continuing this task's last one")
 	cmd.Flags().StringVar(&netMode, "net", "", "network mode for this run: open (default, everything allowed) or allowlist")
+	cmd.Flags().BoolVar(&cloudMCP, "cloud-mcp", false, "let this task reach Claude's cloud connectors (off by default; see ADR 0015)")
 	return cmd
 }
 
@@ -75,6 +80,13 @@ func (a *App) run(t task.Task, base string, detach bool, fresh bool) error {
 	st, exists, err := a.Docker.Inspect(t.Container())
 	if err != nil {
 		return err
+	}
+	// 只有真要启动一个容器时才查并发和内存预算：attach 一个已经在跑的 Task 不新增占用
+	if !exists || !st.Running {
+		if err := a.checkConcurrency(t); err != nil {
+			return err
+		}
+		a.warnMemoryBudget()
 	}
 	if exists {
 		if base != "" {
@@ -223,6 +235,13 @@ func (a *App) create(t task.Task, base string, fresh bool) (err error) {
 	}
 	name, _ := workspace.Git(t.WS.Root, "config", "user.name")
 	mail, _ := workspace.Git(t.WS.Root, "config", "user.email")
+	key, err := a.apiKey("")
+	if err != nil {
+		return err
+	}
+	if key.Env != "" {
+		a.logf("用 API key 启动（来自%s），不走订阅登录", key.Source)
+	}
 	labels := t.Labels()
 	labels["sbx.role"] = "agent"
 	labels["sbx.proxy"] = "shared"
@@ -236,7 +255,7 @@ func (a *App) create(t task.Task, base string, fresh bool) (err error) {
 			DepMasks: a.Cfg.Deps.Mask, DepVolume: t.DepVolume,
 			StateDir: t.StateDir(), GenDir: t.GenDir(), Host: host,
 		}),
-		Env:     agent.Env(agent.EnvInput{ProxyURL: proxyURL, GitName: name, GitMail: mail, WS: t.WS.ID, Task: t.Name, TZ: agent.HostTZ()}),
+		Env:     agent.Env(agent.EnvInput{ProxyURL: proxyURL, GitName: name, GitMail: mail, WS: t.WS.ID, Task: t.Name, TZ: agent.HostTZ(), APIKeyEnv: key.Env, APIKey: key.Value}),
 		Workdir: t.Worktree(),
 		Resources: docker.Resources{
 			CPUs: a.Cfg.Resources.CPUs, Memory: a.Cfg.Resources.Memory, Pids: a.Cfg.Resources.Pids,
@@ -357,7 +376,11 @@ func (a *App) startAgent(t task.Task, fresh bool) error {
 	if hasSession && !agentExited(t) {
 		return nil
 	}
-	if out, err := rt.Preseed(); err != nil {
+	key, err := a.apiKey("")
+	if err != nil {
+		return err
+	}
+	if out, err := rt.Preseed(key.Value); err != nil {
 		return fmt.Errorf("预置首次启动状态失败：%w", err)
 	} else if out != "" {
 		a.logf("%s", out)
@@ -365,12 +388,9 @@ func (a *App) startAgent(t task.Task, fresh bool) error {
 	if err := a.importMemory(t.Container()); err != nil {
 		a.logf("警告: 导入项目记忆失败：%v", err)
 	}
-	ok, err := rt.LoggedIn()
-	if err != nil {
+	// 配了 API key 就不查订阅登录态：key 在建容器时注进了环境变量（design §7.1）
+	if err := a.checkAuth(t, rt, key); err != nil {
 		return err
-	}
-	if !ok {
-		return errors.New(a.loginHelp(t))
 	}
 	cont := !fresh && t.HasPriorSession()
 	statusFile := filepath.Join(t.StateDir(), "status.json")
@@ -399,6 +419,27 @@ func (a *App) startAgent(t task.Task, fresh bool) error {
 func agentExited(t task.Task) bool {
 	s, err := t.ReadStatus()
 	return err == nil && s != nil && s.State == "exited"
+}
+
+// checkAuth 在拉起 claude 前确认它拿得到凭据：配了 API key 就只核对容器里真有那个
+// 环境变量（容器是建的时候注入的，配置后来才改的话这里能提前说清楚），
+// 否则查 sbx-home 里的订阅登录态。
+func (a *App) checkAuth(t task.Task, rt agent.Runtime, key apiKey) error {
+	if key.Env != "" {
+		if has, err := a.Docker.HasEnv(t.Container(), key.Env); err == nil && !has {
+			return fmt.Errorf("配置里有 API key，但容器 %s 是在那之前建的，里面没有 %s。\n"+
+				"环境变量只能在建容器时注入：sbx done %s 之后重新 run", t.Container(), key.Env, t.Name)
+		}
+		return nil
+	}
+	ok, err := rt.LoggedIn()
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return errors.New(a.loginHelp(t))
+	}
+	return nil
 }
 
 func (a *App) loginHelp(t task.Task) string {
