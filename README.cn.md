@@ -5,6 +5,7 @@
 </p>
 
 <p align="center">
+  <a href="https://zzjha-cn.github.io/agent_sandbox/"><b>项目主页</b></a> ·
   <a href="README.md">English</a> ·
   <b>简体中文</b>
 </p>
@@ -149,6 +150,7 @@ mask = ["node_modules"]       # 每项挂一个 volume 遮住，不污染宿主�
 
 | 文档 | 讲什么 |
 |---|---|
+| [项目主页](https://zzjha-cn.github.io/agent_sandbox/) | **从这里开始**：日常场景、架构图、一问一答，网页版（英文） |
 | [commands.md](docs/commands.md) | **命令手册**：每条命令、每个参数、配置字段、环境变量 |
 | [walkthrough.md](docs/walkthrough.md) | 一个连续场景从头到尾：每条命令背后 Docker / git / squid 各做了什么 |
 | [architecture.md](docs/architecture.md) | 组件怎么拼的，数据往哪流 |

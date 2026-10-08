@@ -5,6 +5,7 @@
 </p>
 
 <p align="center">
+  <a href="https://zzjha-cn.github.io/agent_sandbox/"><b>Website</b></a> ·
   <b>English</b> ·
   <a href="README.cn.md">简体中文</a>
 </p>
@@ -147,10 +148,11 @@ Full field list, precedence and when changes take effect: [docs/commands.md](doc
 
 ## Documentation
 
-> Docs are currently written in Chinese.
+> The [introduction page](https://zzjha-cn.github.io/agent_sandbox/) is in English; the in-repo reference docs are in Chinese.
 
 | Doc | What's in it |
 |---|---|
+| [Introduction](https://zzjha-cn.github.io/agent_sandbox/) | **Start here** — a web page covering a day of real use, the architecture diagram, and a Q&A on each piece |
 | [commands.md](docs/commands.md) | **Command reference**: every command, flag, config field and environment variable |
 | [walkthrough.md](docs/walkthrough.md) | One scenario end to end — what Docker, git and squid each do behind every command |
 | [architecture.md](docs/architecture.md) | How the pieces fit together and where data flows |

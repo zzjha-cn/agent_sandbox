@@ -1,7 +1,7 @@
 # sbx 走一遍：从第一次使用到合并分支
 
 > 本文用一个具体场景，从头到尾按顺序讲一遍：每条命令敲下去之后，sbx、Docker、git、squid、claude 分别做了什么，留下了什么。
-> 讲的是 M1 代码的实际行为。命令和参数的速查见 [commands.md](commands.md)，结构化的说明见 [architecture.md](architecture.md)，设计取舍见 [design.md](design.md) 和 `private/adr/`（未纳入版本控制）。
+> 讲的是 M1 代码的实际行为。想先了解 sbx 是什么、为什么这么设计，见[项目主页](https://zzjha-cn.github.io/agent_sandbox/)；命令和参数的速查见 [commands.md](commands.md)，结构化的说明见 [architecture.md](architecture.md)，设计取舍见 [design.md](design.md) 和 `private/adr/`（未纳入版本控制）。
 
 ## 场景
 
