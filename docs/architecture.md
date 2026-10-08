@@ -146,7 +146,7 @@ Task 属于一个 **Workspace**（ws），也就是一个主仓库。在 worktre
 | `<worktree>/node_modules` 等 | 依赖 volume | 读写，不落到宿主机 |
 | `/home/agent`、`/sbx/cache` | `sbx-home`、`sbx-cache` | 读写 |
 | `/sbx/state` | `state/<ws>/<task>` | 读写（hooks 写状态，§6） |
-| `/sbx/gen` | `state/.../gen`（hooks、settings、宿主机 CLAUDE.md 快照） | 只读 |
+| `/sbx/gen` | `state/.../gen`（hooks、settings、statusline 脚本、宿主机 CLAUDE.md 快照） | 只读 |
 | `/sbx/host-claude/{skills,agents,commands}` | 宿主机 `~/.claude/*` | 只读 |
 
 除此之外宿主机的任何目录都不挂载，`~/.ssh` 也不例外。资源上限是每个 Task 2 CPU、3g 内存、1024 个进程。

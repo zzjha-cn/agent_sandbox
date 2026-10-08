@@ -90,6 +90,8 @@ func SettingsJSON(blockCloudMCP bool) []byte {
 		hooks[h.event] = []any{entry}
 	}
 	out := map[string]any{"hooks": hooks}
+	// 状态栏脚本和 hooks 一样从 /sbx/gen 注入：沙箱里没有宿主机的 ~/.claude/scripts。
+	out["statusLine"] = map[string]string{"type": "command", "command": "/sbx/gen/statusline.sh"}
 	if blockCloudMCP {
 		out["disableClaudeAiConnectors"] = true
 	}
@@ -100,6 +102,9 @@ func SettingsJSON(blockCloudMCP bool) []byte {
 // RenderGen 原子写入 gen 目录（容器内只读挂载到 /sbx/gen）。
 func RenderGen(genDir string, h HostClaude, blockCloudMCP bool) error {
 	if err := fsutil.AtomicWrite(filepath.Join(genDir, "hooks", "status.sh"), assets.Read("agent-layer/hooks/status.sh"), 0o755); err != nil {
+		return err
+	}
+	if err := fsutil.AtomicWrite(filepath.Join(genDir, "statusline.sh"), assets.Read("agent-layer/statusline.sh"), 0o755); err != nil {
 		return err
 	}
 	if err := fsutil.AtomicWrite(filepath.Join(genDir, "settings.sbx.json"), SettingsJSON(blockCloudMCP), 0o644); err != nil {

@@ -1,6 +1,6 @@
 # sbx
 
-在容器沙箱里运行 Claude Code 的 Task 运行时。设计见 [docs/design.md](docs/design.md)，术语见 [docs/CONTEXT.md](docs/CONTEXT.md)。
+在容器沙箱里运行 Claude Code 的 Task 运行时。命令和参数见 [docs/commands.md](docs/commands.md)，设计见 [docs/design.md](docs/design.md)，术语见 [docs/CONTEXT.md](docs/CONTEXT.md)。
 
 当前进度：M1（MVP）加 M2 的一部分。支持 `run / attach / shell / stop / ls / path / done / memory / upgrade / net`，内置 Profile 只有 `web-go`，网络只有 shared proxy。
 
@@ -64,7 +64,9 @@ sbx upgrade                  # 升级沙箱里的 claude（容器里不会自动
 
 **项目记忆**：每次 `sbx run` 会把宿主机这个仓库的 Claude 自动记忆（`~/.claude/projects/<key>/memory/`）导入沙箱；沙箱里新记的不会自动回到宿主机，需要 `sbx memory pull`（ADR 0016）。
 
-省略 task 名时用 `main`：直接使用仓库根，不建 worktree。
+省略 task 名时用 `main`：**直接使用仓库根**，不建 worktree 也不建分支，改动在宿主机 `git status` 里立刻可见；代价是你和 Agent 共用一棵工作树、一个 Workspace 只能有一个 main，详见 [docs/commands.md](docs/commands.md#我想直接在仓库目录里干活main-task)。
+
+每条命令的全部参数、配置文件字段和环境变量见 [docs/commands.md](docs/commands.md)；一个连续场景的完整过程见 [docs/walkthrough.md](docs/walkthrough.md)。
 
 ## 开发
 

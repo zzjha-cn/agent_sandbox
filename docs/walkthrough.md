@@ -1,7 +1,7 @@
 # sbx 走一遍：从第一次使用到合并分支
 
 > 本文用一个具体场景，从头到尾按顺序讲一遍：每条命令敲下去之后，sbx、Docker、git、squid、claude 分别做了什么，留下了什么。
-> 讲的是 M1 代码的实际行为。结构化的说明见 [architecture.md](architecture.md)，设计取舍见 [design.md](design.md) 和 `private/adr/`（未纳入版本控制）。
+> 讲的是 M1 代码的实际行为。命令和参数的速查见 [commands.md](commands.md)，结构化的说明见 [architecture.md](architecture.md)，设计取舍见 [design.md](design.md) 和 `private/adr/`（未纳入版本控制）。
 
 ## 场景
 
@@ -23,6 +23,7 @@ cd ~/workspace/.../agent_sandbox/core && make build    # 得到 bin/sbx，把它
 cat > ~/.sbx/config.toml <<'EOF'
 [network]
 upstream = "http://host.docker.internal:7890"
+mode = "allowlist"      # 全文按白名单模式讲；2026-10-08 起默认是 open（不拦截）
 EOF
 ```
 
@@ -30,7 +31,7 @@ EOF
 - 配置文件只写了上游代理，其他项都用默认值：
   - 镜像：`web-go`
   - 资源：2 CPU、3g 内存
-  - 网络：allowlist 模式
+  - 网络：这里显式写了 allowlist；不写的话默认是 `open`，下面讲到的拦截都不会发生
   - 依赖遮盖：`node_modules`
   - claude 版本：`latest`
 
@@ -233,7 +234,7 @@ M1 还没有 `sbx net denied`，只能用下面的命令查看被拒的请求：
 docker exec sbx-proxy grep TCP_DENIED /var/log/squid/access.log
 ```
 
-要放行某个域名，就把它加到 `config.toml` 的 `network.allow` 里，然后重新 `sbx run fix-login`。恢复流程会重写白名单并热加载。
+要放行某个域名，`sbx net allow api.some-captcha.com` 一条命令就行：写进 `config.toml` 的 `network.allow`，并对运行中的 Task 热加载，不用重启。
 
 **提交。** claude 执行 `git commit`：
 

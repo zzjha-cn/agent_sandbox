@@ -47,6 +47,8 @@
 
 ## 命令草图
 
+> 这是设计期的草图，含尚未实现的命令。**已实现的命令、参数和配置以 [commands.md](commands.md) 为准。**
+
 | 命令 | 作用 |
 |---|---|
 | `sbx run [task]` | 创建或恢复 Task，在容器内的 tmux 里启动 Agent TUI |

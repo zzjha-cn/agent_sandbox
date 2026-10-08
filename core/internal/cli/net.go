@@ -187,7 +187,7 @@ func (a *App) printDenied(rows []proxy.DeniedHost, all bool, since time.Duration
 	}
 	// 只有"不在白名单"那一类才需要你决定放不放行；策略拦截和认证失败不给这个建议。
 	if notAllowed > 0 {
-		fmt.Fprintln(a.Out, "要放行：在 ~/.sbx/config.toml 的 [network] 里加 allow = [\"<host>\"]，然后重新 sbx run")
+		fmt.Fprintln(a.Out, "要放行：sbx net allow <host>（写进 ~/.sbx/config.toml 并热加载）")
 	}
 	return nil
 }

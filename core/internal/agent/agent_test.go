@@ -171,6 +171,23 @@ func TestInspectHostClaude(t *testing.T) {
 	if st, _ := os.Stat(filepath.Join(gen, "hooks", "status.sh")); st.Mode().Perm()&0o111 == 0 {
 		t.Fatal("status.sh not executable")
 	}
+	// 状态栏脚本必须可执行，否则 claude 每次刷新状态栏都会静默失败
+	st, err := os.Stat(filepath.Join(gen, "statusline.sh"))
+	if err != nil || st.Mode().Perm()&0o111 == 0 {
+		t.Fatalf("statusline.sh 没渲染或不可执行：%v", err)
+	}
+}
+
+func TestSettingsStatusLine(t *testing.T) {
+	var got struct {
+		StatusLine struct{ Type, Command string } `json:"statusLine"`
+	}
+	if err := json.Unmarshal(SettingsJSON(false), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.StatusLine.Type != "command" || got.StatusLine.Command != "/sbx/gen/statusline.sh" {
+		t.Fatalf("statusLine 没注入：%+v", got.StatusLine)
+	}
 }
 
 func TestEnvTZ(t *testing.T) {
