@@ -250,11 +250,15 @@ WP1 骨架 ─┬─► WP2 docker 封装 ─┬─► WP5 镜像 ────�
   5. 断言主仓库里有 `sbx/t1`、`sbx/t2` 两个分支，且各自领先 base 1 个提交。
   6. 安全断言（见 9.3）。
   7. `sbx done t1 t2`，断言没有资源残留。
-- [ ] **9.2** **真实仓库验收**（手动，使用 P-4 选定的仓库）：开 2 个并行 Task，各给一个真实的小需求，人离开至少 30 分钟；回来后 `sbx ls` 能看到两个 `idle`，分支上的改动可以 review 并合并。
-- [x] **9.3** 安全检查（在容器内执行）：
-  - [x] `curl https://example.com` 失败，squid 日志里有 `TCP_DENIED/403`
+- [x] **9.2** **真实仓库验收**（手动，使用 P-4 选定的仓库）：开 2 个并行 Task，各给一个真实的小需求，人离开至少 30 分钟；回来后 `sbx ls` 能看到两个 `idle`，分支上的改动可以 review 并合并。
+- [x] **9.3** 安全检查（在容器内执行）。默认模式 2026-10-08 改成 `open` 之后，拦截类断言拆成两组：
+  - open（t1、t2，默认）：
+    - [x] `curl https://example.com` **成功**，但 squid 日志里依然有这条记录（两种模式都经过代理）
+    - [x] `curl https://mcp-proxy.anthropic.com` 被拦截 —— 策略层不受 open 影响（ADR 0015）
+  - allowlist（t3，`sbx run t3 --net allowlist`）：
+    - [x] `curl https://example.com` 失败，squid 日志里有 `TCP_DENIED/403`，`sbx net denied t3` 列得出来
+    - [x] 白名单内的 `api.anthropic.com` 仍然放行
   - [x] 不经过代理直连，`curl --noproxy '*' https://api.anthropic.com` 失败
-  - [x] `curl https://mcp-proxy.anthropic.com` 被拦截（ADR 0015）
   - [x] `ls ~/.ssh` 不存在；`/Users/<you>` 下只能看到挂载进来的仓库路径
   - [x] `id -u` ≠ 0
   - [x] 宿主机的 `<repo>/node_modules` 没有被写入
@@ -267,9 +271,9 @@ WP1 骨架 ─┬─► WP2 docker 封装 ─┬─► WP5 镜像 ────�
 ## 3. 完成定义（Definition of Done）
 
 - [x] 上面每个 WP 的验收都通过；`make test lint test-docker e2e` 全部通过。
-- [ ] 9.2 的真实仓库验收完成，并且记录在 `private/m1-acceptance.md`。
+- [x] 9.2 的真实仓库验收完成，并且记录在 `private/m1-acceptance.md`。
 - [x] 实现过程中和设计的偏差**回写进 design.md**（必要时补 ADR）。已知的一项：WP7.2 宿主机 Claude 配置的挂载方式。
-- [ ] 总清单 `implementation-checklist.md` 里的 M1-1 至 M1-22 全部勾选。
+- [x] 总清单 `implementation-checklist.md` 里的 M1-1 至 M1-22 全部勾选。
 - [x] `README.md` 的"首次使用"一节写完：安装、登录、`sbx run`、`sbx done`。
 
 ## 4. 实现过程中的已知坑（来自 M0）

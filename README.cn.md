@@ -180,6 +180,4 @@ sbx 只通过 `docker` 和 `git` 两个 CLI 干活，不用 SDK（ADR 0013）；
 
 ## 许可
 
-[Apache-2.0](LICENSE)。
-
-状态栏脚本 `core/assets/agent-layer/statusline.sh` 来自 [ykdojo/claude-code-tips](https://github.com/ykdojo/claude-code-tips)（作者 YK Sugi），出处保留在文件头。
+[Apache-2.0](LICENSE)。仓库里的全部内容 —— Dockerfile、squid 模板、hooks、状态栏脚本 —— 都是为 sbx 写的，同一许可。

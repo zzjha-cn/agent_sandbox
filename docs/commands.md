@@ -256,7 +256,7 @@ sbx upgrade           # 升级沙箱里的 claude
 - `sbx-home` 里的 `~/.claude/settings.json`——preseed 建的（`theme`、`skipDangerousModePermissionPrompt`），**持久且所有 Task 共享**，你在容器里手改的东西留在这里；
 - `/sbx/gen/settings.sbx.json`——每次 `run` 重新渲染，用 `--settings` 注入，放 hooks、`disableClaudeAiConnectors` 和状态栏。
 
-**状态栏**是 sbx 内置的，不依赖你宿主机那份：脚本打包在 sbx 二进制里，渲染到 `/sbx/gen/statusline.sh`，显示模型、目录、分支、未提交文件数、上下文占用条和你的上一句话。要换成自己的，改 `core/assets/agent-layer/statusline.sh` 后 `make build`，下次 `run` 生效，**不用重建镜像**。
+**状态栏**是 sbx 内置的，不依赖你宿主机那份：脚本打包在 sbx 二进制里，渲染到 `/sbx/gen/statusline.sh`，显示 Task 名、模型、分支、未提交文件数和上下文占用条。要换成自己的，改 `core/assets/agent-layer/statusline.sh` 后 `make build`，下次 `run` 生效，**不用重建镜像**。
 
 ---
 

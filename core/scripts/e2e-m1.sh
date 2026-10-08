@@ -30,7 +30,7 @@ printf -- '- [host note](host-note.md)\n' > "$HMEM/MEMORY.md"
 printf 'remembered on host\n' > "$HMEM/host-note.md"
 
 cleanup() {
-  cd "$FIX" 2>/dev/null && "$SBX" done --force t1 t2 >/dev/null 2>&1
+  cd "$FIX" 2>/dev/null && "$SBX" done --force t1 t2 t3 >/dev/null 2>&1
 }
 trap cleanup EXIT
 
@@ -94,13 +94,13 @@ check "memory pull 导回了沙箱新记的文件" "grep -q 'learned in sandbox'
 check "MEMORY.md 两边的条目都在" "grep -q 'host note' '$HMEM/MEMORY.md' && grep -q 'sandbox note' '$HMEM/MEMORY.md'"
 check "再次 pull 没有新内容" "\"$SBX\" memory pull --yes | grep -q '没有需要导回的内容'"
 
-# 6. 安全检查（9.3）
-echo "== 安全检查"
+# 6. 安全检查（9.3）：t1、t2 跑在默认的 open 模式下
+echo "== 安全检查（open，默认模式）"
 ex() { docker exec -u agent "$C1" bash -c "$1"; }
-check "example.com 被拒（不在白名单）" "! ex 'curl -sf --max-time 15 https://example.com'"
-check "squid 日志里有 TCP_DENIED/403" "docker exec sbx-proxy grep -q 'TCP_DENIED/403.*example.com' /var/log/squid/access.log"
+check "open 模式下 example.com 放行（2026-10-08 起的默认）" "ex 'curl -sf -o /dev/null --max-time 15 https://example.com'"
+check "放行的请求同样留在 squid 日志里" "docker exec sbx-proxy grep -q 'example.com' /var/log/squid/access.log"
 check "不经代理直连失败" "! ex \"curl -sf --max-time 10 --noproxy '*' https://api.anthropic.com\""
-check "云端 MCP 被策略拦截（ADR 0015）" "[ \"\$(ex 'curl -s -o /dev/null -w %{http_connect} --max-time 15 https://mcp-proxy.anthropic.com')\" = 403 ]"
+check "云端 MCP 被策略拦截（两种模式都生效，ADR 0015）" "[ \"\$(ex 'curl -s -o /dev/null -w %{http_connect} --max-time 15 https://mcp-proxy.anthropic.com')\" = 403 ]"
 check "~/.ssh 不存在" "ex '[ ! -e ~/.ssh ] && [ ! -e $HOME/.ssh ]'"
 check "宿主机 home 里只看得到挂载进来的路径" "[ -z \"\$(ex 'ls -A $HOME 2>/dev/null' | grep -v '^.sbx$')\" ]"
 check "以非 root 运行" "[ \"\$(ex 'id -u')\" != 0 ]"
@@ -119,10 +119,23 @@ else
   echo "  - 宿主机没有 ~/.claude/skills，跳过只读检查"
 fi
 
+# 6a. allowlist 模式（--net allowlist）：拦截断言只在这一模式下成立
+echo "== 安全检查（allowlist）"
+C3="sbx-$WS-t3"
+ex3() { docker exec -u agent "$C3" bash -c "$1"; }
+if "$SBX" run t3 --detach --net allowlist >/dev/null 2>&1; then
+  check "allowlist 下 example.com 被拒（不在白名单）" "! ex3 'curl -sf -o /dev/null --max-time 15 https://example.com'"
+  check "squid 日志里有 TCP_DENIED/403" "docker exec sbx-proxy grep -q 'TCP_DENIED/403.*example.com' /var/log/squid/access.log"
+  check "sbx net denied 能列出 example.com" "\"$SBX\" net denied t3 | grep -q example.com"
+  check "白名单内的 api.anthropic.com 仍然放行" "[ \"\$(ex3 'curl -s -o /dev/null -w %{http_connect} --max-time 15 https://api.anthropic.com')\" = 200 ]"
+else
+  bad "sbx run t3 --net allowlist 失败"
+fi
+
 # 7. 清理
 echo "== 清理"
 docker exec -u agent "$C1" bash -c "printf 'late note\n' > '$SMEM/late-note.md'"
-DONE_OUT="$("$SBX" done t1 t2 2>&1)"
+DONE_OUT="$("$SBX" done t1 t2 t3 2>&1)"
 echo "$DONE_OUT"
 trap - EXIT
 check "done 提醒还没导回的记忆" "printf '%s' \"\$DONE_OUT\" | grep -q '还没导回宿主机'"

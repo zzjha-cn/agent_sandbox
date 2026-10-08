@@ -182,6 +182,4 @@ sbx drives everything through the `docker` and `git` CLIs rather than SDKs (ADR 
 
 ## License
 
-[Apache-2.0](LICENSE).
-
-The status line script `core/assets/agent-layer/statusline.sh` is vendored from [ykdojo/claude-code-tips](https://github.com/ykdojo/claude-code-tips) by YK Sugi; attribution is kept in the file header.
+[Apache-2.0](LICENSE). Everything in this repository — including the Dockerfiles, the squid templates, the hooks and the status line script — is written for sbx and carries the same license.
