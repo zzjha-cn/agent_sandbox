@@ -1,80 +1,185 @@
-# sbx
+<h1 align="center">sbx</h1>
 
-在容器沙箱里运行 Claude Code 的 Task 运行时。命令和参数见 [docs/commands.md](docs/commands.md)，设计见 [docs/design.md](docs/design.md)，术语见 [docs/CONTEXT.md](docs/CONTEXT.md)。
+<p align="center">
+  Run Claude Code in a Docker sandbox — skip the permission prompts without betting your machine on it.
+</p>
 
-当前进度：M1（MVP）加 M2 的一部分。支持 `run / attach / shell / stop / ls / path / done / memory / upgrade / net`，内置 Profile 只有 `web-go`，网络只有 shared proxy。
+<p align="center">
+  <b>English</b> ·
+  <a href="README.cn.md">简体中文</a>
+</p>
 
-**网络默认不拦截**（`network.mode = "open"`，2026-10-08 改，ADR 0005 修订）。要按白名单放行就在配置里写 `mode = "allowlist"`，或者 `sbx run <task> --net allowlist`。两种模式都走 Squid，所以 `sbx net denied` 的日志一直有；云端 MCP 的策略拦截在两种模式下都生效。
+<p align="center">
+  <img alt="Go" src="https://img.shields.io/badge/Go-1.27-00ADD8?logo=go&logoColor=white">
+  <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue">
+  <img alt="Status" src="https://img.shields.io/badge/status-M1%20%2B%20part%20of%20M2-orange">
+</p>
 
-## 首次使用
+---
 
-### 1. 安装
+A coding agent only gets out of your way once you turn the permission prompts off — and the moment you do, it can touch anything on your machine. sbx moves that trade-off somewhere safer: **one container, one git worktree and one branch per task**. Inside, `--dangerously-skip-permissions` is fine. Outside, nothing changed.
+
+You also get tasks that **actually run in parallel** without stepping on each other, dependency installs that never touch your host, and every outbound request through a proxy — so you can **ask afterwards what it talked to**.
+
+```console
+$ cd ~/code/shop
+$ sbx run fix-login          # branch + container + Claude Code, in one command
+$ sbx ls
+workspace shop-e76272 (/Users/you/code/shop)
+TASK        STATUS   BRANCH          AHEAD  DIFF         LAST-ACTIVE  PATH
+add-search  idle     sbx/add-search  2      7f +210 -14  12m ago      ~/.sbx/worktrees/shop-e76272/add-search
+fix-login   running  sbx/fix-login   1      3f +48 -6    8s ago       ~/.sbx/worktrees/shop-e76272/fix-login
+```
+
+`Ctrl-b`, release, then `d` leaves the session with the agent still running. Come back with `sbx attach fix-login`; when it's done, `sbx done` and `git merge`.
+
+## What it solves
+
+| Problem | How sbx handles it |
+|---|---|
+| You want the prompts off, but not an agent loose on your filesystem | It only ever sees one worktree and its own container. The rest of your host is never mounted |
+| Two tasks editing the same repo collide | Each task gets its own git worktree and `sbx/<task>` branch — physically separate |
+| Agent-installed dependencies pollute your local environment | `node_modules` and friends are masked by volumes; invisible in both directions |
+| It ran all night and you have no idea what it did or where it connected | State comes from Claude hooks (`sbx ls`); all egress goes through Squid (`sbx net denied`) |
+| Closing the terminal kills the agent | The agent runs in tmux *inside* the container — survives closed terminals and host reboots |
+
+## Quick start
+
+**Prerequisites**: Docker Desktop running (10GB of memory recommended), Go 1.27, a Claude subscription.
+
+### 1. Install
 
 ```bash
 cd core
-make build                     # 生成 bin/sbx
-ln -sf "$PWD/bin/sbx" /usr/local/bin/sbx   # 可选
+make build
+ln -sf "$PWD/bin/sbx" /usr/local/bin/sbx   # optional
 ```
 
-前提：Docker Desktop 已启动，内存建议 10GB（ADR 0012）。
+### 2. Configure (only if you need a host proxy)
 
-### 2. 个人配置（需要宿主机代理时）
-
-`~/.sbx/config.toml`：
+`~/.sbx/config.toml`:
 
 ```toml
 [network]
-upstream = "http://host.docker.internal:7890"   # 宿主机代理；留空表示直连
+upstream = "http://host.docker.internal:7890"   # leave empty for a direct connection
 ```
 
-其他可配字段和默认值见 design §9.2：`resources`（默认 2 CPU / 3g / 1024 pids）、`deps.mask`（默认 `node_modules`）、`network.cloud_mcp`（默认 false）。
+### 3. Log in (once; every task shares it)
 
-### 3. 登录 Claude（只需一次，所有 Task 共享）
-
-先在任意仓库里执行一次 `sbx run`，构建镜像并创建 `sbx-home`。没有登录时 sbx 会打印下面这条命令，照着执行：
+Run `sbx run` in any repo. Once the image is built and sbx finds no credentials, it prints the exact command to run:
 
 ```bash
 docker run -it --rm -e HOME=/home/agent -v sbx-home:/home/agent \
-  -e HTTPS_PROXY=http://host.docker.internal:7890 <镜像，如 sbx/web-go:8c00ab2b56bf> claude auth login
+  sbx/web-go:<hash> claude auth login
 ```
 
-按提示打开链接，把授权码粘贴回来。凭据保存在 volume `sbx-home` 里。
+Open the link, paste the code back. Credentials live in the `sbx-home` volume, not inside any task.
 
-### 4. 日常使用
+### 4. Run your first task
 
 ```bash
-cd <你的仓库>
-sbx run fix-login            # 新建 Task：worktree ~/.sbx/worktrees/<ws>/fix-login，分支 sbx/fix-login，进入 claude
-                             # 离开：Ctrl-b 松手再按 d（Agent 继续运行）
-                             # 注意 Ctrl-D 是退出 claude，不是离开；退出后会话还在，sbx run 可重新拉起
-sbx run t2 --detach          # 只启动不进入
-sbx run fix-login            # claude 退出后再跑一次 = 重新拉起，并接上上次对话（--fresh 则开新对话）
-sbx ls                       # 状态（running/idle/exited(agent)/stopped…）、ahead 提交数、diff、最后活动时间、工作目录
-code "$(sbx path fix-login)"  # Task 的改动在它自己的 worktree 里，不在仓库目录；合并分支后才回到仓库
-sbx attach fix-login         # 回到 Agent 会话
-sbx shell fix-login          # 在容器里开一个 bash
-sbx stop fix-login           # 停止容器，保留一切；sbx run 可恢复
-sbx done fix-login           # 结束：清理容器/网络/依赖 volume/worktree/state，保留分支
-git merge sbx/fix-login      # 在主仓库里合并
-sbx net denied               # Agent 被代理拦了什么（--all 看全部分类，--since 2h 限时间）
-sbx net allow <host>         # 放行一个域名，并对运行中的 Task 热加载
-sbx memory pull              # 把沙箱里新记的项目记忆导回宿主机（先看差异再确认）
-sbx upgrade                  # 升级沙箱里的 claude（容器里不会自动更新）；新建的 Task 生效
+cd ~/code/shop
+sbx run fix-login
 ```
 
-**项目记忆**：每次 `sbx run` 会把宿主机这个仓库的 Claude 自动记忆（`~/.claude/projects/<key>/memory/`）导入沙箱；沙箱里新记的不会自动回到宿主机，需要 `sbx memory pull`（ADR 0016）。
+That's it. Worktree, branch, container, network and proxy credentials are all set up, and Claude Code is waiting inside.
 
-省略 task 名时用 `main`：**直接使用仓库根**，不建 worktree 也不建分支，改动在宿主机 `git status` 里立刻可见；代价是你和 Agent 共用一棵工作树、一个 Workspace 只能有一个 main，详见 [docs/commands.md](docs/commands.md#我想直接在仓库目录里干活main-task)。
-
-每条命令的全部参数、配置文件字段和环境变量见 [docs/commands.md](docs/commands.md)；一个连续场景的完整过程见 [docs/walkthrough.md](docs/walkthrough.md)。
-
-## 开发
+## The workflow
 
 ```bash
-make test          # 单元测试
-make test-docker   # 带 docker 的集成测试（首次会构建镜像，需要几分钟）
-make lint          # golangci-lint；未安装时退回 go vet + gofmt
-make e2e           # 端到端验收：scripts/e2e-m1.sh（需要已登录）
+sbx run fix-login              # start (running it again resumes, continuing the last conversation)
+sbx run add-search --detach    # queue up another one without entering it
+sbx ls                         # who's running, commits ahead, diff size, time since last activity
+sbx attach fix-login           # back into the session (Ctrl-b, release, d to leave)
+code "$(sbx path fix-login)"   # open what it changed in your editor
+sbx done fix-login             # tear down the container, keep the branch
+git merge sbx/fix-login        # merge it yourself — sbx never merges for you
 ```
 
-`-v / --verbose` 打印执行的每一条 docker 和 git 命令。
+**`Ctrl-D` exits Claude; it does not detach.** The tmux session survives it, though, so `sbx run` brings Claude back and continues the previous conversation. A slip of the finger costs nothing.
+
+Want the changes to land in your repo directory, visible to `git status` on the host right away? **Omit the task name** — `sbx run` uses the main task, which works on the repo root with no worktree and no branch. Trade-offs and when to use it: [docs](docs/commands.md#我想直接在仓库目录里干活main-task).
+
+## The model
+
+| | What it is |
+|---|---|
+| **Workspace** | A git repository, detected from your current directory |
+| **Task** | One line of work = one container + one worktree + one `sbx/<task>` branch |
+| **main task** | The special case when you omit the name: works on the repo root, no isolation |
+
+All a container can see is: its worktree, the shared `sbx-home` (login state and Claude config), `sbx-cache` (package-manager caches) and a read-only `/sbx/gen` (hooks, settings, status line). **Nothing else from your host is mounted.**
+
+## Networking
+
+All egress goes through one shared Squid proxy (`sbx-proxy`), which is **open by default**.
+
+```bash
+sbx net denied                     # what got blocked (--all for every category, --since 2h to narrow)
+sbx net allow fastdl.mongodb.org   # allow a host and hot-reload it into running tasks
+sbx run t1 --net allowlist         # allowlist mode, just for this run
+```
+
+Allowlist mode (`network.mode = "allowlist"`) permits only the built-in list plus whatever you configure — the right choice when running untrusted code. Both modes go through Squid, so the logs are always there, and the cloud-MCP policy block applies either way ([ADR 0015](docs/CONTEXT.md)).
+
+> Flipping the default from allowlist to open was a deliberate call on 2026-10-08. When the allowlist blocked web search or a dependency download, the agent would quietly substitute something else and report a passing test — an outcome worse than the block itself. The trade-off is recorded in the ADR 0005 revision.
+
+## Configuration
+
+`~/.sbx/config.toml`; every field is optional:
+
+```toml
+profile = "web-go"            # built-in profile (currently the only one)
+
+[network]
+upstream  = ""                # host proxy; empty means direct
+mode      = "open"            # open | allowlist
+allow     = []                # appended to the built-in allowlist
+
+[resources]
+cpus = 2 ; memory = "3g" ; pids = 1024
+
+[deps]
+mask = ["node_modules"]       # each masked by a volume, keeping your host clean
+```
+
+Full field list, precedence and when changes take effect: [docs/commands.md](docs/commands.md#配置文件sbxconfigtoml).
+
+## Documentation
+
+> Docs are currently written in Chinese.
+
+| Doc | What's in it |
+|---|---|
+| [commands.md](docs/commands.md) | **Command reference**: every command, flag, config field and environment variable |
+| [walkthrough.md](docs/walkthrough.md) | One scenario end to end — what Docker, git and squid each do behind every command |
+| [architecture.md](docs/architecture.md) | How the pieces fit together and where data flows |
+| [design.md](docs/design.md) | Full design and its trade-offs |
+| [CONTEXT.md](docs/CONTEXT.md) | Glossary and decision index |
+
+## Status
+
+**M1 (MVP) is done; M2 is in progress.** Available commands: `run / attach / shell / stop / ls / path / done / net / memory / upgrade`.
+
+Known limits: `web-go` is the only built-in profile; networking is shared-proxy only (dedicated is M2-7); configuration has two layers, not four (project layer is M2-1); `sbx login` still means running a docker command by hand (M2-12); there is no `sbx merge`.
+
+Roadmap: [implementation-checklist.md](docs/implementation-checklist.md).
+
+## Development
+
+```bash
+make test          # unit tests
+make test-docker   # docker-backed integration tests (first run builds images; takes a few minutes)
+make lint          # golangci-lint, falling back to go vet + gofmt
+make e2e           # end-to-end acceptance (requires a logged-in sandbox)
+```
+
+Add `-v / --verbose` to print every docker and git command as it runs.
+
+sbx drives everything through the `docker` and `git` CLIs rather than SDKs (ADR 0013). Dockerfiles, squid templates and allowlists are `go:embed`-ed into the binary, so it runs without the source tree.
+
+## License
+
+[Apache-2.0](LICENSE).
+
+The status line script `core/assets/agent-layer/statusline.sh` is vendored from [ykdojo/claude-code-tips](https://github.com/ykdojo/claude-code-tips) by YK Sugi; attribution is kept in the file header.
