@@ -29,7 +29,7 @@ func (a *App) taskArg(args []string) (task.Task, error) {
 func (a *App) attachCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "attach <task>",
-		Short: "进入 Task 的 Agent 会话（tmux；Ctrl-b 松手再按 d 离开，不会停掉 Agent）",
+		Short: "Enter the task's agent session (tmux; Ctrl-b, release, then d leaves it running)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			t, err := a.taskArg(args)
@@ -69,7 +69,7 @@ func (a *App) attach(t task.Task) error {
 func (a *App) shellCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "shell <task>",
-		Short: "在 Task 容器里打开 bash",
+		Short: "Open a bash shell in the task's container",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			t, err := a.taskArg(args)
@@ -87,7 +87,7 @@ func (a *App) shellCmd() *cobra.Command {
 func (a *App) stopCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "stop <task>",
-		Short: "停止 Task 容器，保留一切；最后一个 Task 停止时顺带停掉 sbx-proxy",
+		Short: "Stop the task's container, keeping everything; stops sbx-proxy with the last task",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			t, err := a.taskArg(args)
@@ -228,7 +228,7 @@ func humanAgo(d time.Duration) string {
 func (a *App) lsCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "ls",
-		Short: "列出当前 Workspace 的 Task",
+		Short: "List the tasks in this workspace",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := a.load(); err != nil {
@@ -257,7 +257,7 @@ func (a *App) lsCmd() *cobra.Command {
 func (a *App) pathCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "path [task]",
-		Short: "打印 Task 的工作目录（省略 task 时为 main，即仓库根），可用于 cd $(sbx path <task>)",
+		Short: "Print a task's working directory (omit task for main, the repo root): cd $(sbx path <task>)",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := a.load(); err != nil {
@@ -284,7 +284,7 @@ func (a *App) doneCmd() *cobra.Command {
 	var force bool
 	cmd := &cobra.Command{
 		Use:   "done <task>...",
-		Short: "结束 Task：删除容器、网络、依赖 volume、worktree 和 state，保留分支",
+		Short: "Finish a task: remove its container, network, dep volumes, worktree and state; keep the branch",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := a.load(); err != nil {
@@ -310,7 +310,7 @@ func (a *App) doneCmd() *cobra.Command {
 			return errors.Join(errs...)
 		},
 	}
-	cmd.Flags().BoolVar(&force, "force", false, "worktree 有未提交的改动也删除")
+	cmd.Flags().BoolVar(&force, "force", false, "remove the task even with uncommitted changes in its worktree")
 	return cmd
 }
 

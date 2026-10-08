@@ -63,7 +63,7 @@ func (a *App) latestClaude(b image.Builder, in image.Inputs) (string, error) {
 func (a *App) upgradeCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "upgrade",
-		Short: "把沙箱里的 claude 升级到最新版（重建 Agent 层；新 Task 生效）",
+		Short: "Upgrade claude in the sandbox to the latest version (rebuilds the agent layer; new tasks pick it up)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := a.loadConfig(); err != nil {

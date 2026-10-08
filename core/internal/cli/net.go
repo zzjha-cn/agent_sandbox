@@ -14,7 +14,7 @@ import (
 )
 
 func (a *App) netCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "net", Short: "查看和调整 Task 的出网情况"}
+	cmd := &cobra.Command{Use: "net", Short: "Inspect and adjust what tasks can reach on the network"}
 	cmd.AddCommand(a.netDeniedCmd(), a.netAllowCmd())
 	return cmd
 }
@@ -23,7 +23,7 @@ func (a *App) netAllowCmd() *cobra.Command {
 	var project bool
 	cmd := &cobra.Command{
 		Use:   "allow <host>...",
-		Short: "把域名加进白名单（写入 ~/.sbx/config.toml），并对运行中的 Task 热加载",
+		Short: "Add hosts to the allowlist (written to ~/.sbx/config.toml) and reload running tasks",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if project {
@@ -58,7 +58,7 @@ func (a *App) netAllowCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&project, "project", false, "写进项目配置（待 M2-1）")
+	cmd.Flags().BoolVar(&project, "project", false, "write to the project config (not implemented yet, M2-1)")
 	return cmd
 }
 
@@ -97,7 +97,7 @@ func (a *App) netDeniedCmd() *cobra.Command {
 	var since time.Duration
 	cmd := &cobra.Command{
 		Use:   "denied [task]",
-		Short: "列出被代理拒绝的域名（省略 task 时统计当前 Workspace 的全部 Task）",
+		Short: "List the hosts the proxy denied (omit task to cover every task in this workspace)",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := a.load(); err != nil {
@@ -124,8 +124,8 @@ func (a *App) netDeniedCmd() *cobra.Command {
 			return a.printDenied(rows, all, since)
 		},
 	}
-	cmd.Flags().BoolVar(&all, "all", false, "连策略拦截、已知遥测和认证失败一起显示")
-	cmd.Flags().DurationVar(&since, "since", 0, "只看最近这段时间，例如 2h（默认全部）")
+	cmd.Flags().BoolVar(&all, "all", false, "also show policy blocks, known telemetry and auth failures")
+	cmd.Flags().DurationVar(&since, "since", 0, "only look this far back, e.g. 2h (default: everything)")
 	return cmd
 }
 

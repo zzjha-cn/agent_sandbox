@@ -67,14 +67,12 @@ upstream = "http://host.docker.internal:7890"   # 留空表示直连
 
 ### 3. 登录（只需一次，之后所有 Task 共享）
 
-在任意仓库里跑一次 `sbx run`。镜像构建完、发现没有登录态时，sbx 会把该执行的命令打印给你：
-
 ```bash
-docker run -it --rm -e HOME=/home/agent -v sbx-home:/home/agent \
-  sbx/web-go:<hash> claude auth login
+sbx login            # 在一个临时容器里打开 claude 的登录流程
+sbx login --status   # 现在登录的是哪个账号
 ```
 
-照提示打开链接、粘贴授权码。凭据存在 volume `sbx-home` 里，不在任何 Task 内部。
+照提示打开链接、粘贴授权码。凭据存在 volume `sbx-home` 里，所有 Task 共享，不在任何 Task 内部。`sbx login --logout` 清掉，`--force` 换账号。
 
 ### 4. 跑第一个任务
 
@@ -159,9 +157,9 @@ mask = ["node_modules"]       # 每项挂一个 volume 遮住，不污染宿主�
 
 ## 项目状态
 
-**M1（MVP）完成，M2 进行中。** 可用命令：`run / attach / shell / stop / ls / path / done / net / memory / upgrade`。
+**M1（MVP）完成，M2 进行中。** 可用命令：`run / attach / shell / stop / ls / path / done / net / memory / login / upgrade`。
 
-已知边界：内置 Profile 只有 `web-go`；网络只有 shared proxy（dedicated 待 M2-7）；配置只有两层（项目层待 M2-1）；`sbx login` 还要手动跑 docker（待 M2-12）；没有 `sbx merge`。
+已知边界：内置 Profile 只有 `web-go`；网络只有 shared proxy（dedicated 待 M2-7）；配置只有两层（项目层待 M2-1）；没有 `sbx merge`。
 
 路线图见 [implementation-checklist.md](docs/implementation-checklist.md)。
 

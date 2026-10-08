@@ -339,7 +339,7 @@ http_access allow u_<id>
 
 | 方式 | 流程 |
 |---|---|
-| 订阅登录（默认） | `sbx login claude\|codex`：启动一个临时 agent 容器（挂载 `sbx-home`），执行对应 CLI 的登录流程，凭据落到 `sbx-home`，所有 Task 共享 |
+| 订阅登录（默认） | `sbx login [claude\|codex]`（省略即 claude）：启动一个临时 agent 容器（挂载 `sbx-home`），执行 `claude auth login`，凭据落到 `sbx-home`，所有 Task 共享。这个容器没有 Task，不接 Task 网络和 `sbx-proxy`，走上游代理或直连。`--status / --logout / --force / --console / --email`；Codex 待 M3-6 |
 | API key | `~/.sbx/config.toml` 里写 `agents.claude.api_key_env = "ANTHROPIC_API_KEY"`（从宿主机环境变量读取）或 `api_key_file = "..."`，启动时以环境变量注入，优先级高于订阅登录 |
 
 **M0-1 结论**：

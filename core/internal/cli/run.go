@@ -6,14 +6,12 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"sandx/internal/agent"
 	"sandx/internal/docker"
-	"sandx/internal/image"
 	"sandx/internal/proxy"
 	"sandx/internal/task"
 	"sandx/internal/workspace"
@@ -26,7 +24,7 @@ func (a *App) runCmd() *cobra.Command {
 	var detach, fresh bool
 	cmd := &cobra.Command{
 		Use:   "run [task]",
-		Short: "创建或恢复 Task，在沙箱里启动 Agent（省略 task 时用 main）",
+		Short: "Create or resume a task and start the agent in its sandbox (omit task for main)",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := a.load(); err != nil {
@@ -52,10 +50,10 @@ func (a *App) runCmd() *cobra.Command {
 			return a.run(t, base, detach, fresh)
 		},
 	}
-	cmd.Flags().StringVar(&base, "base", "", "新建分支的起点（默认当前 HEAD）")
-	cmd.Flags().BoolVarP(&detach, "detach", "d", false, "只启动，不 attach")
-	cmd.Flags().BoolVar(&fresh, "fresh", false, "重新拉起 claude 时开一段新对话（默认接上这个 Task 的上次对话）")
-	cmd.Flags().StringVar(&netMode, "net", "", "本次的网络模式：open（默认，全部放行）或 allowlist（只放行白名单）")
+	cmd.Flags().StringVar(&base, "base", "", "starting point for the new branch (default: current HEAD)")
+	cmd.Flags().BoolVarP(&detach, "detach", "d", false, "start the task without attaching to it")
+	cmd.Flags().BoolVar(&fresh, "fresh", false, "start a new conversation instead of continuing this task's last one")
+	cmd.Flags().StringVar(&netMode, "net", "", "network mode for this run: open (default, everything allowed) or allowlist")
 	return cmd
 }
 
@@ -165,11 +163,7 @@ func (a *App) create(t task.Task, base string, fresh bool) (err error) {
 
 	// 2. 镜像
 	step = "准备镜像"
-	in, err := a.imageInputs()
-	if err != nil {
-		return err
-	}
-	tag, err := image.Builder{Docker: a.Docker, Upstream: a.Cfg.Network.Upstream, Out: a.Err}.Ensure(in)
+	tag, err := a.agentImage()
 	if err != nil {
 		return err
 	}
@@ -298,30 +292,41 @@ func (a *App) prepareWorktree(t task.Task, base string) (string, error) {
 	return sha, nil
 }
 
-// ensureVolumes 创建共享 volume 和 Task 的依赖 volume，新建时按 agent 的 UID/GID 初始化属主。
-func (a *App) ensureVolumes(t task.Task, tag string, u *undo) error {
+// initVol 在一个临时容器里以 root 初始化 volume 的内容和属主。
+func (a *App) initVol(tag, vol, script string) error {
+	_, err := a.Docker.Run("run", "--rm", "-u", "0", "--network", "none",
+		"--mount", "type=volume,source="+vol+",target=/v", "--entrypoint", "sh", tag, "-c", script)
+	return err
+}
+
+// ensureSharedVolumes 创建全局共享的 sbx-home 和 sbx-cache，新建时按宿主机的 UID/GID 设属主。
+// sbx run 和 sbx login 都要先过这一步。
+func (a *App) ensureSharedVolumes(tag string) error {
 	uid, gid := strconv.Itoa(os.Getuid()), strconv.Itoa(os.Getgid())
-	initVol := func(vol, script string) error {
-		_, err := a.Docker.Run("run", "--rm", "-u", "0", "--network", "none",
-			"--mount", "type=volume,source="+vol+",target=/v", "--entrypoint", "sh", tag, "-c", script)
-		return err
-	}
-	own := "chown " + uid + ":" + gid + " /v"
-	shared := map[string]string{
-		"sbx-home":  own,
+	scripts := map[string]string{
+		sharedHome:  "chown " + uid + ":" + gid + " /v",
 		"sbx-cache": "mkdir -p /v/npm /v/pip /v/uv /v/go-mod /v/go-build /v/cargo && chown -R " + uid + ":" + gid + " /v",
 	}
-	for _, vol := range []string{"sbx-home", "sbx-cache"} {
+	for _, vol := range []string{sharedHome, "sbx-cache"} {
 		created, err := a.Docker.VolumeCreate(vol, map[string]string{"sbx.kind": "shared"})
 		if err != nil {
 			return err
 		}
 		if created {
-			if err := initVol(vol, shared[vol]); err != nil {
+			if err := a.initVol(tag, vol, scripts[vol]); err != nil {
 				return err
 			}
 		}
 	}
+	return nil
+}
+
+// ensureVolumes 准备共享 volume 和这个 Task 的依赖 volume。
+func (a *App) ensureVolumes(t task.Task, tag string, u *undo) error {
+	if err := a.ensureSharedVolumes(tag); err != nil {
+		return err
+	}
+	own := "chown " + strconv.Itoa(os.Getuid()) + ":" + strconv.Itoa(os.Getgid()) + " /v"
 	for i := range a.Cfg.Deps.Mask {
 		vol := t.DepVolume(i)
 		labels := t.Labels()
@@ -332,7 +337,7 @@ func (a *App) ensureVolumes(t task.Task, tag string, u *undo) error {
 		}
 		if created {
 			u.add(func() { a.Docker.VolumeRm(vol) })
-			if err := initVol(vol, own); err != nil {
+			if err := a.initVol(tag, vol, own); err != nil {
 				return err
 			}
 		}
@@ -393,21 +398,5 @@ func agentExited(t task.Task) bool {
 }
 
 func (a *App) loginHelp(t task.Task) string {
-	meta, _, _ := t.ReadMeta()
-	img := meta.Image
-	if img == "" {
-		img = "sbx/web-go:<hash>"
-	}
-	env := ""
-	if up := a.Cfg.Network.Upstream; up != "" {
-		env = "-e HTTPS_PROXY=" + up + " "
-	}
-	return strings.Join([]string{
-		"沙箱里的 claude 还没有登录（sbx-home 里没有凭据）。在终端执行一次：",
-		"",
-		"  docker run -it --rm -e HOME=/home/agent -v sbx-home:/home/agent \\",
-		"    " + env + img + " claude auth login",
-		"",
-		"按提示打开链接、粘贴授权码；完成后重新执行 sbx run " + t.Name + "。",
-	}, "\n")
+	return "沙箱里的 claude 还没有登录（sbx-home 里没有凭据）。先执行一次：\n\n  sbx login\n\n登录完成后重新执行 sbx run " + t.Name + "。"
 }

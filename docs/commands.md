@@ -35,14 +35,28 @@ ln -sf "$PWD/bin/sbx" /usr/local/bin/sbx    # 可选，放进 PATH
 upstream = "http://host.docker.internal:7890"
 ```
 
-**登录一次，所有 Task 共享。** 第一次 `sbx run` 会因为没有凭据而停下，并把命令打印给你，照抄执行即可：
+**登录一次，所有 Task 共享。**
 
 ```bash
-docker run -it --rm -e HOME=/home/agent -v sbx-home:/home/agent \
-  -e HTTPS_PROXY=http://host.docker.internal:7890 sbx/web-go:<hash> claude auth login
+sbx login            # 打开 claude 的登录流程：照它给的链接授权，把授权码粘回来
+sbx login --status   # 看看现在是哪个账号
 ```
 
-凭据落在 volume `sbx-home` 里，`sbx done` 不会删它（只删 `sbx.kind=dep` 的 Task 私有 volume）。OAuth token 过期后在容器里重新登录一次，写的是同一个 volume，所有 Task 立刻跟着生效。
+命令形式是 `sbx login [claude|codex]`，**省略时就是 claude**。Codex 的登录流程（`codex login --device-auth`）还没验证，推迟到 M3-6；现在写 `sbx login codex` 会明确告诉你这件事，和打错名字的报错分开。
+
+它在一个临时容器里挂上 `sbx-home` 跑 `claude auth login`，凭据落在这个 volume 里。**这个容器没有 Task，也就不接 Task 网络和 `sbx-proxy`**：配了 `network.upstream` 就走上游代理，否则直连。第一次 `sbx run` 发现没凭据时会停下来让你先跑这条。
+
+`sbx done` 不会删 `sbx-home`（只删 `sbx.kind=dep` 的 Task 私有 volume）。OAuth token 过期后再跑一次 `sbx login`，写的是同一个 volume，所有 Task 立刻跟着生效。
+
+| 参数 | 做什么 |
+|---|---|
+| `--status` | 只打印登录态，不登录 |
+| `--logout` | 退出登录，清掉 `sbx-home` 里的凭据 |
+| `--force` | 已经登录时也重新走一遍（换账号） |
+| `--console` | 用 Anthropic Console 账号（按量计费）而不是 Claude 订阅 |
+| `--email <addr>` | 预填登录页上的邮箱 |
+
+`--console` 和 `--email` 是 claude 特有的，透传给 `claude auth login`。和 `sbx upgrade` 一样，**这条命令不需要在 git 仓库里执行**。
 
 ---
 
@@ -231,6 +245,7 @@ sbx run t1 --net allowlist     # 本次用白名单模式
 sbx memory pull       # 把沙箱里新记的项目记忆导回宿主机
 sbx memory pull -y    # 不询问直接写
 sbx upgrade           # 升级沙箱里的 claude
+sbx login --status    # 现在登录的是哪个账号（详见第 1 层）
 ```
 
 **记忆是单向自动的**：每次 `sbx run` 把宿主机这个仓库的记忆（`~/.claude/projects/<key>/memory/`）导入沙箱；沙箱里新记的**不会自动回来**，要 `memory pull`（ADR 0016）。它先按文件列出差异（`add` / `update` / `merge` / `conflict` / `keep`），确认后才写；两边都改过的标 `conflict`，不自动合，留给你手处理。`sbx done` 时会提醒一次。
@@ -281,6 +296,9 @@ sbx upgrade           # 升级沙箱里的 claude
 | | `--since <dur>` | 0（全部），例如 `2h`、`30m` |
 | `net allow <host>...` | `--project` | **未实现**，待 M2-1，会直接报错 |
 | `memory pull` | `-y, --yes` | false（先问） |
+| `login [claude\|codex]` | `--status` / `--logout` / `--force` | false |
+| | `--console`（claude） | false（Claude 订阅） |
+| | `--email <addr>`（claude） | 空 |
 | `attach/shell/stop/ls/path/upgrade` | 无 | |
 
 ---

@@ -161,11 +161,11 @@ func showDiff(name string, old, new []byte, out *os.File) {
 }
 
 func (a *App) memoryCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "memory", Short: "宿主机和沙箱之间的 Claude 项目记忆（ADR 0016）"}
+	cmd := &cobra.Command{Use: "memory", Short: "Claude project memory between your host and the sandbox (ADR 0016)"}
 	var yes bool
 	pull := &cobra.Command{
 		Use:   "pull",
-		Short: "把沙箱里新记的项目记忆导回宿主机（先展示差异，确认后写入）",
+		Short: "Bring memory written in the sandbox back to the host (shows the diff, then asks)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := a.load(); err != nil {
@@ -209,7 +209,7 @@ func (a *App) memoryCmd() *cobra.Command {
 			return memory.SaveBase(basePath, next)
 		},
 	}
-	pull.Flags().BoolVarP(&yes, "yes", "y", false, "不询问，直接写入")
+	pull.Flags().BoolVarP(&yes, "yes", "y", false, "write without asking")
 	cmd.AddCommand(pull)
 	return cmd
 }

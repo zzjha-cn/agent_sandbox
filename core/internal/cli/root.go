@@ -33,7 +33,7 @@ func Execute() int {
 	app := &App{Out: os.Stdout, Err: os.Stderr}
 	root := &cobra.Command{
 		Use:           "sbx",
-		Short:         "在容器沙箱里运行 Claude Code / Codex 的 Task 运行时",
+		Short:         "Run Claude Code / Codex tasks in container sandboxes",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
@@ -44,8 +44,8 @@ func Execute() int {
 			}
 		},
 	}
-	root.PersistentFlags().BoolVarP(&app.Verbose, "verbose", "v", false, "打印执行的 docker 和 git 命令")
-	root.AddCommand(app.runCmd(), app.attachCmd(), app.shellCmd(), app.stopCmd(), app.lsCmd(), app.pathCmd(), app.doneCmd(), app.memoryCmd(), app.upgradeCmd(), app.netCmd())
+	root.PersistentFlags().BoolVarP(&app.Verbose, "verbose", "v", false, "print every docker and git command sbx runs")
+	root.AddCommand(app.runCmd(), app.attachCmd(), app.shellCmd(), app.stopCmd(), app.lsCmd(), app.pathCmd(), app.doneCmd(), app.memoryCmd(), app.loginCmd(), app.upgradeCmd(), app.netCmd())
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(app.Err, "sbx:", err)
 		return 1

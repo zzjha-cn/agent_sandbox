@@ -18,6 +18,11 @@
 
 ---
 
+<p align="left">
+  <b>Overview: </b> <a href="https://zzjha-cn.github.io/agent_sandbox/"><b> Website </b></a>
+</p>
+
+
 A coding agent only gets out of your way once you turn the permission prompts off — and the moment you do, it can touch anything on your machine. sbx moves that trade-off somewhere safer: **one container, one git worktree and one branch per task**. Inside, `--dangerously-skip-permissions` is fine. Outside, nothing changed.
 
 You also get tasks that **actually run in parallel** without stepping on each other, dependency installs that never touch your host, and every outbound request through a proxy — so you can **ask afterwards what it talked to**.
@@ -67,14 +72,12 @@ upstream = "http://host.docker.internal:7890"   # leave empty for a direct conne
 
 ### 3. Log in (once; every task shares it)
 
-Run `sbx run` in any repo. Once the image is built and sbx finds no credentials, it prints the exact command to run:
-
 ```bash
-docker run -it --rm -e HOME=/home/agent -v sbx-home:/home/agent \
-  sbx/web-go:<hash> claude auth login
+sbx login            # opens claude's login flow in a throwaway container
+sbx login --status   # which account is this?
 ```
 
-Open the link, paste the code back. Credentials live in the `sbx-home` volume, not inside any task.
+Open the link it prints, paste the code back. Credentials live in the `sbx-home` volume, shared by every task and never inside one. `sbx login --logout` clears them; `--force` switches accounts.
 
 ### 4. Run your first task
 
@@ -161,9 +164,9 @@ Full field list, precedence and when changes take effect: [docs/commands.md](doc
 
 ## Status
 
-**M1 (MVP) is done; M2 is in progress.** Available commands: `run / attach / shell / stop / ls / path / done / net / memory / upgrade`.
+**M1 (MVP) is done; M2 is in progress.** Available commands: `run / attach / shell / stop / ls / path / done / net / memory / login / upgrade`.
 
-Known limits: `web-go` is the only built-in profile; networking is shared-proxy only (dedicated is M2-7); configuration has two layers, not four (project layer is M2-1); `sbx login` still means running a docker command by hand (M2-12); there is no `sbx merge`.
+Known limits: `web-go` is the only built-in profile; networking is shared-proxy only (dedicated is M2-7); configuration has two layers, not four (project layer is M2-1); there is no `sbx merge`.
 
 Roadmap: [implementation-checklist.md](docs/implementation-checklist.md).
 

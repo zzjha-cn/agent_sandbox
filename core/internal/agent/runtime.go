@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -32,14 +31,9 @@ func (r Runtime) Preseed() (string, error) {
 // LoggedIn 用 claude auth status 检查登录态。
 func (r Runtime) LoggedIn() (bool, error) {
 	out, err := r.exec("claude", "auth", "status")
-	var st struct {
-		LoggedIn bool `json:"loggedIn"`
-	}
-	if jerr := json.Unmarshal([]byte(out), &st); jerr != nil {
-		if err != nil {
-			return false, err
-		}
-		return false, fmt.Errorf("无法解析 claude auth status 输出：%s", out)
+	st, perr := ParseStatus(out, err)
+	if perr != nil {
+		return false, perr
 	}
 	return st.LoggedIn, nil
 }

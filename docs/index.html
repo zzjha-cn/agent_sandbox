@@ -80,6 +80,8 @@ header{padding-block:56px 40px;border-bottom:1px solid var(--line)}
 
 /* sections */
 section{padding-block:52px;border-bottom:1px solid var(--line)}
+/* the top bar is sticky, so an anchor jump must stop short of it */
+section[id]{scroll-margin-top:58px}
 section:last-of-type{border-bottom:0}
 .sec-head{display:grid;grid-template-columns:44px 1fr;gap:16px;align-items:start;margin-bottom:28px}
 .num{font-family:var(--font-mono);font-size:12px;color:var(--accent);padding-top:7px;letter-spacing:.08em}
@@ -163,6 +165,14 @@ td.k{white-space:nowrap}
   color:var(--warn);display:block;margin-bottom:7px}
 .note p{margin:0 0 10px}.note p:last-child{margin-bottom:0}
 
+/* numbered steps */
+.steps{margin:16px 0 0;padding:0;list-style:none;display:grid;gap:11px;counter-reset:s}
+.steps li{position:relative;padding-left:34px;color:var(--muted);font-size:14.5px;counter-increment:s}
+.steps li::before{content:counter(s);position:absolute;left:0;top:2px;width:21px;height:21px;
+  display:flex;align-items:center;justify-content:center;border-radius:100px;
+  background:var(--accent-soft);color:var(--accent);font-family:var(--font-mono);font-size:11px}
+.steps li b{color:var(--ink);font-weight:500}
+
 /* limits */
 .limits{margin:18px 0 0;padding:0;list-style:none;display:grid;gap:9px}
 .limits li{position:relative;padding-left:27px;color:var(--muted);font-size:14.5px}
@@ -206,7 +216,7 @@ footer code{font-size:12.5px}
 
 /* grid/flex children default to min-width:auto, which lets wide code blocks and tables
    push the whole page sideways instead of scrolling inside their own container. */
-.sec-head>*,.beat>*,.day>*,.pillars>*,.outro>*,section>.body>*{min-width:0}
+.sec-head>*,.beat>*,.day>*,.pillars>*,.outro>*,section>.body>*,.steps>*{min-width:0}
 .term,.term pre{min-width:0}
 .term{overflow-x:auto}
 
@@ -225,6 +235,7 @@ footer code{font-size:12.5px}
   <div class="in">
     <span class="wm">s<span>b</span>x</span>
     <nav>
+      <a href="#cli">How it works</a>
       <a href="#architecture">Architecture</a>
       <a href="https://github.com/zzjha-cn/agent_sandbox/blob/main/docs/commands.md">Commands</a>
       <a class="gh" href="https://github.com/zzjha-cn/agent_sandbox"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.4 7.4 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>GitHub</a>
@@ -382,9 +393,50 @@ Hot-reloaded into 3 running tasks; no restart needed</pre></div>
 </section>
 
 <!-- 03 -->
-<section id="architecture">
+<section id="cli">
   <div class="sec-head">
     <div class="num">03</div>
+    <div>
+      <h2>What the command actually does</h2>
+      <p>What has to be on your machine, and the seven steps behind <code>sbx run</code>.</p>
+    </div>
+  </div>
+
+  <div class="body"><h3 style="margin-top:0">What you need</h3></div>
+  <div class="tw">
+    <table>
+      <thead><tr><th>On your machine</th><th>What it is for</th></tr></thead>
+      <tbody>
+        <tr><td class="k">Docker Desktop, running</td><td>Everything runs in containers. Give the VM around 10&nbsp;GB; each task is capped at 2 CPUs and 3&nbsp;g</td></tr>
+        <tr><td class="k">git</td><td>Worktrees and branches are driven through the git CLI</td></tr>
+        <tr><td class="k">Go 1.27</td><td>Only to build the binary. Nothing at runtime</td></tr>
+        <tr><td class="k">A Claude subscription</td><td>One <code>sbx login</code>; credentials live in a shared volume, never inside a task</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="body" style="margin-top:16px">
+    <p>That is the whole list. <strong>Your project's Node, Python or Go toolchain does not need to be on the host</strong> — it is in the image. sbx writes to exactly two places outside Docker: the binary wherever you put it, and <code>~/.sbx/</code>. Uninstalling is deleting those two.</p>
+
+    <h3>Seven steps behind one command</h3>
+    <p>sbx is <strong>a single Go binary with no daemon and no background service</strong>. It shells out to <code>docker</code> and <code>git</code> — no SDKs — and for a task that does not exist yet, <code>sbx run fix-login</code> does this:</p>
+    <ol class="steps">
+      <li><b>Locate the workspace.</b> <code>git rev-parse --show-toplevel</code>; the id is the directory name plus six hex of the path's hash, e.g. <code>shop-e76272</code>.</li>
+      <li><b>Create the worktree and branch.</b> <code>git worktree add ~/.sbx/worktrees/&lt;ws&gt;/&lt;task&gt; -b sbx/&lt;task&gt;</code>, starting from HEAD unless you pass <code>--base</code>.</li>
+      <li><b>Make sure the image exists.</b> The tag is a hash of the two Dockerfiles, the entrypoint, the pinned Claude version and your UID/GID — unchanged inputs reuse the image, a changed one rebuilds.</li>
+      <li><b>Create the task's network</b>, <code>--internal</code>: no route to the outside at all.</li>
+      <li><b>Attach it to the proxy.</b> Start the shared squid if it is not up, mint this task's username and random token, write its config fragment, <code>squid -k reconfigure</code>.</li>
+      <li><b>Create the dep volumes and the container</b>, mounting the worktree, the main repo's <code>.git</code>, <code>sbx-home</code>, <code>sbx-cache</code>, the state directory and a read-only <code>/sbx/gen</code> — and nothing else from your host.</li>
+      <li><b>Start Claude in tmux inside the container, then exit.</b> The command returns; the agent keeps running without it.</li>
+    </ol>
+    <p style="margin-top:16px">Any step that fails <strong>unwinds the earlier ones in reverse</strong>, keeping the worktree so nothing you wrote is lost.</p>
+    <p>Running the same name again is the <strong>resume</strong> path, not an error: container stopped, start it; Claude exited because you hit <kbd>Ctrl-D</kbd>, restart it in the same tmux session and continue the previous conversation; everything already up, just attach. So <code>sbx run</code> is safe to type twice.</p>
+  </div>
+</section>
+
+<!-- 04 -->
+<section id="architecture">
+  <div class="sec-head">
+    <div class="num">04</div>
     <div>
       <h2>Architecture</h2>
       <p>Two tasks running in parallel on one machine.</p>
@@ -516,13 +568,80 @@ Hot-reloaded into 3 running tasks; no restart needed</pre></div>
   <p class="subline" style="margin-top:14px">Every Docker resource is labelled <code>sbx.ws</code> / <code>sbx.task</code> / <code>sbx.kind</code>. <code>ls</code> and <code>done</code> find resources by label rather than guessing at names.</p>
 </section>
 
-<!-- 04 -->
+<!-- 05 -->
 <section>
   <div class="sec-head">
-    <div class="num">04</div>
+    <div class="num">05</div>
     <div>
       <h2>Questions people actually ask</h2>
       <p>Organised by the question, not by the module.</p>
+    </div>
+  </div>
+
+  <div class="qgroup">
+    <div class="gl">Lifecycle — what a task creates, and what it leaves</div>
+
+    <div class="qa">
+      <p class="q">One task from start to finish — what gets made, and who cleans it up?</p>
+      <div class="a">
+        <p>Every artifact belongs to exactly one of two groups: <strong>scoped to the task</strong>, which <code>sbx done</code> removes, and <strong>work or expensive state</strong>, which it never touches.</p>
+      </div>
+      <div class="tw">
+        <table>
+          <thead><tr><th>Artifact</th><th>Where it lives</th><th>Removed by <code>done</code></th></tr></thead>
+          <tbody>
+            <tr><td class="k">branch <code>sbx/&lt;task&gt;</code> and its commits</td><td>your main repo's <code>.git</code></td><td><b>no</b> — you delete it, after merging</td></tr>
+            <tr><td class="k">worktree</td><td><code>~/.sbx/worktrees/&lt;ws&gt;/&lt;task&gt;</code></td><td>yes</td></tr>
+            <tr><td class="k">container <code>sbx-&lt;ws&gt;-&lt;task&gt;</code></td><td>Docker</td><td>yes</td></tr>
+            <tr><td class="k">task network</td><td>Docker, <code>--internal</code></td><td>yes</td></tr>
+            <tr><td class="k">proxy identity + token</td><td><code>~/.sbx/proxy/</code></td><td>yes</td></tr>
+            <tr><td class="k">dep volume (<code>node_modules</code>…)</td><td>Docker</td><td>yes</td></tr>
+            <tr><td class="k">state: <code>status.json</code>, <code>events.log</code>, <code>gen/</code></td><td><code>~/.sbx/state/&lt;ws&gt;/&lt;task&gt;</code></td><td>yes</td></tr>
+            <tr><td class="k"><code>sbx-home</code> — login, Claude config, memory</td><td>Docker volume, shared</td><td><b>no</b></td></tr>
+            <tr><td class="k"><code>sbx-cache</code> — npm / pip / go / cargo</td><td>Docker volume, shared</td><td><b>no</b></td></tr>
+            <tr><td class="k">the image</td><td>Docker</td><td><b>no</b></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="a" style="margin-top:12px">
+        <p>Nothing is written anywhere else. There is no system service, no login item, no file in <code>/usr/local</code> other than the symlink you make yourself.</p>
+      </div>
+    </div>
+
+    <div class="qa">
+      <p class="q">After sbx done, how do I know nothing was left running?</p>
+      <div class="a">
+        <p>Every Docker resource sbx creates is <strong>labelled</strong> <code>sbx.ws</code>, <code>sbx.task</code> and <code>sbx.kind</code>, which is how <code>done</code> finds things instead of guessing at names — and how you can check it independently:</p>
+      </div>
+      <div class="term" style="margin-top:12px"><pre><span class="c">$</span> docker ps -aq   --filter label=sbx.ws=shop-e76272   <span class="c"># containers</span>
+<span class="c">$</span> docker network ls -q --filter label=sbx.ws=shop-e76272   <span class="c"># networks</span>
+<span class="c">$</span> docker volume ls -q  --filter label=sbx.ws=shop-e76272   <span class="c"># dep volumes</span></pre></div>
+      <div class="a" style="margin-top:12px">
+        <p>All three come back empty after <code>done</code>; that is exactly what the acceptance test asserts. When the last task in any workspace finishes, <code>sbx-proxy</code> stops too.</p>
+        <p><strong><code>done</code> refuses to run while the worktree has uncommitted changes</strong> and tells you to commit first — <code>--force</code> is the only way to discard them.</p>
+      </div>
+    </div>
+
+    <div class="qa">
+      <p class="q">Something went wrong. Where are the logs?</p>
+      <div class="a">
+        <p>Five places, roughly in the order you would reach for them:</p>
+      </div>
+      <div class="tw">
+        <table>
+          <thead><tr><th>Where</th><th>What it tells you</th></tr></thead>
+          <tbody>
+            <tr><td class="k"><code>sbx ls</code></td><td>Status, commits ahead, diff size, time since the last activity — usually the whole answer</td></tr>
+            <tr><td class="k"><code>~/.sbx/state/&lt;ws&gt;/&lt;task&gt;/events.log</code></td><td>One timestamped line per Claude hook event. The timeline of what the agent was doing and when it stopped</td></tr>
+            <tr><td class="k"><code>sbx net denied [task]</code></td><td>What the proxy refused, in three categories; <code>--all</code> widens it, <code>--since 2h</code> narrows it</td></tr>
+            <tr><td class="k"><code>sbx attach &lt;task&gt;</code></td><td>The agent's own scrollback — it is a live tmux session, so <kbd>Ctrl-b</kbd> then <kbd>[</kbd> scrolls back through everything it printed</td></tr>
+            <tr><td class="k"><code>sbx -v &lt;any command&gt;</code></td><td>Every docker and git command sbx runs, plus the configuration actually in effect. The first flag to add when sbx itself misbehaves</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="a" style="margin-top:12px">
+        <p>Being honest about the gap: <strong>there is no <code>sbx logs</code> yet.</strong> Headless runs that write a transcript to a file are M3-7. Today the agent's output lives in the tmux session, so read it with <code>attach</code> while the container is still up.</p>
+      </div>
     </div>
   </div>
 
@@ -659,8 +778,26 @@ mask = ["node_modules"]    <span class="c"># add .venv, target, vendor, …</spa
     <div class="qa">
       <p class="q">How are images handled? Does every run rebuild?</p>
       <div class="a">
-        <p>Two layers: a profile layer (Debian + Go + Node + Python) and an agent layer (tmux, git, jq, claude-code, the <code>agent</code> user). The tag is <strong>a hash of the inputs</strong>, so an unchanged input reuses the image and a changed one rebuilds automatically.</p>
-        <p>Claude inside the container <strong>never auto-updates</strong>; <code>sbx upgrade</code> does it. Existing tasks keep their old image until they are torn down and recreated — which is what keeps one task on one version for its whole life.</p>
+        <p>Two layers: a <strong>profile layer</strong> (Debian + Go + Node + Python) and an <strong>agent layer</strong> (tmux, git, ripgrep, jq, claude-code, the non-root <code>agent</code> user). The tag is <strong>a hash of the inputs</strong> — both Dockerfiles, the entrypoint, the pinned Claude version and your UID/GID — so an unchanged input reuses the image and a changed one rebuilds by itself. The first build takes a few minutes; after that a task is up in seconds.</p>
+        <p>Claude inside the container <strong>never auto-updates</strong>; <code>sbx upgrade</code> rebuilds the agent layer. Existing tasks keep their old image until they are torn down and recreated — which is what keeps one task on one version for its whole life.</p>
+      </div>
+    </div>
+
+    <div class="qa">
+      <p class="q">Is the image fixed? What if I need a different stack, or one more system package?</p>
+      <div class="a">
+        <p>There is one built-in profile today, <code>web-go</code>. You change what is in it by editing the Dockerfiles in the repo and rebuilding the binary — they are <code>go:embed</code>-ed, so the binary carries them and nothing depends on the source tree at runtime:</p>
+      </div>
+      <div class="term" style="margin-top:12px"><pre>core/assets/profiles/web-go/Dockerfile   <span class="c"># language runtimes, system packages</span>
+core/assets/agent-layer/Dockerfile       <span class="c"># tmux, git, jq, claude-code, the agent user</span>
+
+<span class="c">$</span> cd core &amp;&amp; make build                 <span class="c"># next sbx run sees a new hash and rebuilds</span></pre></div>
+      <div class="a" style="margin-top:12px">
+        <p>Files that are <strong>injected rather than baked</strong> — the hooks, the settings sbx passes to Claude, the status line — are re-rendered into <code>/sbx/gen</code> on every run. Changing those takes effect on the next <code>sbx run</code> with <strong>no image rebuild at all</strong>.</p>
+      </div>
+      <div class="note">
+        <span class="t">The honest limit</span>
+        <p><b>A per-project <code>.sbx/Dockerfile</code>, or pointing a project at your own image, is not implemented yet</b> (M3-2), and <code>py-rust</code> is M3-1. So customising the image today means editing sbx's own assets and rebuilding — fine for yourself, not yet a way to ship a per-repo image to a team.</p>
       </div>
     </div>
 
@@ -673,10 +810,10 @@ mask = ["node_modules"]    <span class="c"># add .venv, target, vendor, …</spa
   </div>
 </section>
 
-<!-- 05 -->
+<!-- 06 -->
 <section>
   <div class="sec-head">
-    <div class="num">05</div>
+    <div class="num">06</div>
     <div>
       <h2>Find it by scenario</h2>
       <p>Each row maps to an act in walkthrough.md, where every command is broken down into what Docker, git and squid each do.</p>
@@ -706,10 +843,10 @@ mask = ["node_modules"]    <span class="c"># add .venv, target, vendor, …</spa
   </div>
 </section>
 
-<!-- 06 -->
+<!-- 07 -->
 <section>
   <div class="sec-head">
-    <div class="num">06</div>
+    <div class="num">07</div>
     <div>
       <h2>Where it stands today</h2>
       <p>M1 (the MVP) is done; M2 is in progress.</p>
@@ -717,14 +854,14 @@ mask = ["node_modules"]    <span class="c"># add .venv, target, vendor, …</spa
   </div>
 
   <div class="body">
-    <p>Available commands: <code>run / attach / shell / stop / ls / path / done / net / memory / upgrade</code>.</p>
+    <p>Available commands: <code>run / attach / shell / stop / ls / path / done / net / memory / login / upgrade</code>.</p>
     <h3>Limits worth knowing up front</h3>
     <ul class="limits">
-      <li><code>web-go</code> is the only built-in profile (Go + Node + Python); other stacks need their own Dockerfile</li>
+      <li><code>web-go</code> is the only profile (Go + Node + Python); changing the image means editing sbx's own Dockerfiles and rebuilding — per-project images are M2/M3 work (M3-2)</li>
       <li>networking is shared-proxy only; a dedicated proxy is M2-7</li>
       <li>configuration has two layers, built-in defaults and your global file — <b>no project-level config yet</b> (M2-1)</li>
-      <li><code>sbx login</code> still means running one docker command by hand (M2-12)</li>
       <li>there is no <code>sbx merge</code>; merging is always done by a person in the main repo</li>
+      <li>there is no <code>sbx logs</code> and no headless mode yet (M3-7); read the agent's output with <code>sbx attach</code></li>
     </ul>
   </div>
 </section>

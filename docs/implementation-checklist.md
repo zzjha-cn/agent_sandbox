@@ -117,7 +117,7 @@
 - [x] **M2-11** `sbx net allow <host>...`：写入个人全局配置（保留注释和排版），对运行中的 Task 重新下发白名单并 reconfigure。`--project` 待 M2-1 的项目层配置，当前会明确报错。
 
 ### 认证
-- [ ] **M2-12** `sbx login claude|codex`：按 M0-1 的结论实现。
+- [x] **M2-12** `sbx login [claude|codex]`：临时容器挂 `sbx-home` 跑 `claude auth login`，附 `--status / --logout / --force / --console / --email`；不需要在 git 仓库里执行。Agent 是表驱动的（`authCLIs`），codex 待 M3-6 验证后加一条。
 - [ ] **M2-13** API key 注入：`agents.<name>.api_key_env` 和 `api_key_file`，优先级高于订阅登录。
 
 ### 资源
