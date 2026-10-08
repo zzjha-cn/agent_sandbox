@@ -837,6 +837,7 @@ core/assets/agent-layer/Dockerfile       <span class="c"># tmux, git, jq, claude
         <tr><td>recover after hitting Ctrl-D</td><td><code>sbx run &lt;task&gt;</code> again</td><td class="k">act 12</td></tr>
         <tr><td>see what the proxy blocked</td><td><code>sbx net denied [task] [--all] [--since 2h]</code></td><td class="k">commands.md</td></tr>
         <tr><td>allow a host</td><td><code>sbx net allow &lt;host&gt;</code></td><td class="k">commands.md</td></tr>
+        <tr><td>review a repo's <code>.sbx/</code> after it changed</td><td><code>sbx trust</code></td><td class="k">commands.md</td></tr>
         <tr><td>work in the repo directory itself</td><td><code>sbx run</code> (no task name)</td><td class="k">commands.md</td></tr>
       </tbody>
     </table>
@@ -854,12 +855,11 @@ core/assets/agent-layer/Dockerfile       <span class="c"># tmux, git, jq, claude
   </div>
 
   <div class="body">
-    <p>Available commands: <code>run / attach / shell / stop / ls / path / done / net / memory / login / upgrade</code>.</p>
+    <p>Available commands: <code>run / attach / shell / stop / ls / path / done / net / memory / login / config / trust / upgrade</code>.</p>
     <h3>Limits worth knowing up front</h3>
     <ul class="limits">
       <li><code>web-go</code> is the only profile (Go + Node + Python); changing the image means editing sbx's own Dockerfiles and rebuilding — per-project images are M2/M3 work (M3-2)</li>
       <li>networking is shared-proxy only; a dedicated proxy is M2-7</li>
-      <li>configuration has two layers, built-in defaults and your global file — <b>no project-level config yet</b> (M2-1)</li>
       <li>there is no <code>sbx merge</code>; merging is always done by a person in the main repo</li>
       <li>there is no <code>sbx logs</code> and no headless mode yet (M3-7); read the agent's output with <code>sbx attach</code></li>
     </ul>

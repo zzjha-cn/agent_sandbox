@@ -161,6 +161,25 @@ func tildePath(p, home string) string {
 	return p
 }
 
+// padCJK 把 s 右侧补空格到 n 个显示宽度：CJK 字符占两格，ASCII 占一格。
+// tabwriter 按字节算宽度，中英混排的列会错位，需要对齐的地方用这个。
+func padCJK(s string, n int) string {
+	w := 0
+	for _, r := range s {
+		if r >= 0x1100 && (r <= 0x115f || (r >= 0x2e80 && r <= 0xa4cf) || (r >= 0xac00 && r <= 0xd7a3) ||
+			(r >= 0xf900 && r <= 0xfaff) || (r >= 0xfe30 && r <= 0xfe6f) || (r >= 0xff00 && r <= 0xff60) ||
+			(r >= 0xffe0 && r <= 0xffe6) || (r >= 0x20000 && r <= 0x3fffd)) {
+			w += 2
+		} else {
+			w++
+		}
+	}
+	if w >= n {
+		return s
+	}
+	return s + strings.Repeat(" ", n-w)
+}
+
 func (a *App) row(t task.Task) TaskRow {
 	home, _ := os.UserHomeDir()
 	r := TaskRow{Task: t.Name, Branch: t.Branch(), Ahead: "-", Diff: "-", LastActive: "-", Path: tildePath(t.Worktree(), home)}

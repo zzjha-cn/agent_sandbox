@@ -142,7 +142,14 @@ cpus = 2 ; memory = "3g" ; pids = 1024
 mask = ["node_modules"]       # 每项挂一个 volume 遮住，不污染宿主机
 ```
 
-字段全集、生效优先级和改完什么时候生效：[docs/commands.md](docs/commands.md#配置文件sbxconfigtoml)。
+配置一共四层，后者覆盖前者、列表取并集：内置默认值 → `~/.sbx/config.toml` → `<repo>/.sbx/sandbox.toml`（提交进仓库，队友共享）→ `~/.sbx/workspaces/<ws>.toml`（你对这一个仓库的个人覆盖）。
+
+```bash
+sbx config show    # 生效配置，外加每个值来自哪一层
+sbx trust          # 确认这个仓库的 .sbx/ 内容
+```
+
+项目层跟着仓库走，所以**密钥类字段和绝对路径在那一层会直接报错**。也正因为它会被 `git pull` 改掉，`.sbx/` 和上次确认的内容不一致时 `sbx run` 会停下来给你看 diff；没有 `.sbx/` 的仓库完全碰不到这套东西。字段全集和改完什么时候生效：[docs/commands.md](docs/commands.md#配置四层adr-00090010design-91)。
 
 ## 文档
 
@@ -157,9 +164,9 @@ mask = ["node_modules"]       # 每项挂一个 volume 遮住，不污染宿主�
 
 ## 项目状态
 
-**M1（MVP）完成，M2 进行中。** 可用命令：`run / attach / shell / stop / ls / path / done / net / memory / login / upgrade`。
+**M1（MVP）完成，M2 进行中。** 可用命令：`run / attach / shell / stop / ls / path / done / net / memory / login / config / upgrade`。
 
-已知边界：内置 Profile 只有 `web-go`；网络只有 shared proxy（dedicated 待 M2-7）；配置只有两层（项目层待 M2-1）；没有 `sbx merge`。
+已知边界：内置 Profile 只有 `web-go`；网络只有 shared proxy（dedicated 待 M2-7）；没有 `sbx merge`。
 
 路线图见 [implementation-checklist.md](docs/implementation-checklist.md)。
 

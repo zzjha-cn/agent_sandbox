@@ -99,22 +99,22 @@
 > 完成标准：篡改 `.sbx/` 会被拦住；被拒的域名能一键放行；open 模式和 dedicated proxy 模式都可用；你和团队成员 clone 下来，执行 `sbx trust` 后就能 `sbx run`。
 
 ### 配置
-- [ ] **M2-1** 合并四层配置（§9.1）：列表取并集，标量后者覆盖前者；`sbx config show` 打印最终生效的值，并标注每个值来自哪一层。
-- [ ] **M2-2** 项目层校验：出现密钥类字段或绝对路径时直接报错。
+- [x] **M2-1** 合并四层配置（§9.1）：列表取并集，标量后者覆盖前者；`sbx config show` 打印最终生效的值，并标注每个值来自哪一层（标量记最后一层，列表记所有贡献者）。校验在合并之后做，报错会指出值来自哪一层。
+- [x] **M2-2** 项目层校验：键名含 `key/token/secret/password/credential` 或值是绝对路径时直接报错；走通用 map 遍历，未知字段也挡得住。
 
 ### 信任确认
-- [ ] **M2-3** `internal/trust`：计算哈希，保存快照，生成 diff（§9.3）。
-- [ ] **M2-4** 在 `sbx run` 里加上信任检查；`sbx trust` 命令。
-- [ ] **M2-5** 测试：修改 `sandbox.toml` 或 `.sbx/Dockerfile` 后，`run` 会被拒绝；执行 `trust` 之后可以运行；已经在跑的 Task 不受影响。
+- [x] **M2-3** `internal/trust`：计算哈希，保存快照，生成 diff（§9.3）。哈希覆盖 `.sbx/` 下所有文件（含子目录）的路径、类型、大小和内容哈希；符号链接按链接本身记录，不跟随。≤256KB 的文本文件把内容存进快照，所以下次能直接显示 diff；二进制和超大文件只存哈希，变更照样能发现，只是给不出 diff。记录在 `~/.sbx/trust/<ws>.json`。
+- [x] **M2-4** `sbx run` 在合并配置之后、碰容器之前做信任检查（§10.1 第 3 步）；`sbx trust`（`--show` 只看不写，`-y` 不询问）。没有 `.sbx/` 的仓库完全不受影响。`net allow --project` 写完会顺手更新信任记录，但仅限写之前本来就是已信任状态。
+- [x] **M2-5** 测试：`internal/trust` 9 个（哈希跟内容/路径/子目录走、符号链接不跟随、三类 diff、二进制、存取往返），`internal/cli` 5 个（没有 `.sbx/` 不拦、首次拦住并展示内容、trust 之后放行、改动和新增文件再次拦住、retrust 不越权）。信任检查只拦 `run`，不碰已经在跑的容器，`attach`/`shell`/`ls` 不受影响。
 
 ### 网络
 - [x] **M2-6** open 模式：`--net open` 和配置项 `network.mode`；shared 模式下生成 open 片段。**默认值已改为 `open`**（2026-10-08，ADR 0005 修订）。
 - [ ] **M2-7** dedicated 模式：sidecar 的创建和销毁，`--proxy dedicated` 和配置项 `network.proxy`。
 - [ ] **M2-8** 上游代理：`network.upstream` 对应 `cache_peer`；Linux 上给 squid 容器加 `--add-host host-gateway`。
-- [ ] **M2-9** 项目层白名单 `network.allow`。
+- [x] **M2-9** 项目层白名单 `network.allow`：随 M2-1 的列表并集生效。
 - [x] **M2-10** `sbx net denied [task]`：解析 access.log，shared 模式下按用户名过滤；**分三类**统计：不在白名单（默认展示）/ 策略拦截和遥测（`--all`）/ 407 认证失败（§6.5）。
 - [ ] **M2-10a** `network.cloud_mcp` 和 `--cloud-mcp` 解除云端 MCP 拦截（ADR 0015）。<br>R11 已解决：`cloud_mcp = false`（默认）时在注入的 settings 里写 `disableClaudeAiConnectors: true`，claude 不再去取云端连接器，重试风暴消失。`--cloud-mcp` 命令行开关还没做。
-- [x] **M2-11** `sbx net allow <host>...`：写入个人全局配置（保留注释和排版），对运行中的 Task 重新下发白名单并 reconfigure。`--project` 待 M2-1 的项目层配置，当前会明确报错。
+- [x] **M2-11** `sbx net allow <host>...`：写入个人全局配置（保留注释和排版），对运行中的 Task 重新下发白名单并 reconfigure。`--project` 写 `<repo>/.sbx/sandbox.toml`，写完重读四层并更新信任记录。
 
 ### 认证
 - [x] **M2-12** `sbx login [claude|codex]`：临时容器挂 `sbx-home` 跑 `claude auth login`，附 `--status / --logout / --force / --console / --email`；不需要在 git 仓库里执行。Agent 是表驱动的（`authCLIs`），codex 待 M3-6 验证后加一条。

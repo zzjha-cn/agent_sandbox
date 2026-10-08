@@ -246,6 +246,8 @@ sbx memory pull       # 把沙箱里新记的项目记忆导回宿主机
 sbx memory pull -y    # 不询问直接写
 sbx upgrade           # 升级沙箱里的 claude
 sbx login --status    # 现在登录的是哪个账号（详见第 1 层）
+sbx config show       # 生效配置 + 每个值来自哪一层
+sbx trust             # 确认这个仓库的 .sbx/ 内容（见下）
 ```
 
 **记忆是单向自动的**：每次 `sbx run` 把宿主机这个仓库的记忆（`~/.claude/projects/<key>/memory/`）导入沙箱；沙箱里新记的**不会自动回来**，要 `memory pull`（ADR 0016）。它先按文件列出差异（`add` / `update` / `merge` / `conflict` / `keep`），确认后才写；两边都改过的标 `conflict`，不自动合，留给你手处理。`sbx done` 时会提醒一次。
@@ -294,18 +296,96 @@ sbx login --status    # 现在登录的是哪个账号（详见第 1 层）
 | `done <task>...` | `--force` | false（脏就报错） |
 | `net denied [task]` | `--all` | false（只看"不在白名单"） |
 | | `--since <dur>` | 0（全部），例如 `2h`、`30m` |
-| `net allow <host>...` | `--project` | **未实现**，待 M2-1，会直接报错 |
+| `net allow <host>...` | `--project` | false（写个人全局；加上则写 `<repo>/.sbx/sandbox.toml`） |
 | `memory pull` | `-y, --yes` | false（先问） |
 | `login [claude\|codex]` | `--status` / `--logout` / `--force` | false |
 | | `--console`（claude） | false（Claude 订阅） |
 | | `--email <addr>`（claude） | 空 |
+| `trust` | `--show` | false（展示并询问；加上则只看不写） |
+| | `-y, --yes` | false（先问） |
+| `config show` | 无 | |
 | `attach/shell/stop/ls/path/upgrade` | 无 | |
 
 ---
 
-## 配置文件：`~/.sbx/config.toml`
+## 配置：四层（ADR 0009、design §9.1）
 
-M1 只有两层：内置默认值 + 这个文件（ADR 0009）。项目级配置待 M2-1。未知字段只警告不报错。
+```
+内置默认值
+  → ~/.sbx/config.toml                  个人全局
+  → <repo>/.sbx/sandbox.toml            项目级，提交进仓库，队友共享
+  → ~/.sbx/workspaces/<ws>.toml         你对这一个仓库的个人覆盖
+```
+
+**标量后者覆盖前者，列表取并集。** 后一条的代价要知道：列表项只能加不能减，想去掉内置默认的 `node_modules` 目前没有办法。
+
+`<ws>` 是 `sbx ls` 第一行打印的 Workspace id（如 `shop-e76272`），不是目录名——同名仓库不会撞车。
+
+### `sbx config show`
+
+```console
+$ sbx config show
+默认      (内置)
+全局      ~/.sbx/config.toml
+项目      ~/code/shop/.sbx/sandbox.toml
+工作区    ~/.sbx/workspaces/shop-e76272.toml  ← 没有这个文件
+
+KEY                    VALUE                                     FROM
+profile                "web-go"                                  项目
+max_running            4                                         全局
+network.mode           "allowlist"                               项目
+network.allow          ["global.example.com", "api.internal"]    全局 + 项目
+resources.memory       "6g"                                      工作区
+```
+
+**FROM 这一列是重点**：标量显示决定最终值的那一层，列表显示所有贡献者。排查"我明明改了为什么没生效"先跑它。不在 git 仓库里也能跑，那时只有前两层。
+
+校验在**四层合并完之后**才做：被后面的层盖掉的非法值不报错；真报错时会告诉你这个值是哪一层给的。
+
+### 项目层的两条红线（M2-2）
+
+`<repo>/.sbx/sandbox.toml` 跟着仓库走，clone 下来就生效，所以这一层里出现下面两类内容会**直接报错**，不是警告：
+
+- **密钥类字段**：键名里含 `key`、`token`、`secret`、`password`、`credential`（`api_key_file` 这种"指明凭据从哪来"的也算）。检查对未知字段同样生效，不认识的键不能绕过去。
+- **绝对路径**：值以 `/`、`~/` 或 `C:\` 开头。
+
+这两类只能写在全局层或工作区层——也就是只能你自己写在自己机器上。
+
+未知字段只警告不报错。
+
+### 信任确认：`sbx trust`（M2-3/4/5、design §9.3）
+
+`.sbx/` 跟着仓库走。`git pull` 下来的一行改动就能换掉沙箱的白名单（将来还有自定义 Dockerfile），而你多半不会逐行看别人的 diff。所以 **`.sbx/` 的内容一变，`sbx run` 就先停下来**：
+
+```
+$ sbx run api
+.sbx/ 和上次信任时相比有变化：
+
+[修改] .sbx/sandbox.toml
+--- 上次信任/sandbox.toml
++++ 现在/sandbox.toml
+@@ -1,2 +1,2 @@
+ [network]
+-allow = ["api.example.com"]
++allow = ["api.example.com", "exfil.test"]
+sbx: .sbx/ 自上次信任后变过。看过上面的改动后执行：sbx trust
+```
+
+```bash
+sbx trust          # 展示改动（首次则展示全部内容），确认后记下
+sbx trust --show   # 只看，什么都不写
+sbx trust -y       # 不询问直接记下
+```
+
+几个要点：
+
+- **没有 `.sbx/` 的仓库完全不受影响**，一行提示都不会多。
+- 比对的是 `.sbx/` 下的**所有文件**，包括子目录和将来的 `.sbx/Dockerfile`；路径、大小、内容任一变化都算。
+- **符号链接按链接本身记录，不跟随**。否则把 `.sbx/Dockerfile` 指到别处，换掉目标文件就能在哈希不变的情况下换掉实际内容。
+- 快照里**存了文本文件的内容**（≤256KB），所以第二次变更能直接给你 diff，不用去翻 git 历史。二进制和超大文件只存哈希：变了会告诉你，但给不出 diff。
+- 记录在 `~/.sbx/trust/<ws>.json`，**按 Workspace 分开**。同一份代码 clone 到两个目录是两个 Workspace，各自确认各自的。
+- 只拦 `sbx run`。**已经在跑的 Task 不受影响**，`attach`、`shell`、`ls` 照常。
+- `sbx net allow --project` 写完 `.sbx/sandbox.toml` 会顺手更新信任记录——这次改动是你让 sbx 做的。但**仅限写之前本来就是已信任状态**，否则会把别人留下的、你还没看过的改动一起放行。
 
 ```toml
 profile       = "web-go"      # 内置 Profile，目前只有这一个
@@ -347,5 +427,5 @@ version = "latest"            # 写死版本会让 sbx upgrade 拒绝执行
 
 - **没有 `sbx merge`**，合并永远是你在主仓库手动做；分支有 commit 没合并时 `done` 不会提醒。
 - `max_running` 可配但**没有实际限流**。
-- `network.proxy = "dedicated"` 和 `net allow --project` 都会明确报错，不是静默失败。
+- `network.proxy = "dedicated"` 会明确报错，不是静默失败。
 - `sbx ls` 的 CJK 列宽对不齐（tabwriter 按字节算宽度）。

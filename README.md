@@ -147,7 +147,14 @@ cpus = 2 ; memory = "3g" ; pids = 1024
 mask = ["node_modules"]       # each masked by a volume, keeping your host clean
 ```
 
-Full field list, precedence and when changes take effect: [docs/commands.md](docs/commands.md#配置文件sbxconfigtoml).
+Configuration has four layers, each overriding the last — lists are unioned, scalars replaced: built-in defaults → `~/.sbx/config.toml` → `<repo>/.sbx/sandbox.toml` (committed, shared with your team) → `~/.sbx/workspaces/<ws>.toml` (your own override for this one repo).
+
+```bash
+sbx config show    # every effective value and which layer it came from
+sbx trust          # review this repo's .sbx/ and record it as trusted
+```
+
+The project layer travels with the repo, so **secret-looking keys and absolute paths are rejected outright in that layer**. And because a `git pull` can change it under you, `sbx run` stops and shows you the diff whenever `.sbx/` differs from what you last confirmed — repos without a `.sbx/` directory never see any of this. Full field list and when changes take effect: [docs/commands.md](docs/commands.md#配置四层adr-00090010design-91).
 
 ## Documentation
 
@@ -164,9 +171,9 @@ Full field list, precedence and when changes take effect: [docs/commands.md](doc
 
 ## Status
 
-**M1 (MVP) is done; M2 is in progress.** Available commands: `run / attach / shell / stop / ls / path / done / net / memory / login / upgrade`.
+**M1 (MVP) is done; M2 is in progress.** Available commands: `run / attach / shell / stop / ls / path / done / net / memory / login / config / upgrade`.
 
-Known limits: `web-go` is the only built-in profile; networking is shared-proxy only (dedicated is M2-7); configuration has two layers, not four (project layer is M2-1); there is no `sbx merge`.
+Known limits: `web-go` is the only built-in profile; networking is shared-proxy only (dedicated is M2-7); there is no `sbx merge`.
 
 Roadmap: [implementation-checklist.md](docs/implementation-checklist.md).
 

@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -144,7 +145,8 @@ func (a *App) remindPull() {
 	a.logf("%s；记忆保存在 sbx-home 里，done 不会删除，随时可以 sbx memory pull 查看并导回", msg)
 }
 
-func showDiff(name string, old, new []byte, out *os.File) {
+// showDiff 用系统的 diff -u 显示两份内容的差异；oldLabel/newLabel 是 diff 头上的两行。
+func showDiff(name, oldLabel, newLabel string, old, new []byte, out io.Writer) {
 	dir, err := os.MkdirTemp("", "sbx-mem-*")
 	if err != nil {
 		return
@@ -155,7 +157,7 @@ func showDiff(name string, old, new []byte, out *os.File) {
 	os.MkdirAll(filepath.Dir(n), 0o755)
 	os.WriteFile(o, old, 0o644)
 	os.WriteFile(n, new, 0o644)
-	cmd := exec.Command("diff", "-u", "--label", "宿主机/"+name, "--label", "沙箱/"+name, o, n)
+	cmd := exec.Command("diff", "-u", "--label", oldLabel, "--label", newLabel, o, n)
 	cmd.Stdout = out
 	cmd.Run()
 }
@@ -182,10 +184,10 @@ func (a *App) memoryCmd() *cobra.Command {
 				switch x.Kind {
 				case "add", "update", "merge":
 					fmt.Fprintf(a.Out, "\n[%s] %s\n", x.Kind, x.File)
-					showDiff(x.File, dst[x.File], x.Data, os.Stdout)
+					showDiff(x.File, "宿主机/"+x.File, "沙箱/"+x.File, dst[x.File], x.Data, os.Stdout)
 				case "conflict":
 					fmt.Fprintf(a.Out, "\n[conflict] %s：两边都改过，不导回；差异如下，请手动处理\n", x.File)
-					showDiff(x.File, dst[x.File], src[x.File], os.Stdout)
+					showDiff(x.File, "宿主机/"+x.File, "沙箱/"+x.File, dst[x.File], src[x.File], os.Stdout)
 				case "keep-dst":
 					fmt.Fprintf(a.Out, "[keep] %s：宿主机更新，下次 sbx run 时导入沙箱\n", x.File)
 				}

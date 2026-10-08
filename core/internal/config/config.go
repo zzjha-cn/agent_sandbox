@@ -1,4 +1,6 @@
-// Package config 加载 sbx 配置。M1 只有两层：内置默认值 + ~/.sbx/config.toml（ADR 0009）。
+// Package config 加载 sbx 配置。四层：内置默认值 → ~/.sbx/config.toml →
+// <repo>/.sbx/sandbox.toml → ~/.sbx/workspaces/<ws>.toml（design §9.1、ADR 0009）。
+// 标量后者覆盖前者，列表取并集；每个字段的来源记在 Loaded.Sources 里（sbx config show）。
 package config
 
 import (
@@ -92,28 +94,40 @@ func parse(data, src string, base Config) (Config, []string, error) {
 
 var memRe = regexp.MustCompile(`^[0-9]+(\.[0-9]+)?[bkmgBKMG]?$`)
 
+// FieldError 带上出错字段的点号 key，这样合并配置时能回答"这个值是哪一层给的"。
+type FieldError struct {
+	Key string
+	Msg string
+}
+
+func (e *FieldError) Error() string { return e.Msg }
+
+func fieldf(key, format string, args ...any) error {
+	return &FieldError{Key: key, Msg: fmt.Sprintf(format, args...)}
+}
+
 func (c Config) Validate() error {
 	if !memRe.MatchString(c.Resources.Memory) {
-		return fmt.Errorf("resources.memory 非法：%q（示例：3g、512m）", c.Resources.Memory)
+		return fieldf("resources.memory", "resources.memory 非法：%q（示例：3g、512m）", c.Resources.Memory)
 	}
 	if c.Resources.CPUs <= 0 {
-		return fmt.Errorf("resources.cpus 必须大于 0")
+		return fieldf("resources.cpus", "resources.cpus 必须大于 0")
 	}
 	if c.Resources.Pids <= 0 {
-		return fmt.Errorf("resources.pids 必须大于 0")
+		return fieldf("resources.pids", "resources.pids 必须大于 0")
 	}
 	if c.MaxRunning <= 0 {
-		return fmt.Errorf("max_running 必须大于 0")
+		return fieldf("max_running", "max_running 必须大于 0")
 	}
 	switch c.Network.Mode {
 	case "allowlist", "open":
 	default:
-		return fmt.Errorf("network.mode 只能是 allowlist 或 open：%q", c.Network.Mode)
+		return fieldf("network.mode", "network.mode 只能是 allowlist 或 open：%q", c.Network.Mode)
 	}
 	switch c.Network.Proxy {
 	case "shared", "dedicated":
 	default:
-		return fmt.Errorf("network.proxy 只能是 shared 或 dedicated：%q", c.Network.Proxy)
+		return fieldf("network.proxy", "network.proxy 只能是 shared 或 dedicated：%q", c.Network.Proxy)
 	}
 	if _, _, err := c.Upstream(); err != nil {
 		return err
@@ -132,10 +146,10 @@ func (c Config) Upstream() (host string, port string, err error) {
 	}
 	u, err := url.Parse(s)
 	if err != nil || u.Hostname() == "" || u.Port() == "" {
-		return "", "", fmt.Errorf("network.upstream 非法：%q（示例：http://host.docker.internal:7890）", c.Network.Upstream)
+		return "", "", fieldf("network.upstream", "network.upstream 非法：%q（示例：http://host.docker.internal:7890）", c.Network.Upstream)
 	}
 	if u.Scheme != "http" {
-		return "", "", fmt.Errorf("network.upstream 只支持 http 上游：%q", c.Network.Upstream)
+		return "", "", fieldf("network.upstream", "network.upstream 只支持 http 上游：%q", c.Network.Upstream)
 	}
 	return u.Hostname(), u.Port(), nil
 }

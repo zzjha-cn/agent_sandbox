@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"text/tabwriter"
@@ -23,16 +24,20 @@ func (a *App) netAllowCmd() *cobra.Command {
 	var project bool
 	cmd := &cobra.Command{
 		Use:   "allow <host>...",
-		Short: "Add hosts to the allowlist (written to ~/.sbx/config.toml) and reload running tasks",
+		Short: "Add hosts to the allowlist (~/.sbx/config.toml, or --project) and reload running tasks",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if project {
-				return fmt.Errorf("--project 需要项目层配置（M2-1），还没实现；现在只能写个人全局配置")
-			}
 			if err := a.load(); err != nil {
 				return err
 			}
 			path := filepath.Join(a.Home, "config.toml")
+			trustedBefore := project && a.trusted()
+			if project {
+				path = filepath.Join(a.WS.Root, ".sbx", "sandbox.toml")
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					return err
+				}
+			}
 			added, err := config.AddAllow(path, args)
 			if err != nil {
 				return err
@@ -42,7 +47,12 @@ func (a *App) netAllowCmd() *cobra.Command {
 				return nil
 			}
 			fmt.Fprintf(a.Out, "已加入 %s：%s\n", path, strings.Join(added, "、"))
-			if err := a.loadConfig(); err != nil { // 重新读，下面下发的是新名单
+			if project {
+				fmt.Fprintln(a.Out, "这是项目层配置，提交进仓库之后队友 clone 下来就有")
+				a.retrust(trustedBefore)
+			}
+			// 重新读四层，下面下发的是新名单
+			if err := a.applyLayers(config.Paths(a.Home, a.WS.Root, a.WS.ID)); err != nil {
 				return err
 			}
 			n, err := a.reloadAllow()
@@ -58,7 +68,7 @@ func (a *App) netAllowCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&project, "project", false, "write to the project config (not implemented yet, M2-1)")
+	cmd.Flags().BoolVar(&project, "project", false, "write to <repo>/.sbx/sandbox.toml instead, so the whole team gets it")
 	return cmd
 }
 

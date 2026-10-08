@@ -23,9 +23,10 @@ type App struct {
 	Err     io.Writer
 	Docker  *docker.Client
 
-	Home string
-	Cfg  config.Config
-	WS   workspace.Workspace
+	Home   string
+	Cfg    config.Config
+	Loaded config.Loaded // 分层结果：每个值来自哪一层（sbx config show）
+	WS     workspace.Workspace
 }
 
 // Execute 是 main 的入口。
@@ -45,7 +46,7 @@ func Execute() int {
 		},
 	}
 	root.PersistentFlags().BoolVarP(&app.Verbose, "verbose", "v", false, "print every docker and git command sbx runs")
-	root.AddCommand(app.runCmd(), app.attachCmd(), app.shellCmd(), app.stopCmd(), app.lsCmd(), app.pathCmd(), app.doneCmd(), app.memoryCmd(), app.loginCmd(), app.upgradeCmd(), app.netCmd())
+	root.AddCommand(app.runCmd(), app.attachCmd(), app.shellCmd(), app.stopCmd(), app.lsCmd(), app.pathCmd(), app.doneCmd(), app.memoryCmd(), app.loginCmd(), app.configCmd(), app.trustCmd(), app.upgradeCmd(), app.netCmd())
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(app.Err, "sbx:", err)
 		return 1
@@ -53,9 +54,9 @@ func Execute() int {
 	return 0
 }
 
-// load 解析 Workspace 和配置。
+// load 解析 Workspace，然后按四层合并配置（design §9.1）。
 func (a *App) load() error {
-	if err := a.loadConfig(); err != nil {
+	if err := a.setHome(); err != nil {
 		return err
 	}
 	cwd, err := os.Getwd()
@@ -63,25 +64,45 @@ func (a *App) load() error {
 		return err
 	}
 	a.WS, err = workspace.Resolve(cwd)
-	return err
+	if err != nil {
+		return err
+	}
+	return a.applyLayers(config.Paths(a.Home, a.WS.Root, a.WS.ID))
 }
 
-// loadConfig 只读全局配置，不要求在 git 仓库里。
+// loadConfig 只合并默认值和全局层，不要求在 git 仓库里（login、upgrade 用）。
 func (a *App) loadConfig() error {
+	if err := a.setHome(); err != nil {
+		return err
+	}
+	return a.applyLayers(config.Paths(a.Home, "", ""))
+}
+
+func (a *App) setHome() error {
 	home, err := task.Home()
 	if err != nil {
 		return err
 	}
 	a.Home = home
-	cfg, warnings, err := config.Load(filepath.Join(home, "config.toml"))
-	for _, w := range warnings {
+	return nil
+}
+
+func (a *App) applyLayers(layers []config.Layer) error {
+	ld, err := config.LoadLayers(layers)
+	for _, w := range ld.Warnings {
 		fmt.Fprintln(a.Err, "警告:", w)
 	}
 	if err != nil {
 		return err
 	}
-	a.Cfg = cfg
+	a.Cfg, a.Loaded = ld.Config, ld
 	return nil
+}
+
+// homeDir 是宿主机的 ~，只用于把路径缩写成 ~/… 打印。
+func (a *App) homeDir() string {
+	h, _ := os.UserHomeDir()
+	return h
 }
 
 func (a *App) task(name string) (task.Task, error) {

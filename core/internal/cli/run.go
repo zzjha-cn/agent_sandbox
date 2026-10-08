@@ -47,6 +47,10 @@ func (a *App) runCmd() *cobra.Command {
 					return err
 				}
 			}
+			// design §10.1 第 3 步：配置合并之后、碰容器之前先过信任检查
+			if err := a.requireTrust(); err != nil {
+				return err
+			}
 			return a.run(t, base, detach, fresh)
 		},
 	}
