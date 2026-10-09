@@ -35,22 +35,22 @@ func checkProject(data, path string) error {
 			last = key[i+1:]
 		}
 		if secretKey.MatchString(last) {
-			bad = append(bad, fmt.Sprintf("%s（密钥类字段只能写在 %s 或 %s 层）", key, LayerGlobal, LayerWorkspace))
+			bad = append(bad, fmt.Sprintf("%s (credential-like fields can only be set in the %s or %s layer)", key, LayerGlobal, LayerWorkspace))
 			return
 		}
 		if execKey.MatchString(last) {
-			bad = append(bad, fmt.Sprintf("%s（会在容器里执行的命令只能写在 %s 或 %s 层）", key, LayerGlobal, LayerWorkspace))
+			bad = append(bad, fmt.Sprintf("%s (commands that run inside the container can only be set in the %s or %s layer)", key, LayerGlobal, LayerWorkspace))
 			return
 		}
 		if s, ok := v.(string); ok && absPath.MatchString(s) {
-			bad = append(bad, fmt.Sprintf("%s = %q（绝对路径只能写在 %s 或 %s 层）", key, s, LayerGlobal, LayerWorkspace))
+			bad = append(bad, fmt.Sprintf("%s = %q (absolute paths can only be set in the %s or %s layer)", key, s, LayerGlobal, LayerWorkspace))
 		}
 	})
 	if len(bad) == 0 {
 		return nil
 	}
 	sort.Strings(bad)
-	return fmt.Errorf("%s: 项目层配置里有不允许的内容：\n  - %s", path, strings.Join(bad, "\n  - "))
+	return fmt.Errorf("%s: the project layer contains settings that are not allowed:\n  - %s", path, strings.Join(bad, "\n  - "))
 }
 
 // walkTOML 遍历解码出来的 TOML，对每个标量（含数组里的每一项）调用 fn。

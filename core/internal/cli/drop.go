@@ -23,7 +23,7 @@ func (a *App) dropCmd() *cobra.Command {
 				return err
 			}
 			if t.IsMain() {
-				return fmt.Errorf("main Task 没有专属分支，用 sbx done 就行")
+				return fmt.Errorf("the main task has no branch of its own; use sbx done")
 			}
 			if err := a.confirmDrop(t, yes); err != nil {
 				return err
@@ -33,13 +33,13 @@ func (a *App) dropCmd() *cobra.Command {
 				return err
 			}
 			if !t.WS.BranchExists(t.Branch()) {
-				fmt.Fprintf(a.Out, "已结束 %s（分支 %s 本来就不存在）\n", t.Name, t.Branch())
+				fmt.Fprintf(a.Out, "finished %s (branch %s did not exist)\n", t.Name, t.Branch())
 				return nil
 			}
 			if _, err := workspace.Git(t.WS.Root, "branch", "-D", t.Branch()); err != nil {
-				return fmt.Errorf("分支 %s 没删掉（Task 已经结束了）：%w", t.Branch(), err)
+				return fmt.Errorf("branch %s was not deleted (the task itself is finished): %w", t.Branch(), err)
 			}
-			fmt.Fprintf(a.Out, "已结束 %s，并删除了分支 %s\n", t.Name, t.Branch())
+			fmt.Fprintf(a.Out, "finished %s and deleted branch %s\n", t.Name, t.Branch())
 			return nil
 		},
 	}
@@ -60,14 +60,14 @@ func (a *App) confirmDrop(t task.Task, yes bool) error {
 			ahead = n
 		}
 	}
-	fmt.Fprintf(a.Out, "即将删除 Task %s 和它的分支 %s（%s 个提交会一起没掉）。\n", t.Name, t.Branch(), ahead)
-	fmt.Fprintf(a.Out, "确认请输入 Task 名（%s）：", t.Name)
+	fmt.Fprintf(a.Out, "About to delete task %s and its branch %s (%s commit(s) will go with it).\n", t.Name, t.Branch(), ahead)
+	fmt.Fprintf(a.Out, "Type the task name to confirm (%s): ", t.Name)
 	line, err := bufio.NewReader(a.In()).ReadString('\n')
 	if err != nil && strings.TrimSpace(line) == "" {
-		return fmt.Errorf("没有读到确认，已取消")
+		return fmt.Errorf("no confirmation read; cancelled")
 	}
 	if strings.TrimSpace(line) != t.Name {
-		return fmt.Errorf("输入的不是 %q，已取消", t.Name)
+		return fmt.Errorf("that is not %q; cancelled", t.Name)
 	}
 	return nil
 }

@@ -43,12 +43,12 @@ func (a *App) netAllowCmd() *cobra.Command {
 				return err
 			}
 			if len(added) == 0 {
-				fmt.Fprintln(a.Out, "都已经在白名单里了，没有改动")
+				fmt.Fprintln(a.Out, "all of them are already in the allowlist; nothing changed")
 				return nil
 			}
-			fmt.Fprintf(a.Out, "已加入 %s：%s\n", path, strings.Join(added, "、"))
+			fmt.Fprintf(a.Out, "added to %s: %s\n", path, strings.Join(added, ", "))
 			if project {
-				fmt.Fprintln(a.Out, "这是项目层配置，提交进仓库之后队友 clone 下来就有")
+				fmt.Fprintln(a.Out, "this is project-layer config; commit it and your teammates get it when they clone")
 				a.retrust(trustedBefore)
 			}
 			// 重新读四层，下面下发的是新名单
@@ -60,10 +60,10 @@ func (a *App) netAllowCmd() *cobra.Command {
 				return err
 			}
 			if n > 0 {
-				fmt.Fprintf(a.Out, "已对 %d 个运行中的 Task 热加载，不用重启\n", n)
+				fmt.Fprintf(a.Out, "hot-reloaded into %d running task(s); no restart needed\n", n)
 			}
 			if a.Cfg.Network.Mode == "open" {
-				fmt.Fprintln(a.Out, "提示：当前 network.mode = \"open\"，本来就不拦截；白名单只在 allowlist 模式下起作用")
+				fmt.Fprintln(a.Out, "note: network.mode is currently \"open\", so nothing is blocked anyway; the allowlist only applies in allowlist mode")
 			}
 			return nil
 		},
@@ -162,12 +162,12 @@ func (a *App) printDenied(rows []proxy.DeniedHost, all bool, since time.Duration
 			hidden[r.Kind] += r.Count
 		}
 	}
-	scope := "全部时间"
+	scope := "all time"
 	if since > 0 {
-		scope = "最近 " + since.String()
+		scope = "the last " + since.String()
 	}
 	if len(shown) == 0 {
-		fmt.Fprintf(a.Out, "没有被拒的请求（%s）\n", scope)
+		fmt.Fprintf(a.Out, "no denied requests (%s)\n", scope)
 	} else {
 		// KIND 列是中文，用按显示宽度对齐的表
 		var rows [][]string
@@ -176,7 +176,7 @@ func (a *App) printDenied(rows []proxy.DeniedHost, all bool, since time.Duration
 			if len(r.Tasks) > 0 {
 				task = r.Tasks[0]
 				if len(r.Tasks) > 1 {
-					task = fmt.Sprintf("%s 等 %d 个", task, len(r.Tasks))
+					task = fmt.Sprintf("%s and %d more", task, len(r.Tasks))
 				}
 			}
 			rows = append(rows, []string{r.Host, fmt.Sprint(r.Count), humanAgo(time.Since(r.Last)), string(r.Kind), task})
@@ -187,12 +187,12 @@ func (a *App) printDenied(rows []proxy.DeniedHost, all bool, since time.Duration
 	}
 	for _, k := range []proxy.Kind{proxy.KindPolicy, proxy.KindAuth} {
 		if n := hidden[k]; n > 0 {
-			fmt.Fprintf(a.Out, "另有 %s %d 次（--all 查看）\n", k, n)
+			fmt.Fprintf(a.Out, "%s: %d more (use --all to see them)\n", k, n)
 		}
 	}
 	// 只有"不在白名单"那一类才需要你决定放不放行；策略拦截和认证失败不给这个建议。
 	if notAllowed > 0 {
-		fmt.Fprintln(a.Out, "要放行：sbx net allow <host>（写进 ~/.sbx/config.toml 并热加载）")
+		fmt.Fprintln(a.Out, "to allow one: sbx net allow <host> (writes it to ~/.sbx/config.toml and hot-reloads)")
 	}
 	return nil
 }

@@ -91,11 +91,11 @@ type Kind string
 
 const (
 	// KindNotAllowed 是真正需要你决定放不放行的那一类，默认只展示它。
-	KindNotAllowed Kind = "不在白名单"
+	KindNotAllowed Kind = "not in the allowlist"
 	// KindPolicy 是策略拦截层和已知遥测：被拒是预期行为。
-	KindPolicy Kind = "策略拦截/遥测"
+	KindPolicy Kind = "policy block / telemetry"
 	// KindAuth 是代理认证失败。少量正常（有的客户端先不带凭据试一次），量大才是问题。
-	KindAuth Kind = "认证失败"
+	KindAuth Kind = "auth failure"
 )
 
 // DeniedHost 是按域名聚合后的一行。

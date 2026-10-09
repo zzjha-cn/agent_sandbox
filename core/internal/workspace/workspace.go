@@ -42,7 +42,7 @@ func Git(dir string, args ...string) (string, error) {
 // Resolve 从 cwd 找到主仓库。
 func Resolve(cwd string) (Workspace, error) {
 	if _, err := Git(cwd, "rev-parse", "--show-toplevel"); err != nil {
-		return Workspace{}, fmt.Errorf("当前目录不在 git 仓库里：%w", err)
+		return Workspace{}, fmt.Errorf("the current directory is not inside a git repository: %w", err)
 	}
 	common, err := Git(cwd, "rev-parse", "--path-format=absolute", "--git-common-dir")
 	if err != nil {
@@ -53,7 +53,7 @@ func Resolve(cwd string) (Workspace, error) {
 		return Workspace{}, err
 	}
 	if filepath.Base(common) != ".git" {
-		return Workspace{}, fmt.Errorf("不支持的仓库布局（bare 或自定义 GIT_DIR）：%s", common)
+		return Workspace{}, fmt.Errorf("unsupported repository layout (bare, or a custom GIT_DIR): %s", common)
 	}
 	root := filepath.Dir(common)
 	return Workspace{Root: root, GitDir: common, ID: ID(root)}, nil
@@ -80,7 +80,7 @@ var taskRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,39}$`)
 // ValidateTaskName 校验 task 名。main 合法（表示仓库根），但不能用作分支型 Task。
 func ValidateTaskName(name string) error {
 	if !taskRe.MatchString(name) {
-		return fmt.Errorf("task 名非法：%q（只能用小写字母、数字和 -，以字母或数字开头，最长 40）", name)
+		return fmt.Errorf("invalid task name: %q (lowercase letters, digits and - only, starting with a letter or digit, 40 characters at most)", name)
 	}
 	return nil
 }
@@ -127,7 +127,7 @@ func (w Workspace) EnsureWorktree(path, branch, base string) (created bool, note
 		return false, "", nil
 	}
 	if _, err := os.Stat(path); err == nil {
-		return false, "", fmt.Errorf("%s 已存在但不是本仓库的 worktree，请手动处理", path)
+		return false, "", fmt.Errorf("%s already exists but is not a worktree of this repository; sort it out by hand", path)
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return false, "", err
@@ -136,7 +136,7 @@ func (w Workspace) EnsureWorktree(path, branch, base string) (created bool, note
 		if _, err := Git(w.Root, "worktree", "add", path, branch); err != nil {
 			return false, "", err
 		}
-		return true, fmt.Sprintf("分支 %s 已存在，已挂到新的 worktree 上（忽略 --base）", branch), nil
+		return true, fmt.Sprintf("branch %s already exists and has been attached to the new worktree (--base ignored)", branch), nil
 	}
 	if base == "" {
 		base = "HEAD"

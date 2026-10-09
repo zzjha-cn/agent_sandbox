@@ -103,7 +103,7 @@ func (a *App) setHome() error {
 func (a *App) applyLayers(layers []config.Layer) error {
 	ld, err := config.LoadLayers(layers)
 	for _, w := range ld.Warnings {
-		fmt.Fprintln(a.Err, "警告:", w)
+		fmt.Fprintln(a.Err, "warning:", w)
 	}
 	if err != nil {
 		return err

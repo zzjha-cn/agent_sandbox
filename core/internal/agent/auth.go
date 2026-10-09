@@ -27,7 +27,7 @@ func ParseStatus(out string, execErr error) (Status, error) {
 	if execErr != nil {
 		return st, execErr
 	}
-	return st, fmt.Errorf("无法解析 claude auth status 输出：%s", out)
+	return st, fmt.Errorf("cannot parse the output of claude auth status: %s", out)
 }
 
 // jsonObject 截出输出里的 JSON 对象，容忍前后多出来的提示行。
@@ -42,7 +42,7 @@ func jsonObject(s string) string {
 // Describe 把登录态渲染成一行，给 sbx login 用。
 func (s Status) Describe() string {
 	if !s.LoggedIn {
-		return "未登录"
+		return "not logged in"
 	}
 	var parts []string
 	for _, p := range []string{s.Email, s.OrgName, s.SubscriptionType, s.AuthMethod} {
@@ -51,7 +51,7 @@ func (s Status) Describe() string {
 		}
 	}
 	if len(parts) == 0 {
-		return "已登录"
+		return "logged in"
 	}
-	return "已登录：" + strings.Join(parts, " · ")
+	return "logged in: " + strings.Join(parts, " · ")
 }

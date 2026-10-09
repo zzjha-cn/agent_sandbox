@@ -20,7 +20,7 @@ func TestProjectLayerRejectsCommands(t *testing.T) {
 			t.Errorf("项目层应该拒绝：%s", body)
 			continue
 		}
-		if !strings.Contains(err.Error(), "会在容器里执行的命令") {
+		if !strings.Contains(err.Error(), "commands that run inside the container") {
 			t.Errorf("错误信息要说清为什么：%v", err)
 		}
 	}

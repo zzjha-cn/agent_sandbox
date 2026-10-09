@@ -64,11 +64,11 @@ func (a *App) importMemory(container string) error {
 	}
 	for _, x := range acts {
 		if x.Kind == "conflict" {
-			a.logf("记忆 %s 在宿主机和沙箱里都改过，保留沙箱的版本；用 sbx memory pull 查看", x.File)
+			a.logf("memory %s changed both on the host and in the sandbox; keeping the sandbox version. Use sbx memory pull to review", x.File)
 		}
 	}
 	if s := summarize(acts); s != "" {
-		a.logf("导入项目记忆：%s", s)
+		a.logf("importing project memory: %s", s)
 	}
 	return memory.SaveBase(basePath, next)
 }
@@ -89,7 +89,7 @@ func (a *App) sandboxForPull() (memory.Sandbox, error) {
 		return memory.Sandbox{}, err
 	}
 	if ok, err := a.Docker.ImageExists(in.Tag()); err != nil || !ok {
-		return memory.Sandbox{}, fmt.Errorf("沙箱镜像还不存在（还没有 sbx run 过）：%v", err)
+		return memory.Sandbox{}, fmt.Errorf("the sandbox image does not exist yet (sbx run has never been used): %v", err)
 	}
 	return memory.OneShot(a.Docker, in.Tag()), nil
 }
@@ -138,11 +138,11 @@ func (a *App) remindPull() {
 	if n+conflicts == 0 {
 		return
 	}
-	msg := fmt.Sprintf("提示: 沙箱里有 %d 个项目记忆文件还没导回宿主机", n)
+	msg := fmt.Sprintf("note: %d project memory file(s) in the sandbox have not been pulled back to the host", n)
 	if conflicts > 0 {
-		msg += fmt.Sprintf("（另有 %d 个两边都改过）", conflicts)
+		msg += fmt.Sprintf(" (%d more changed on both sides)", conflicts)
 	}
-	a.logf("%s；记忆保存在 sbx-home 里，done 不会删除，随时可以 sbx memory pull 查看并导回", msg)
+	a.logf("%s; memory lives in sbx-home and done never deletes it, so you can sbx memory pull at any time", msg)
 }
 
 // showDiff 用系统的 diff -u 显示两份内容的差异；oldLabel/newLabel 是 diff 头上的两行。
@@ -179,35 +179,35 @@ func (a *App) memoryCmd() *cobra.Command {
 			}
 			hostDir, basePath, src, dst, acts, next := p.hostDir, p.basePath, p.src, p.dst, p.acts, p.next
 			changes := memory.Changes(acts)
-			fmt.Fprintf(a.Out, "项目记忆：沙箱 → 宿主机 %s\n", hostDir)
+			fmt.Fprintf(a.Out, "project memory: sandbox -> host %s\n", hostDir)
 			for _, x := range acts {
 				switch x.Kind {
 				case "add", "update", "merge":
 					fmt.Fprintf(a.Out, "\n[%s] %s\n", x.Kind, x.File)
-					showDiff(x.File, "宿主机/"+x.File, "沙箱/"+x.File, dst[x.File], x.Data, os.Stdout)
+					showDiff(x.File, "host/"+x.File, "sandbox/"+x.File, dst[x.File], x.Data, os.Stdout)
 				case "conflict":
-					fmt.Fprintf(a.Out, "\n[conflict] %s：两边都改过，不导回；差异如下，请手动处理\n", x.File)
-					showDiff(x.File, "宿主机/"+x.File, "沙箱/"+x.File, dst[x.File], src[x.File], os.Stdout)
+					fmt.Fprintf(a.Out, "\n[conflict] %s: changed on both sides, not pulled back. The diff follows; resolve it by hand\n", x.File)
+					showDiff(x.File, "host/"+x.File, "sandbox/"+x.File, dst[x.File], src[x.File], os.Stdout)
 				case "keep-dst":
-					fmt.Fprintf(a.Out, "[keep] %s：宿主机更新，下次 sbx run 时导入沙箱\n", x.File)
+					fmt.Fprintf(a.Out, "[keep] %s: the host copy is newer; it will be imported into the sandbox on the next sbx run\n", x.File)
 				}
 			}
 			if len(changes) == 0 {
-				fmt.Fprintln(a.Out, "\n没有需要导回的内容。")
+				fmt.Fprintln(a.Out, "\nNothing to pull back.")
 				return memory.SaveBase(basePath, next)
 			}
 			if !yes {
-				fmt.Fprintf(a.Out, "\n写入以上 %d 个文件？[y/N] ", len(changes))
+				fmt.Fprintf(a.Out, "\nWrite the %d file(s) above? [y/N] ", len(changes))
 				line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
 				if strings.ToLower(strings.TrimSpace(line)) != "y" {
-					fmt.Fprintln(a.Out, "已取消。")
+					fmt.Fprintln(a.Out, "Cancelled.")
 					return nil
 				}
 			}
 			if err := memory.WriteDir(hostDir, changes); err != nil {
 				return err
 			}
-			fmt.Fprintf(a.Out, "已写入 %d 个文件。\n", len(changes))
+			fmt.Fprintf(a.Out, "Wrote %d file(s).\n", len(changes))
 			return memory.SaveBase(basePath, next)
 		},
 	}

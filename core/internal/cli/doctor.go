@@ -57,7 +57,7 @@ type checker struct {
 
 // docEnv 是这次 doctor 跑在什么环境里。docker info 只取一次，几项检查共用。
 type docEnv struct {
-	Docker bool // docker 可用
+	Docker bool // docker is reachable
 	Repo   bool // 当前在一个 git 仓库里，配置已经合并了四层
 	Info   docker.Item
 }
@@ -105,11 +105,11 @@ func (a *App) runChecks(env docEnv, quick bool) []Check {
 	for _, c := range checks {
 		switch {
 		case c.NeedDocker && !env.Docker:
-			out = append(out, skip(c.Name, "docker 用不了，这项查不了"))
+			out = append(out, skip(c.Name, "docker is unavailable, skipping this check"))
 		case c.NeedRepo && !env.Repo:
-			out = append(out, skip(c.Name, "不在 git 仓库里，这项查不了"))
+			out = append(out, skip(c.Name, "not in a git repository, skipping this check"))
 		case c.Slow && quick:
-			out = append(out, skip(c.Name, "跳过（--quick）"))
+			out = append(out, skip(c.Name, "skipped (--quick)"))
 		default:
 			out = append(out, c.Run(a, env))
 		}
@@ -131,35 +131,35 @@ func (a *App) printChecks(results []Check, strict bool) error {
 			fails++
 		}
 	}
-	fmt.Fprintf(a.Out, "\n%d 项警告，%d 项失败\n", warns, fails)
+	fmt.Fprintf(a.Out, "\n%d warning(s), %d failure(s)\n", warns, fails)
 	// warn 的语义是"能用，但该改"。doctor 会被写进脚本，让 warn 也挂掉会逼人去 || true。
 	if fails > 0 || (strict && warns > 0) {
-		return fmt.Errorf("有检查没通过")
+		return fmt.Errorf("some checks did not pass")
 	}
 	return nil
 }
 
 func checkDocker(a *App, env docEnv) Check {
 	if !env.Docker {
-		return fail("docker", "连不上 docker 守护进程", "启动 Docker Desktop（或 colima start）后重试")
+		return fail("docker", "cannot reach the docker daemon", "start Docker Desktop (or colima start), then retry")
 	}
 	ver, _ := env.Info["ServerVersion"].(string)
 	mem, _ := env.Info["MemTotal"].(float64)
-	return ok("docker", fmt.Sprintf("Docker %s，VM 内存 %s", ver, humanBytes(int64(mem))))
+	return ok("docker", fmt.Sprintf("Docker %s, VM memory %s", ver, humanBytes(int64(mem))))
 }
 
 func checkVMMemory(a *App, env docEnv) Check {
 	total, _ := env.Info["MemTotal"].(float64)
 	per := a.Cfg.Resources.MemoryBytes()
 	if total <= 0 || per <= 0 {
-		return skip("vm-memory", "算不出 VM 内存或 resources.memory")
+		return skip("vm-memory", "cannot determine VM memory or resources.memory")
 	}
 	if msg := budgetWarning(a.Cfg.MaxRunning, a.Cfg.Resources.Memory, per, int64(total)); msg != "" {
 		// 只取第一句，修复建议本来就单独一行
 		head, _, _ := strings.Cut(msg, "。")
-		return warn("vm-memory", head, "调小 max_running 或 resources.memory，或者把 Docker 的内存调大")
+		return warn("vm-memory", head, "lower max_running or resources.memory, or give Docker more memory")
 	}
-	return ok("vm-memory", fmt.Sprintf("max_running(%d) × %s = %s ≤ VM 内存 %s 的 %.0f%%",
+	return ok("vm-memory", fmt.Sprintf("max_running(%d) × %s = %s ≤ VM memory %s × %.0f%%",
 		a.Cfg.MaxRunning, a.Cfg.Resources.Memory, humanBytes(int64(a.Cfg.MaxRunning)*per),
 		humanBytes(int64(total)), vmBudget*100))
 }
@@ -167,46 +167,46 @@ func checkVMMemory(a *App, env docEnv) Check {
 func checkUpstream(a *App, env docEnv) Check {
 	up := strings.TrimSpace(a.Cfg.Network.Upstream)
 	if up == "" {
-		return ok("upstream", "没配上游代理，容器直连")
+		return ok("upstream", "no upstream proxy configured; containers connect directly")
 	}
 	tag, err := a.agentImage()
 	if err != nil {
-		return skip("upstream", "Agent 镜像还没构建，先跑一次 sbx run")
+		return skip("upstream", "agent image not built yet; run sbx run once")
 	}
 	// 必须从容器里探：host.docker.internal 在宿主机上是另一回事
 	out, err := a.Docker.Run("run", "--rm", "-e", "HTTPS_PROXY="+up, "-e", "HTTP_PROXY="+up, tag,
 		"curl", "-sS", "-m", "8", "-o", "/dev/null", "-w", "%{http_code}", "https://api.anthropic.com/")
 	if err != nil || strings.TrimSpace(out) == "000" {
-		return fail("upstream", up+" 连不上", "确认本机代理在跑，或者清空 network.upstream 走直连")
+		return fail("upstream", up+" is unreachable", "check that your local proxy is running, or clear network.upstream to connect directly")
 	}
-	return ok("upstream", up+" 可用")
+	return ok("upstream", up+" is reachable")
 }
 
 func checkProxy(a *App, _ docEnv) Check {
 	running, tasks, detail, err := a.proxy().Health()
 	if err != nil {
-		return fail("sbx-proxy", "查不了："+err.Error(), "")
+		return fail("sbx-proxy", "cannot check: "+err.Error(), "")
 	}
 	switch {
-	case running && strings.Contains(detail, "配置检查没过"):
-		return fail("sbx-proxy", detail, "docker rm -f "+proxy.SharedName+" 之后 sbx run 会重建它")
+	case running && strings.Contains(detail, "the config check failed"):
+		return fail("sbx-proxy", detail, "docker rm -f "+proxy.SharedName+", then sbx run will rebuild it")
 	case running:
-		return ok("sbx-proxy", fmt.Sprintf("%s，%d 个 Task 接入", detail, tasks))
+		return ok("sbx-proxy", fmt.Sprintf("%s, %d task(s) attached", detail, tasks))
 	case tasks > 0:
 		// 有 Task 在跑却没有代理：这些 Task 现在是断网的（R8）
-		return fail("sbx-proxy", fmt.Sprintf("%s，但有 %d 个 shared Task 在跑（它们现在出不了网）", detail, tasks),
-			"docker rm -f "+proxy.SharedName+" 之后重新 sbx run")
+		return fail("sbx-proxy", fmt.Sprintf("%s, but %d shared task(s) are running (they have no egress right now)", detail, tasks),
+			"docker rm -f "+proxy.SharedName+", then run sbx run again")
 	default:
-		return ok("sbx-proxy", detail+"（没有 shared Task 在跑，正常）")
+		return ok("sbx-proxy", detail+" (no shared task is running, which is fine)")
 	}
 }
 
 func checkLogin(a *App, _ docEnv) Check {
 	name := a.Cfg.DefaultAgent
 	if key, err := a.apiKey(name); err != nil {
-		return fail("login", "配了 API key 但取不到值："+err.Error(), "检查 api_key_env / api_key_file")
+		return fail("login", "API key configured but its value cannot be read: "+err.Error(), "check api_key_env / api_key_file")
 	} else if key.Env != "" {
-		return ok("login", "用 API key（来自"+key.Source+"），不走订阅登录")
+		return ok("login", "using an API key (from "+key.Source+"), not subscription login")
 	}
 	_, cli, err := resolveAgent(name)
 	if err != nil {
@@ -218,11 +218,11 @@ func checkLogin(a *App, _ docEnv) Check {
 	}
 	// 镜像不在就别现场构建：doctor 不该一跑几分钟
 	if exists, err := a.Docker.ImageExists(in.Tag()); err != nil || !exists {
-		return warn("login", "Agent 镜像还没构建，查不了登录态", "先跑一次 sbx run 或 sbx login")
+		return warn("login", "agent image not built yet; cannot check login state", "run sbx run or sbx login once")
 	}
 	st, err := a.authStatus(in.Tag(), cli)
 	if err != nil || !st.LoggedIn {
-		return fail("login", "沙箱里还没登录", "sbx login")
+		return fail("login", "not logged in inside the sandbox", "sbx login")
 	}
 	return ok("login", st.Describe())
 }
@@ -234,32 +234,32 @@ func checkTrust(a *App, _ docEnv) Check {
 	}
 	switch {
 	case cur.Empty() && !had:
-		return ok("trust", "这个仓库没有 .sbx/，不需要确认")
+		return ok("trust", "this repo has no .sbx/, nothing to confirm")
 	case !had:
-		return warn("trust", ".sbx/ 还没确认过，sbx run 会被拦住", "sbx trust")
+		return warn("trust", ".sbx/ has not been confirmed yet; sbx run will stop", "sbx trust")
 	case old.Hash != cur.Hash:
-		return warn("trust", ".sbx/ 自上次确认后有变化", "sbx trust")
+		return warn("trust", ".sbx/ has changed since you last confirmed it", "sbx trust")
 	}
-	return ok("trust", ".sbx/ 和上次确认的一致")
+	return ok("trust", ".sbx/ matches what you confirmed")
 }
 
 func checkNotify(a *App, _ docEnv) Check {
 	if a.Cfg.OnIdle == "" && a.Cfg.OnExit == "" {
-		return ok("notify", "没配 on_idle / on_exit")
+		return ok("notify", "on_idle / on_exit not configured")
 	}
 	hosts, skipped := proxy.HostsIn(a.Cfg.OnIdle, a.Cfg.OnExit)
 	// $SBX_TASK 落在 shell 单引号里不会展开，收到的是字面量——这个坑设计稿里自己踩过
 	if m := singleQuotedVar(a.Cfg.OnIdle, a.Cfg.OnExit); m != "" {
-		return warn("notify", "通知命令里的 "+m+" 在单引号中，不会被展开（收到的会是字面量）",
-			"把那一段换成双引号，JSON 里的引号用 \\\" 转义")
+		return warn("notify", "the notify command has "+m+" inside single quotes, so it will not be expanded (you get the literal text)",
+			"switch that part to double quotes and escape inner quotes as \\\"")
 	}
-	detail := "没有可自动放行的主机"
+	detail := "no hosts can be allowed automatically"
 	if len(hosts) > 0 {
-		detail = strings.Join(hosts, "、") + " 已自动加入白名单"
+		detail = strings.Join(hosts, ", ") + " added to the allowlist automatically"
 	}
 	if len(skipped) > 0 {
-		return warn("notify", detail+"；"+strings.Join(skipped, "、")+" 含变量或是 IP，没法自动放行",
-			"需要的话执行 sbx net allow <host>")
+		return warn("notify", detail+"；"+strings.Join(skipped, ", ")+" contain variables or are IPs and cannot be allowed automatically",
+			"run sbx net allow <host> if you need them")
 	}
 	return ok("notify", detail)
 }
@@ -293,11 +293,11 @@ func checkSmoke(a *App, env docEnv) Check {
 		screen, err := rt.Capture()
 		if err == nil {
 			if m := agent.DialogIn(screen); m != "" {
-				return fail("smoke", "容器 "+name+" 的画面上有首次启动对话框："+m,
-					"claude 的内部状态字段可能随版本变了（R9），看 agent/preseed.go")
+				return fail("smoke", "container "+name+" shows a first-run dialog: "+m,
+					"claude's internal state fields may have changed between versions (R9); see agent/preseed.go")
 			}
-			return ok("smoke", "运行中的 "+name+" 画面正常，没有卡在对话框上")
+			return ok("smoke", "running container "+name+" looks normal, not stuck on a dialog")
 		}
 	}
-	return skip("smoke", "现在没有运行中的 Task，起一个再查（sbx run <task> 本身就会做这项冒烟检查）")
+	return skip("smoke", "no task is running; start one to check (sbx run <task> runs this smoke check itself)")
 }

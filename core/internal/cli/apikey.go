@@ -29,7 +29,7 @@ func (a *App) apiKey(name string) (apiKey, error) {
 	cli, ok := authCLIs[name]
 	if !ok || cli.keyEnv == "" {
 		if ag.APIKeyEnv != "" || ag.APIKeyFile != "" {
-			return apiKey{}, fmt.Errorf("agents.%s 配了 API key，但 sbx 还不知道 %s 用哪个环境变量", name, name)
+			return apiKey{}, fmt.Errorf("agents.%s configures an API key, but sbx does not know which environment variable %s uses", name, name)
 		}
 		return apiKey{}, nil
 	}
@@ -37,20 +37,20 @@ func (a *App) apiKey(name string) (apiKey, error) {
 	case ag.APIKeyEnv != "":
 		v := strings.TrimSpace(os.Getenv(ag.APIKeyEnv))
 		if v == "" {
-			return apiKey{}, fmt.Errorf("agents.%s.api_key_env = %q，但宿主机上这个环境变量是空的", name, ag.APIKeyEnv)
+			return apiKey{}, fmt.Errorf("agents.%s.api_key_env = %q, but that environment variable is empty on the host", name, ag.APIKeyEnv)
 		}
-		return apiKey{Env: cli.keyEnv, Value: v, Source: "环境变量 " + ag.APIKeyEnv}, nil
+		return apiKey{Env: cli.keyEnv, Value: v, Source: "environment variable " + ag.APIKeyEnv}, nil
 	case ag.APIKeyFile != "":
 		path := expandHome(ag.APIKeyFile)
 		b, err := os.ReadFile(path)
 		if err != nil {
-			return apiKey{}, fmt.Errorf("agents.%s.api_key_file 读不到：%w", name, err)
+			return apiKey{}, fmt.Errorf("cannot read agents.%s.api_key_file: %w", name, err)
 		}
 		v := strings.TrimSpace(string(b))
 		if v == "" {
-			return apiKey{}, fmt.Errorf("agents.%s.api_key_file = %q 是空文件", name, path)
+			return apiKey{}, fmt.Errorf("agents.%s.api_key_file = %q is an empty file", name, path)
 		}
-		return apiKey{Env: cli.keyEnv, Value: v, Source: "文件 " + path}, nil
+		return apiKey{Env: cli.keyEnv, Value: v, Source: "file " + path}, nil
 	}
 	return apiKey{}, nil
 }

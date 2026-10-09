@@ -141,7 +141,7 @@ func parse(data, src string, base Config) (Config, []string, error) {
 	}
 	var warnings []string
 	for _, k := range md.Undecoded() {
-		warnings = append(warnings, fmt.Sprintf("%s: 未知字段 %s（已忽略）", src, k.String()))
+		warnings = append(warnings, fmt.Sprintf("%s: unknown field %s (ignored)", src, k.String()))
 	}
 	if err := cfg.Validate(); err != nil {
 		return base, warnings, fmt.Errorf("%s: %w", src, err)
@@ -165,35 +165,35 @@ func fieldf(key, format string, args ...any) error {
 
 func (c Config) Validate() error {
 	if !memRe.MatchString(c.Resources.Memory) {
-		return fieldf("resources.memory", "resources.memory 非法：%q（示例：3g、512m）", c.Resources.Memory)
+		return fieldf("resources.memory", "resources.memory is invalid: %q (examples: 3g, 512m)", c.Resources.Memory)
 	}
 	if c.Resources.CPUs <= 0 {
-		return fieldf("resources.cpus", "resources.cpus 必须大于 0")
+		return fieldf("resources.cpus", "resources.cpus must be greater than 0")
 	}
 	if c.Resources.Pids <= 0 {
-		return fieldf("resources.pids", "resources.pids 必须大于 0")
+		return fieldf("resources.pids", "resources.pids must be greater than 0")
 	}
 	if c.MaxRunning <= 0 {
-		return fieldf("max_running", "max_running 必须大于 0")
+		return fieldf("max_running", "max_running must be greater than 0")
 	}
 	if c.NotifyThrottle < 0 {
-		return fieldf("notify_throttle", "notify_throttle 不能是负数")
+		return fieldf("notify_throttle", "notify_throttle cannot be negative")
 	}
 	for name, ag := range c.Agents {
 		if ag.APIKeyEnv != "" && ag.APIKeyFile != "" {
 			return fieldf("agents."+name+".api_key_env",
-				"agents.%s 同时配了 api_key_env 和 api_key_file，只能二选一", name)
+				"agents.%s sets both api_key_env and api_key_file; pick one", name)
 		}
 	}
 	switch c.Network.Mode {
 	case "allowlist", "open":
 	default:
-		return fieldf("network.mode", "network.mode 只能是 allowlist 或 open：%q", c.Network.Mode)
+		return fieldf("network.mode", "network.mode must be allowlist or open: %q", c.Network.Mode)
 	}
 	switch c.Network.Proxy {
 	case "shared", "dedicated":
 	default:
-		return fieldf("network.proxy", "network.proxy 只能是 shared 或 dedicated：%q", c.Network.Proxy)
+		return fieldf("network.proxy", "network.proxy must be shared or dedicated: %q", c.Network.Proxy)
 	}
 	if _, _, err := c.Upstream(); err != nil {
 		return err
@@ -215,7 +215,7 @@ func (c Config) Upstream() (host string, port string, err error) {
 		return "", "", fieldf("network.upstream", "network.upstream 非法：%q（示例：http://host.docker.internal:7890）", c.Network.Upstream)
 	}
 	if u.Scheme != "http" {
-		return "", "", fieldf("network.upstream", "network.upstream 只支持 http 上游：%q", c.Network.Upstream)
+		return "", "", fieldf("network.upstream", "network.upstream only supports http upstreams: %q", c.Network.Upstream)
 	}
 	return u.Hostname(), u.Port(), nil
 }

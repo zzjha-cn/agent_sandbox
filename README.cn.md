@@ -118,7 +118,9 @@ git merge sbx/fix-login        # 合并（sbx 不会自动合并）
 | **Task** | 一条工作线 = 一个容器 + 一棵 worktree + 一条分支 `sbx/<task>` |
 | **main Task** | 省略 task 名的特例：直接用仓库根，不隔离 |
 
-容器里能看到的只有：这棵 worktree、共享的 `sbx-home`（登录态 + Claude 配置）、`sbx-cache`（包管理器缓存）、只读的 `/sbx/gen`（hooks、settings、状态栏）。**宿主机其余目录一概没挂。**
+容器里能看到的只有：这棵 worktree、你仓库的 `.git` 目录、共享的 `sbx-home`（登录态 + Claude 配置）、`sbx-cache`（包管理器缓存）、只读的 `/sbx/gen`（hooks、settings、状态栏）。**宿主机其余目录一概没挂。**
+
+> **已知缺口——`.git` 是可写挂载的，这是一条逃逸路径。** 它必须可写：沙箱里的提交能直接出现在你宿主机的 `git log sbx/<task>` 里、不需要任何同步，靠的就是这个。代价是 Agent 同样能写 `.git/hooks/*` 和 `.git/config`，而 git hook 会在你下次碰这个仓库时**以你的身份、在你的宿主机上**执行。sbx 目前不防这个——它是 [design.md](docs/design.md) 里的风险 R1，是明知而接受的，至今没有缓解。除此之外的隔离都是实的（网络、文件系统、凭据），但如果你要跑的是真正不可信的 Agent 或代码库，请用一个用完就扔的 clone，别用你的工作仓库。
 
 ## 网络
 
@@ -140,7 +142,8 @@ sbx run t1 --proxy dedicated   # 这一次用独占的代理 sidecar
 `~/.sbx/config.toml`，全部字段可选：
 
 ```toml
-profile = "web-go"            # 内置 Profile（目前只有这一个）
+profile = "web-go"            # 内置 Profile：web-go | py-rust
+# image = "ghcr.io/me/dev:1"  # 或者直接用现成镜像，覆盖 profile
 
 [network]
 upstream  = ""                # 宿主机代理，空 = 直连
@@ -162,6 +165,32 @@ sbx trust          # 确认这个仓库的 .sbx/ 内容
 ```
 
 项目层跟着仓库走，所以**密钥类字段和绝对路径在那一层会直接报错**。也正因为它会被 `git pull` 改掉，`.sbx/` 和上次确认的内容不一致时 `sbx run` 会停下来给你看 diff；没有 `.sbx/` 的仓库完全碰不到这套东西。字段全集和改完什么时候生效：[docs/commands.md](docs/commands.md#配置四层adr-00090010design-91)。
+
+## 用你自己的镜像
+
+内置 Profile 只是图方便，不是必须的。决定 Task 跑在什么环境里有三条路，优先级从高到低：
+
+```toml
+image = "ghcr.io/me/devbox:2026-10"   # 1. 直接用现成镜像
+```
+```bash
+<repo>/.sbx/Dockerfile                # 2. 仓库里放一个 Dockerfile，不用写任何配置
+profile = "web-go"                    # 3. 内置 Profile（默认）
+```
+
+不管选哪条，**你只需要提供语言环境**。sbx 会自动在上面叠一层 Agent 层——tini、tmux、git、ripgrep、Node、claude-code、mise，以及一个 UID 和你一致的 `agent` 用户——claude 不用你自己装。镜像 tag 是输入内容的 hash，底换了会自动重建。
+
+动手前有两件事要知道：
+
+- **底必须是 Debian 或 Ubuntu 系。** Agent 层用 `apt-get` 装东西，Alpine 或红帽系的底会在构建时挂掉，而且报出来的是 apt 的错，不是 sbx 的提示。
+- **依赖遮盖跟着 `profile` 走，不跟着镜像走。** 默认遮盖项是按 `profile` 字段查的，而设 `image` 并不会改 `profile`——所以你为 Rust 准备的镜像，继承的仍然是 `web-go` 的遮盖项。又因为列表在各层之间取并集，`mask` **只能追加、删不掉**：设了 `image` 再写 `mask = ["target"]`，最后拿到的是 `node_modules`、`.next` **和** `target` 三条，多出来的那两条还会在 worktree 里凭空建出空的挂载点。正确的写法是把 `profile` 一并设成最接近的那个内置值，再往上加：
+
+  ```toml
+  image   = "ghcr.io/me/rustbox:1"
+  profile = "py-rust"           # 遮盖 .venv 和 target；不写的话继承的是 web-go 的
+  ```
+
+`image` 在项目层是允许写的，所以团队可以把镜像选择提交进 `<repo>/.sbx/sandbox.toml`；又因为 `.sbx/` 在信任确认的覆盖范围内，`git pull` 把镜像换掉的话，`sbx run` 会先停下来给你看 diff。
 
 ## 团队怎么用
 
@@ -198,7 +227,7 @@ sbx trust          # 确认这个仓库的 .sbx/ 内容
 
 **M1、M2 和 M3 的绝大部分都已完成**，只剩 Codex（M3-6）。可用命令：`run / attach / shell / stop / ls / path / done / drop / logs / port / net / memory / login / config / trust / doctor / upgrade`。
 
-已知边界：没有 `sbx merge`；Codex 还没接（M3-6）；上游代理只支持 http（只有 SOCKS 的话要自己加一层转发）；底层镜像必须是 Debian/Ubuntu 系。
+已知边界：`.git` 可写意味着沙箱里的 Agent 能埋一个 git hook、之后在你宿主机上执行（R1，见[核心模型](#核心模型)）；没有 `sbx merge`；Codex 还没接（M3-6）；上游代理只支持 http（只有 SOCKS 的话要自己加一层转发）；底层镜像必须是 Debian/Ubuntu 系。
 
 路线图见 [implementation-checklist.md](docs/implementation-checklist.md)。
 

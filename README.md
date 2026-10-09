@@ -125,7 +125,9 @@ Want the changes to land in your repo directory, visible to `git status` on the 
 | **Task** | One line of work = one container + one worktree + one `sbx/<task>` branch |
 | **main task** | The special case when you omit the name: works on the repo root, no isolation |
 
-All a container can see is: its worktree, the shared `sbx-home` (login state and Claude config), `sbx-cache` (package-manager caches) and a read-only `/sbx/gen` (hooks, settings, status line). **Nothing else from your host is mounted.**
+All a container can see is: its worktree, your repository's `.git` directory, the shared `sbx-home` (login state and Claude config), `sbx-cache` (package-manager caches) and a read-only `/sbx/gen` (hooks, settings, status line). **Nothing else from your host is mounted.**
+
+> **Known gap — `.git` is mounted writable, and that is an escape hatch.** It has to be: writing to your real `.git` is what lets a commit made inside the sandbox show up in `git log sbx/<task>` on your host with no syncing step. The cost is that an agent can also write `.git/hooks/*` or `.git/config`, and git hooks run **as you, on your host**, the next time you touch that repo. sbx does not guard against this today — it is risk R1 in [design.md](docs/design.md), accepted knowingly and still open. Isolation holds against everything else (network, filesystem, credentials), but if you are running a genuinely untrusted agent or codebase, do it in a throwaway clone rather than your working repo.
 
 ## Networking
 
@@ -147,7 +149,8 @@ Allowlist mode (`network.mode = "allowlist"`) permits only the built-in list plu
 `~/.sbx/config.toml`; every field is optional:
 
 ```toml
-profile = "web-go"            # built-in profile (currently the only one)
+profile = "web-go"            # built-in profile: web-go | py-rust
+# image = "ghcr.io/me/dev:1"  # or bring your own image, overriding profile
 
 [network]
 upstream  = ""                # host proxy; empty means direct
@@ -169,6 +172,32 @@ sbx trust          # review this repo's .sbx/ and record it as trusted
 ```
 
 The project layer travels with the repo, so **secret-looking keys and absolute paths are rejected outright in that layer**. And because a `git pull` can change it under you, `sbx run` stops and shows you the diff whenever `.sbx/` differs from what you last confirmed — repos without a `.sbx/` directory never see any of this. Full field list and when changes take effect: [docs/commands.md](docs/commands.md#配置四层adr-00090010design-91).
+
+## Bringing your own image
+
+The built-in profiles are a convenience, not a requirement. There are three ways to decide what a task runs in, highest priority first:
+
+```toml
+image = "ghcr.io/me/devbox:2026-10"   # 1. a ready-made image
+```
+```bash
+<repo>/.sbx/Dockerfile                # 2. a Dockerfile in the repo — no config needed
+profile = "web-go"                    # 3. a built-in profile (the default)
+```
+
+Whichever you pick, **you only supply the language environment**. sbx layers its own agent layer on top — tini, tmux, git, ripgrep, Node, claude-code, mise, and an `agent` user whose UID matches yours — so you never install the agent yourself. The image tag is a hash of its inputs, so changing your base rebuilds automatically.
+
+Two things to know before you build one:
+
+- **The base has to be Debian or Ubuntu.** The agent layer installs with `apt-get`. An Alpine or RHEL base fails during build with an apt error rather than a message from sbx.
+- **Dependency masking still follows `profile`, not your image.** The defaults are keyed off the `profile` field, which a custom `image` does not change — so an image you built for Rust still inherits `web-go`'s masks. And because lists are unioned across layers, `mask` only ever *adds*; you cannot remove an inherited entry. Setting `image` plus `mask = ["target"]` leaves you with `node_modules`, `.next` **and** `target`, and the two you did not want get created as empty mount points in your worktree. Set `profile` to whichever built-in is closest, then add on top:
+
+  ```toml
+  image   = "ghcr.io/me/rustbox:1"
+  profile = "py-rust"           # masks .venv and target; without this you inherit web-go's
+  ```
+
+`image` is allowed in the project layer, so a team can commit its image choice to `<repo>/.sbx/sandbox.toml` — and because `.sbx/` is covered by trust, a `git pull` that swaps the image stops `sbx run` and shows you the diff first.
 
 ## Working as a team
 
@@ -207,7 +236,7 @@ What *cannot* be in that file, by design: anything that looks like a credential,
 
 **M1, M2 and nearly all of M3 are done** — only Codex support (M3-6) is left. Available commands: `run / attach / shell / stop / ls / path / done / drop / logs / port / net / memory / login / config / trust / doctor / upgrade`.
 
-Known limits: there is no `sbx merge` and no Codex support yet (M3-6); a host proxy has to speak HTTP (SOCKS-only needs a shim of your own); base images have to be Debian or Ubuntu.
+Known limits: a writable `.git` means a sandboxed agent can plant a git hook that later runs on your host (R1, see [The model](#the-model)); there is no `sbx merge` and no Codex support yet (M3-6); a host proxy has to speak HTTP (SOCKS-only needs a shim of your own); base images have to be Debian or Ubuntu.
 
 Roadmap: [implementation-checklist.md](docs/implementation-checklist.md).
 

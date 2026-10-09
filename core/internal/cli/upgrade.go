@@ -72,11 +72,11 @@ func (a *App) latestClaude(b image.Builder, in image.Inputs) (string, error) {
 	args = append(args, ptag, "npm", "view", "@anthropic-ai/claude-code", "version")
 	out, err := a.Docker.Run(args...)
 	if err != nil {
-		return "", fmt.Errorf("查询 claude-code 最新版本失败：%w", err)
+		return "", fmt.Errorf("failed to query the latest claude-code version: %w", err)
 	}
 	v := strings.TrimSpace(out)
 	if !semver.MatchString(v) {
-		return "", fmt.Errorf("npm 返回了无法识别的版本：%q", v)
+		return "", fmt.Errorf("npm returned an unrecognizable version: %q", v)
 	}
 	return v, nil
 }
@@ -91,7 +91,7 @@ func (a *App) upgradeCmd() *cobra.Command {
 				return err
 			}
 			if v := a.Cfg.ClaudeVersion(); v != "latest" {
-				return fmt.Errorf("配置里固定了 agents.claude.version = %q；要升级请改配置", v)
+				return fmt.Errorf("the config pins agents.claude.version = %q; change the config to upgrade", v)
 			}
 			in, err := a.imageInputs()
 			if err != nil {
@@ -106,7 +106,7 @@ func (a *App) upgradeCmd() *cobra.Command {
 			in.ClaudeVersion = latest
 			if latest == cur {
 				if ok, err := a.Docker.ImageExists(in.Tag()); err == nil && ok {
-					fmt.Fprintf(a.Out, "claude 已是最新版 %s（镜像 %s）\n", latest, in.Tag())
+					fmt.Fprintf(a.Out, "claude is already at the latest version %s (image %s)\n", latest, in.Tag())
 					return nil
 				}
 			}
@@ -117,8 +117,8 @@ func (a *App) upgradeCmd() *cobra.Command {
 			if err := fsutil.AtomicWrite(a.claudeVersionFile(), []byte(latest+"\n"), 0o644); err != nil {
 				return err
 			}
-			fmt.Fprintf(a.Out, "claude %s → %s，镜像 %s\n", cur, latest, tag)
-			fmt.Fprintln(a.Out, "之后新建的 Task 使用新镜像；已有 Task 仍是旧镜像，sbx done 后重新 run 即可换上。")
+			fmt.Fprintf(a.Out, "claude %s -> %s, image %s\n", cur, latest, tag)
+			fmt.Fprintln(a.Out, "New tasks use the new image; existing tasks keep the old one until you sbx done and run them again.")
 			return nil
 		},
 	}

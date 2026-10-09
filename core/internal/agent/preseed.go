@@ -38,7 +38,7 @@ link() { # link <name> <target>
   if [ -L "$dst" ] || [ ! -e "$dst" ]; then
     if [ -e "$2" ]; then ln -sfn "$2" "$dst"; else rm -f "$dst"; fi
   else
-    echo "sbx: ~/.claude/$1 已存在且不是 sbx 建立的软链接，跳过" >&2
+    echo "sbx: ~/.claude/$1 already exists and is not a symlink created by sbx; skipping" >&2
   fi
 }
 link CLAUDE.md /sbx/gen/host-claude/CLAUDE.md

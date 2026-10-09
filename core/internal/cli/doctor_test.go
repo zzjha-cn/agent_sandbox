@@ -42,7 +42,7 @@ func TestDoctorOutput(t *testing.T) {
 		skip("smoke", "跳过（--quick）"),
 	}, false)
 	s := out.String()
-	for _, want := range []string{"✓ docker", "! trust", "✗ sbx-proxy", "- smoke", "→ sbx trust", "1 项警告，1 项失败"} {
+	for _, want := range []string{"✓ docker", "! trust", "✗ sbx-proxy", "- smoke", "→ sbx trust", "1 warning(s), 1 failure(s)"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("输出里缺 %q：\n%s", want, s)
 		}

@@ -50,7 +50,7 @@ func (r Runtime) HasSession() bool {
 }
 
 // ExitNotice 是 claude 退出后窗口里打印的提示，同时供 SmokeCheck 识别"启动后立刻退出"。
-const ExitNotice = "[sbx] claude 已退出"
+const ExitNotice = "[sbx] claude exited"
 
 // ClaudeCmd 组装 tmux 窗口里跑的命令。
 // claude 退出（Ctrl-D、/exit、崩溃）后不让窗口关闭：打印提示再 exec 一个 login shell。
@@ -60,7 +60,7 @@ func ClaudeCmd(continueConv bool) string {
 	if continueConv {
 		cmd += " --continue"
 	}
-	return cmd + "; printf '\n" + ExitNotice + "。Ctrl-b d 离开容器；sbx run 可以在这个会话里重新拉起。\n\n'; exec bash -l"
+	return cmd + "; printf '\n" + ExitNotice + ". Ctrl-b d leaves the container; sbx run brings it back up in this session.\n\n'; exec bash -l"
 }
 
 // StartSession 新建 tmux 会话并在里面跑 cmd；会话已存在时什么都不做。
@@ -127,20 +127,20 @@ func (r Runtime) SmokeCheck(sm Smoke) error {
 			if sm.Exited == nil {
 				return nil
 			}
-			return fmt.Errorf("claude 启动后退出了（tmux 会话已结束）")
+			return fmt.Errorf("claude exited after starting (the tmux session has ended)")
 		}
 		screen, _ = r.Capture()
 		if sm.Exited != nil && (sm.Exited() || strings.Contains(screen, ExitNotice)) {
-			return fmt.Errorf("claude 启动后立刻退出了，画面最后 20 行：\n%s", lastLines(screen, 20))
+			return fmt.Errorf("claude exited immediately after starting; last 20 lines of the screen:\n%s", lastLines(screen, 20))
 		}
 		if m := DialogIn(screen); m != "" {
-			return fmt.Errorf("claude 卡在首次启动对话框上（%q），预置字段可能已随版本变化（R9）：\n%s", m, lastLines(screen, 20))
+			return fmt.Errorf("claude is stuck on a first-run dialog (%q); the preseeded fields may have changed between versions (R9):\n%s", m, lastLines(screen, 20))
 		}
 		if sm.Ready() {
 			return nil
 		}
 	}
-	return fmt.Errorf("%s 内没有等到 SessionStart，画面最后 20 行：\n%s", sm.Timeout, lastLines(screen, 20))
+	return fmt.Errorf("SessionStart did not arrive within %s; last 20 lines of the screen:\n%s", sm.Timeout, lastLines(screen, 20))
 }
 
 func lastLines(s string, n int) string {

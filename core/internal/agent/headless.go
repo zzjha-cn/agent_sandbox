@@ -40,7 +40,7 @@ func HeadlessCmd(o HeadlessOpts) string {
 	fmt.Fprintf(&b, "%s 2>&1 | tee -a %s\n", claude, RunLog)
 	b.WriteString("code=${PIPESTATUS[0]}\n")
 	fmt.Fprintf(&b, "printf '%%s' \"$code\" > %s\n", RunExit)
-	fmt.Fprintf(&b, "printf '\\n[sbx] headless 结束（exit=%%s）\\n' \"$code\" | tee -a %s\n", RunLog)
+	fmt.Fprintf(&b, "printf '\\n[sbx] headless finished (exit=%%s)\\n' \"$code\" | tee -a %s\n", RunLog)
 	if o.Notify {
 		fmt.Fprintf(&b, "SBX_EXIT_CODE=\"$code\" %s exit --sync\n", NotifySh)
 	}

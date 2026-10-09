@@ -179,10 +179,10 @@ func (d Dedicated) reconfigure() error {
 	out, err := d.Docker.Exec(d.Name, docker.ExecOpts{}, "sh", "-c",
 		"squid -f "+confPath+" -k parse 2>&1 && squid -f "+confPath+" -k reconfigure 2>&1")
 	if err != nil {
-		return fmt.Errorf("squid reconfigure 失败：%w\n%s", err, out)
+		return fmt.Errorf("squid reconfigure failed: %w\n%s", err, out)
 	}
 	if m := confErr.FindAllString(out, -1); len(m) > 0 {
-		return fmt.Errorf("squid 配置有错误：\n%s", strings.Join(m, "\n"))
+		return fmt.Errorf("the squid config has errors:\n%s", strings.Join(m, "\n"))
 	}
 	return nil
 }
@@ -192,20 +192,20 @@ func (d Dedicated) waitReady() error {
 	for i := 0; i < 40; i++ {
 		st, _, err := d.Docker.Inspect(d.Name)
 		if err == nil && !st.Running {
-			return fmt.Errorf("%s 启动后退出了：\n%s", d.Name, d.Docker.Logs(d.Name, 20))
+			return fmt.Errorf("%s exited right after starting:\n%s", d.Name, d.Docker.Logs(d.Name, 20))
 		}
 		if _, last = d.Docker.Exec(d.Name, docker.ExecOpts{}, "squid", "-f", confPath, "-k", "check"); last == nil {
 			return nil
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
-	return fmt.Errorf("%s 未就绪：%w", d.Name, last)
+	return fmt.Errorf("%s is not ready: %w", d.Name, last)
 }
 
 func (d Dedicated) rotateIfLarge(limit int64) error {
 	script := fmt.Sprintf(`f=%s; [ "$(stat -c %%s "$f" 2>/dev/null || echo 0)" -gt %d ] || exit 0; squid -f %s -k rotate`, logPath, limit, confPath)
 	if _, err := d.Docker.Exec(d.Name, docker.ExecOpts{}, "sh", "-c", script); err != nil {
-		return fmt.Errorf("squid 日志轮转失败：%w", err)
+		return fmt.Errorf("failed to rotate the squid log: %w", err)
 	}
 	return nil
 }

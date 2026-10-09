@@ -65,7 +65,7 @@ func (a *App) accessLogs(t *task.Task) ([]proxy.Entry, error) {
 	if t != nil {
 		es, err := a.egress(*t).AccessLog()
 		if err != nil {
-			return nil, fmt.Errorf("读不到 %s 的日志（代理没在运行？）：%w", a.proxyName(*t), err)
+			return nil, fmt.Errorf("cannot read the logs of %s (is the proxy running?): %w", a.proxyName(*t), err)
 		}
 		return es, nil
 	}
@@ -88,7 +88,7 @@ func (a *App) accessLogs(t *task.Task) ([]proxy.Entry, error) {
 		}
 	}
 	if !read {
-		return nil, errors.New("读不到任何代理的日志（代理没在运行？）")
+		return nil, errors.New("cannot read the logs of any proxy (is the proxy running?)")
 	}
 	return out, nil
 }

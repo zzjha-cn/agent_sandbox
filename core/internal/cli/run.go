@@ -52,7 +52,7 @@ func (a *App) runCmd() *cobra.Command {
 				return err
 			}
 			if a.Verbose {
-				a.logf("生效配置：\n%s", a.Cfg)
+				a.logf("effective config:\n%s", a.Cfg)
 			}
 			if netMode != "" {
 				a.Cfg.Network.Mode = netMode
@@ -112,7 +112,7 @@ func readPrompt(v string, stdin io.Reader) (string, error) {
 		v = string(b)
 	}
 	if strings.TrimSpace(v) == "" {
-		return "", errors.New("-p 的内容是空的；不给 prompt 的话去掉 -p 就是交互模式")
+		return "", errors.New("-p is empty; drop -p entirely for interactive mode")
 	}
 	return v, nil
 }
@@ -126,7 +126,7 @@ func (a *App) run(t task.Task, o runOpts) error {
 	if o.headless() && exists && st.Running {
 		s, _ := t.ReadStatus()
 		if d := task.Derive(st, exists, s, t.RunExit()); d == "running" || d == "idle" || d == "starting" {
-			return fmt.Errorf("Task %s 里已经有一个会话在跑（%s）。sbx attach %s 看看，或者 sbx stop %s 之后再 -p",
+			return fmt.Errorf("task %s already has a session running (%s). Look at it with sbx attach %s, or sbx stop %s before using -p",
 				t.Name, d, t.Name, t.Name)
 		}
 	}
@@ -139,7 +139,7 @@ func (a *App) run(t task.Task, o runOpts) error {
 	}
 	if exists {
 		if o.Base != "" {
-			a.logf("Task %s 已存在，忽略 --base", t.Name)
+			a.logf("task %s already exists; ignoring --base", t.Name)
 		}
 		if err := a.resume(t, st, o); err != nil {
 			return err
@@ -151,7 +151,7 @@ func (a *App) run(t task.Task, o runOpts) error {
 		return a.afterHeadless(t, o.Detach)
 	}
 	if o.Detach {
-		fmt.Fprintf(a.Out, "Task %s 已在后台运行。进入：sbx attach %s\n", t.Name, t.Name)
+		fmt.Fprintf(a.Out, "task %s is already running in the background. Enter it with: sbx attach %s\n", t.Name, t.Name)
 		return nil
 	}
 	return a.attach(t)
@@ -164,7 +164,7 @@ func (a *App) resume(t task.Task, st docker.State, o runOpts) error {
 		return err
 	}
 	if !ok {
-		return fmt.Errorf("容器 %s 存在但缺少 %s/meta.json；请先 sbx done %s 再重新 run", t.Container(), t.StateDir(), t.Name)
+		return fmt.Errorf("container %s exists but %s/meta.json is missing; run sbx done %s first, then run again", t.Container(), t.StateDir(), t.Name)
 	}
 	p := a.egress(t)
 	if err := p.Ensure(); err != nil {
@@ -178,7 +178,7 @@ func (a *App) resume(t task.Task, st docker.State, o runOpts) error {
 		return err
 	}
 	if !st.Running {
-		a.logf("启动已停止的 Task %s …", t.Name)
+		a.logf("starting stopped task %s ...", t.Name)
 		if err := a.Docker.Start(t.Container()); err != nil {
 			return err
 		}
@@ -201,7 +201,7 @@ func (a *App) genInput(host agent.HostClaude, o runOpts) agent.GenInput {
 func (a *App) hostClaude() agent.HostClaude {
 	h := agent.InspectHostClaude(hostClaudeDir())
 	for _, w := range h.Warnings {
-		a.logf("警告: %s", w)
+		a.logf("warning: %s", w)
 	}
 	return h
 }
@@ -226,10 +226,10 @@ func (a *App) proxySpec(t task.Task, taskID string) proxy.TaskSpec {
 
 func (a *App) create(t task.Task, o runOpts) (err error) {
 	var u undo
-	step := "准备 worktree"
+	step := "preparing the worktree"
 	defer func() {
 		if err != nil {
-			a.logf("在「%s」这一步失败，清理本次新建的资源（worktree 保留）…", step)
+			a.logf("failed at step [%s]; cleaning up what this run created (the worktree is kept) ...", step)
 			u.run()
 			err = fmt.Errorf("%s：%w", step, err)
 		}
@@ -242,7 +242,7 @@ func (a *App) create(t task.Task, o runOpts) (err error) {
 	}
 
 	// 2. 镜像
-	step = "准备镜像"
+	step = "preparing the image"
 	tag, err := a.agentImage()
 	if err != nil {
 		return err
@@ -255,12 +255,12 @@ func (a *App) create(t task.Task, o runOpts) (err error) {
 	os.Remove(filepath.Join(t.StateDir(), "status.json"))
 
 	// 4. 网络与 proxy
-	step = "准备出网代理"
+	step = "preparing the egress proxy"
 	p := a.egressOf(t, a.Cfg.Network.Proxy)
 	if err := p.Ensure(); err != nil {
 		return err
 	}
-	step = "创建 Task 网络"
+	step = "creating the task network"
 	if ok, err := a.Docker.NetworkExists(t.Network()); err != nil {
 		return err
 	} else if !ok {
@@ -271,9 +271,9 @@ func (a *App) create(t task.Task, o runOpts) (err error) {
 		}
 		u.add(func() { a.Docker.NetworkRm(t.Network()) })
 	}
-	step = "接入出网代理"
+	step = "attaching to the egress proxy"
 	if _, skipped := proxy.HostsIn(a.Cfg.OnIdle, a.Cfg.OnExit); len(skipped) > 0 {
-		a.logf("提示: 通知命令里的 %s 含变量或是 IP，没法自动放行；需要的话执行 sbx net allow <host>",
+		a.logf("note: %s in the notify command contains a variable or is an IP and cannot be allowed automatically; run sbx net allow <host> if you need it",
 			strings.Join(skipped, "、"))
 	}
 	u.add(func() { p.DetachTask(t.ID(), t.Network()); p.StopIfIdle() })
@@ -283,20 +283,20 @@ func (a *App) create(t task.Task, o runOpts) (err error) {
 	}
 
 	// 5. volume
-	step = "准备 volume"
+	step = "preparing volumes"
 	if err := a.ensureVolumes(t, tag, &u); err != nil {
 		return err
 	}
 
 	// 6. gen 目录
-	step = "渲染生成文件"
+	step = "rendering generated files"
 	host := a.hostClaude()
 	if err := agent.RenderGen(t.GenDir(), a.genInput(host, o)); err != nil {
 		return err
 	}
 
 	// 7. 容器
-	step = "创建容器"
+	step = "creating the container"
 	gitDir := t.WS.GitDir
 	if t.IsMain() {
 		gitDir = ""
@@ -308,7 +308,7 @@ func (a *App) create(t task.Task, o runOpts) (err error) {
 		return err
 	}
 	if key.Env != "" {
-		a.logf("用 API key 启动（来自%s），不走订阅登录", key.Source)
+		a.logf("starting with an API key (from %s), not subscription login", key.Source)
 	}
 	labels := t.Labels()
 	labels["sbx.role"] = "agent"
@@ -337,7 +337,7 @@ func (a *App) create(t task.Task, o runOpts) (err error) {
 	u.add(func() { a.Docker.Rm(t.Container()) })
 
 	// 8. meta（先写，startAgent 失败时 resume 还能用）
-	step = "写入 meta"
+	step = "writing meta"
 	if err := t.WriteMeta(task.Meta{
 		Task: t.Name, WS: t.WS.ID, Root: t.WS.Root, Base: baseSHA, Profile: a.Cfg.Profile, Image: tag,
 		Proxy: a.Cfg.Network.Proxy, TaskID: t.ID(), DepMasks: a.Cfg.Deps.Mask, CreatedAt: time.Now().UTC(),
@@ -346,15 +346,15 @@ func (a *App) create(t task.Task, o runOpts) (err error) {
 	}
 	u.add(func() { os.Remove(filepath.Join(t.StateDir(), "meta.json")) })
 
-	// 9. 预置、登录检查、启动 Agent
-	step = "启动 Agent"
+	// 9. 预置、登录检查、starting the agent
+	step = "starting the agent"
 	return a.startAgent(t, o)
 }
 
 func (a *App) prepareWorktree(t task.Task, base string) (string, error) {
 	if t.IsMain() {
 		if base != "" {
-			a.logf("main Task 直接使用仓库根，忽略 --base")
+			a.logf("the main task uses the repo root directly; ignoring --base")
 		}
 		return t.WS.HeadRef()
 	}
@@ -364,7 +364,7 @@ func (a *App) prepareWorktree(t task.Task, base string) (string, error) {
 	}
 	sha, err := workspace.Git(t.WS.Root, "rev-parse", "--verify", ref+"^{commit}")
 	if err != nil {
-		return "", fmt.Errorf("--base %q 不是有效的提交：%w", ref, err)
+		return "", fmt.Errorf("--base %q is not a valid commit: %w", ref, err)
 	}
 	created, note, err := t.WS.EnsureWorktree(t.Worktree(), t.Branch(), sha)
 	if err != nil {
@@ -374,7 +374,7 @@ func (a *App) prepareWorktree(t task.Task, base string) (string, error) {
 		a.logf("%s", note)
 	}
 	if created {
-		a.logf("worktree：%s（分支 %s）", t.Worktree(), t.Branch())
+		a.logf("worktree: %s (branch %s)", t.Worktree(), t.Branch())
 	}
 	if note != "" || !created {
 		// 分支是已有的：base 取它和 HEAD 的分叉点
@@ -452,12 +452,12 @@ func (a *App) startAgent(t task.Task, o runOpts) error {
 		return err
 	}
 	if out, err := rt.Preseed(key.Value); err != nil {
-		return fmt.Errorf("预置首次启动状态失败：%w", err)
+		return fmt.Errorf("failed to preseed the first-run state: %w", err)
 	} else if out != "" {
 		a.logf("%s", out)
 	}
 	if err := a.importMemory(t.Container()); err != nil {
-		a.logf("警告: 导入项目记忆失败：%v", err)
+		a.logf("warning: failed to import project memory: %v", err)
 	}
 	a.installRuntimes(t, rt)
 	// 配了 API key 就不查订阅登录态：key 在建容器时注进了环境变量（design §7.1）
@@ -479,7 +479,7 @@ func (a *App) startAgent(t task.Task, o runOpts) error {
 		return agent.ClaudeCmd(cont)
 	}
 	if hasSession {
-		a.logf("claude 已退出，正在原会话里重新拉起 …")
+		a.logf("claude exited; bringing it back up in the same session ...")
 		if err := rt.Respawn(cmdOf()); err != nil {
 			return err
 		}
@@ -487,9 +487,9 @@ func (a *App) startAgent(t task.Task, o runOpts) error {
 		return err
 	}
 	if cont {
-		a.logf("接上 Task %s 的上次对话（--continue；要新开一段用 --fresh）", t.Name)
+		a.logf("resuming the last conversation of task %s (--continue; use --fresh to start a new one)", t.Name)
 	}
-	a.logf("等待 claude 就绪 …")
+	a.logf("waiting for claude to be ready ...")
 	sm := agent.Smoke{
 		Timeout: smokeTimeout,
 		Ready: func() bool {
@@ -515,13 +515,13 @@ func (a *App) installRuntimes(t task.Task, rt agent.Runtime) {
 	if len(files) == 0 {
 		return
 	}
-	a.logf("按 %s 装运行时（mise，装过的会直接复用）…", strings.Join(files, "、"))
+	a.logf("installing runtimes from %s (mise; already-installed ones are reused) ...", strings.Join(files, ", "))
 	if out, err := rt.MiseInstall(); err != nil {
-		a.logf("警告: mise install 没成功，继续启动：%v\n%s", err, lastLines(out, 10))
+		a.logf("warning: mise install did not succeed, continuing anyway: %v\n%s", err, lastLines(out, 10))
 		return
 	}
 	if sum := rt.MiseSummary(); sum != "" {
-		a.logf("运行时：%s", sum)
+		a.logf("runtimes: %s", sum)
 	}
 }
 
@@ -546,8 +546,8 @@ func agentExited(t task.Task) bool {
 func (a *App) checkAuth(t task.Task, rt agent.Runtime, key apiKey) error {
 	if key.Env != "" {
 		if has, err := a.Docker.HasEnv(t.Container(), key.Env); err == nil && !has {
-			return fmt.Errorf("配置里有 API key，但容器 %s 是在那之前建的，里面没有 %s。\n"+
-				"环境变量只能在建容器时注入：sbx done %s 之后重新 run", t.Container(), key.Env, t.Name)
+			return fmt.Errorf("an API key is configured, but container %s was created before that and does not have %s.\n"+
+				"environment variables can only be injected when the container is created: run sbx done %s, then run again", t.Container(), key.Env, t.Name)
 		}
 		return nil
 	}
@@ -562,14 +562,14 @@ func (a *App) checkAuth(t task.Task, rt agent.Runtime, key apiKey) error {
 }
 
 func (a *App) loginHelp(t task.Task) string {
-	return "沙箱里的 claude 还没有登录（sbx-home 里没有凭据）。先执行一次：\n\n  sbx login\n\n登录完成后重新执行 sbx run " + t.Name + "。"
+	return "claude is not logged in inside the sandbox (no credentials in sbx-home). Run this once:\n\n  sbx login\n\nThen run sbx run " + t.Name + "."
 }
 
 // afterHeadless 收尾 headless 这一次运行：前台就跟着 run.log 看到结束，
 // --detach 就只打一行怎么回来看。
 func (a *App) afterHeadless(t task.Task, detach bool) error {
 	if detach {
-		fmt.Fprintf(a.Out, "Task %s 已在后台跑 prompt。跟随输出：sbx logs -f %s\n", t.Name, t.Name)
+		fmt.Fprintf(a.Out, "task %s is running the prompt in the background. Follow it with: sbx logs -f %s\n", t.Name, t.Name)
 		return nil
 	}
 	if err := a.showLogs(t, true, 0); err != nil {
@@ -579,11 +579,11 @@ func (a *App) afterHeadless(t task.Task, detach bool) error {
 	if c := t.RunExit(); c != nil {
 		code = *c
 	}
-	fmt.Fprintf(a.Out, "\nTask %s 跑完了（exit=%d），容器已停。\n", t.Name, code)
-	fmt.Fprintf(a.Out, "看改动：cd $(sbx path %s)；继续：sbx run %s；收尾：sbx done %s\n", t.Name, t.Name, t.Name)
+	fmt.Fprintf(a.Out, "\ntask %s finished (exit=%d) and its container is stopped.\n", t.Name, code)
+	fmt.Fprintf(a.Out, "see changes: cd $(sbx path %s) | continue: sbx run %s | finish: sbx done %s\n", t.Name, t.Name, t.Name)
 	if code != 0 {
 		// claude 的退出码往上透，脚本里 sbx run -p ... && next 才有意义
-		return fmt.Errorf("claude 以 %d 退出（完整输出：sbx logs %s）", code, t.Name)
+		return fmt.Errorf("claude exited with %d (full output: sbx logs %s)", code, t.Name)
 	}
 	return nil
 }

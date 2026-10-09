@@ -16,10 +16,10 @@ import (
 // 四层配置的名字（design §9.1、ADR 0009）。合并顺序就是这个顺序：
 // 标量后者覆盖前者，列表取并集。
 const (
-	LayerDefault   = "默认"
-	LayerGlobal    = "全局"
-	LayerProject   = "项目"
-	LayerWorkspace = "工作区"
+	LayerDefault   = "default"
+	LayerGlobal    = "global"
+	LayerProject   = "project"
+	LayerWorkspace = "workspace"
 )
 
 // Layer 是一层配置文件。Project 为 true 时要额外过 M2-2 的校验。
@@ -103,7 +103,7 @@ func LoadLayers(layers []Layer) (Loaded, error) {
 			}
 		}
 		for _, k := range md.Undecoded() {
-			ld.Warnings = append(ld.Warnings, fmt.Sprintf("%s: 未知字段 %s（已忽略）", l.Path, k.String()))
+			ld.Warnings = append(ld.Warnings, fmt.Sprintf("%s: unknown field %s (ignored)", l.Path, k.String()))
 		}
 		mergeLayer(&ld.Config, src, md, l.Name, ld.Sources)
 	}
@@ -129,7 +129,7 @@ func (ld Loaded) annotate(err error) error {
 	}
 	for _, l := range ld.Layers {
 		if l.Name == src.Last() {
-			return fmt.Errorf("%s（%s 这一层给的值：%s）", err, l.Name, l.Path)
+			return fmt.Errorf("%s (the value came from the %s layer: %s)", err, l.Name, l.Path)
 		}
 	}
 	return err

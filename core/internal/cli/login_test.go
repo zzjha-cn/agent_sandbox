@@ -21,7 +21,7 @@ func TestResolveAgent(t *testing.T) {
 	if !strings.Contains(err.Error(), "M3-6") {
 		t.Fatalf("codex 的报错应当指向 M3-6：%v", err)
 	}
-	if err := mustErr(t, "cluade"); !strings.Contains(err.Error(), "不认识") {
+	if err := mustErr(t, "cluade"); !strings.Contains(err.Error(), "unknown agent") {
 		t.Fatalf("打错名字应当是「不认识」：%v", err)
 	}
 }

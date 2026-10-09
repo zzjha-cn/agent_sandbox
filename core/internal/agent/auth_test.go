@@ -8,7 +8,7 @@ func TestParseStatus(t *testing.T) {
 	if err != nil || !st.LoggedIn {
 		t.Fatalf("%v %+v", err, st)
 	}
-	if got, want := st.Describe(), "已登录：a@b.c · Acme · team · claude.ai"; got != want {
+	if got, want := st.Describe(), "logged in: a@b.c · Acme · team · claude.ai"; got != want {
 		t.Fatalf("got %q want %q", got, want)
 	}
 
@@ -17,7 +17,7 @@ func TestParseStatus(t *testing.T) {
 	if err != nil || st.LoggedIn {
 		t.Fatalf("%v %+v", err, st)
 	}
-	if st.Describe() != "未登录" {
+	if st.Describe() != "not logged in" {
 		t.Fatal(st.Describe())
 	}
 

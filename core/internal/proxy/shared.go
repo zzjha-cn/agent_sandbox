@@ -186,7 +186,7 @@ const logLimit = 20 << 20
 func (s Shared) rotateIfLarge(limit int64) error {
 	script := fmt.Sprintf(`f=/var/log/squid/access.log; [ "$(stat -c %%s "$f" 2>/dev/null || echo 0)" -gt %d ] || exit 0; squid -f %s -k rotate`, limit, confPath)
 	if _, err := s.Docker.Exec(s.name(), docker.ExecOpts{}, "sh", "-c", script); err != nil {
-		return fmt.Errorf("squid 日志轮转失败：%w", err)
+		return fmt.Errorf("failed to rotate the squid log: %w", err)
 	}
 	return nil
 }
@@ -197,14 +197,14 @@ func (s Shared) waitReady() error {
 		st, _, err := s.Docker.Inspect(s.name())
 		if err == nil && !st.Running {
 			logs := s.Docker.Logs(s.name(), 20)
-			return fmt.Errorf("%s 启动后退出了：\n%s", s.name(), logs)
+			return fmt.Errorf("%s exited right after starting:\n%s", s.name(), logs)
 		}
 		if _, last = s.Docker.Exec(s.name(), docker.ExecOpts{}, "squid", "-f", confPath, "-k", "check"); last == nil {
 			return nil
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
-	return fmt.Errorf("%s 未就绪：%w", s.name(), last)
+	return fmt.Errorf("%s is not ready: %w", s.name(), last)
 }
 
 var confErr = regexp.MustCompile(`(?m)^.*(ERROR|FATAL).*$`)
@@ -214,10 +214,10 @@ func (s Shared) reconfigure() error {
 	out, err := s.Docker.Exec(s.name(), docker.ExecOpts{}, "sh", "-c",
 		"squid -f "+confPath+" -k parse 2>&1 && squid -f "+confPath+" -k reconfigure 2>&1")
 	if err != nil {
-		return fmt.Errorf("squid reconfigure 失败：%w\n%s", err, out)
+		return fmt.Errorf("squid reconfigure failed: %w\n%s", err, out)
 	}
 	if m := confErr.FindAllString(out, -1); len(m) > 0 {
-		return fmt.Errorf("squid 配置有错误：\n%s", strings.Join(m, "\n"))
+		return fmt.Errorf("the squid config has errors:\n%s", strings.Join(m, "\n"))
 	}
 	return nil
 }
@@ -340,16 +340,16 @@ func (s Shared) Health() (running bool, tasks int, detail string, err error) {
 		return false, tasks, "", err
 	}
 	if !exists {
-		return false, tasks, "还没创建过", nil
+		return false, tasks, "never created", nil
 	}
 	if !st.Running {
-		return false, tasks, "已停止", nil
+		return false, tasks, "stopped", nil
 	}
 	out, err := s.Docker.Exec(s.name(), docker.ExecOpts{}, "squid", "-f", confPath, "-k", "check")
 	if err != nil {
-		return true, tasks, "在跑，但配置检查没过：" + strings.TrimSpace(out), nil
+		return true, tasks, "running, but the config check failed: " + strings.TrimSpace(out), nil
 	}
-	return true, tasks, "运行中，配置无错误", nil
+	return true, tasks, "running, config is valid", nil
 }
 
 // StopIfIdle 在没有运行中的 shared Task 时停掉 sbx-proxy（不删除）。

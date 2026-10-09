@@ -198,7 +198,7 @@ func (a *App) lsCmd() *cobra.Command {
 			if !noDenied {
 				if denied = a.deniedCounts(refs); denied == nil {
 					// 区分"没去数"和"数不出来"：只有后者要解释一句
-					fmt.Fprintln(a.Err, "提示: 这次没统计被拒请求（代理没在运行，或读日志超时），DENIED 列显示为 -")
+					fmt.Fprintln(a.Err, "note: denied requests were not counted this time (the proxy is not running, or reading its log timed out); the DENIED column shows -")
 				}
 			}
 			return a.printTasks(refs, denied, all)

@@ -147,7 +147,7 @@ func TestBinaryIsTrackedWithoutContent(t *testing.T) {
 	}
 	write(t, root, "blob.bin", "\x00\x01\x03")
 	cs := Diff(old, scan(t, root))
-	if len(cs) != 1 || cs[0].Kind != Modified || cs[0].New != nil || !strings.Contains(cs[0].Note, "二进制") {
+	if len(cs) != 1 || cs[0].Kind != Modified || cs[0].New != nil || !strings.Contains(cs[0].Note, "binary") {
 		t.Fatalf("二进制变更应该被报出来但不带内容：%+v", cs)
 	}
 }

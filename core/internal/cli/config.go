@@ -30,7 +30,7 @@ func (a *App) configCmd() *cobra.Command {
 			ws, wsErr := workspace.Resolve(cwd)
 			layers := config.Paths(a.Home, "", "")
 			if wsErr != nil {
-				fmt.Fprintln(a.Err, "提示: 不在 git 仓库里，只显示默认值和全局层")
+				fmt.Fprintln(a.Err, "note: not inside a git repository; showing only the defaults and the global layer")
 			} else {
 				a.WS = ws
 				layers = config.Paths(a.Home, ws.Root, ws.ID)
@@ -38,14 +38,14 @@ func (a *App) configCmd() *cobra.Command {
 			if err := a.applyLayers(layers); err != nil {
 				return err
 			}
-			// 层名是中文，tabwriter 按字节算宽度会错位，这张表自己对齐。
-			fmt.Fprintf(a.Out, "%s  (内置)\n", padCJK(config.LayerDefault, 8))
+			// 路径里可能有 CJK，tabwriter 按字节算宽度会错位，这张表自己对齐。
+			fmt.Fprintf(a.Out, "%s  (built-in)\n", padCJK(config.LayerDefault, 9))
 			for _, l := range a.Loaded.Layers {
 				note := ""
 				if !l.Found {
-					note = "  ← 没有这个文件"
+					note = "  <- no such file"
 				}
-				fmt.Fprintf(a.Out, "%s  %s%s\n", padCJK(l.Name, 8), tildePath(l.Path, a.homeDir()), note)
+				fmt.Fprintf(a.Out, "%s  %s%s\n", padCJK(l.Name, 9), tildePath(l.Path, a.homeDir()), note)
 			}
 			fmt.Fprintln(a.Out)
 

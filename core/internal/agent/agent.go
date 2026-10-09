@@ -46,7 +46,7 @@ func InspectHostClaude(dir string) HostClaude {
 			continue
 		}
 		if real != p {
-			h.Warnings = append(h.Warnings, fmt.Sprintf("~/.claude/%s 本身是软链接（→ %s），按实际目录挂载", name, real))
+			h.Warnings = append(h.Warnings, fmt.Sprintf("~/.claude/%s is itself a symlink (-> %s); mounting the real directory instead", name, real))
 		}
 		filepath.WalkDir(real, func(path string, d fs.DirEntry, err error) error {
 			if err != nil || d.Type()&fs.ModeSymlink == 0 {
@@ -55,7 +55,7 @@ func InspectHostClaude(dir string) HostClaude {
 			target, err := filepath.EvalSymlinks(path)
 			if err != nil || !strings.HasPrefix(target, real+string(filepath.Separator)) {
 				rel, _ := filepath.Rel(real, path)
-				h.Warnings = append(h.Warnings, fmt.Sprintf("~/.claude/%s/%s 是指向外部的软链接，在容器里不可用", name, rel))
+				h.Warnings = append(h.Warnings, fmt.Sprintf("~/.claude/%s/%s is a symlink pointing outside; it will not work in the container", name, rel))
 			}
 			return nil
 		})

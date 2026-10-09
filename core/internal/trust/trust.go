@@ -88,7 +88,7 @@ func Scan(root string) (Snapshot, error) {
 		return nil
 	})
 	if err != nil {
-		return Snapshot{}, fmt.Errorf("读取 %s 失败：%w", base, err)
+		return Snapshot{}, fmt.Errorf("failed to read %s: %w", base, err)
 	}
 	s.Hash = hash(s.Files)
 	return s, nil
@@ -103,7 +103,7 @@ func readOne(p string, d fs.DirEntry) (File, error) {
 		return File{Hash: sum([]byte(target)), Size: int64(len(target)), Link: true, Text: target}, nil
 	}
 	if !d.Type().IsRegular() {
-		return File{}, fmt.Errorf("%s 不是普通文件，也不是符号链接；请从 %s/ 里移走", p, Dir)
+		return File{}, fmt.Errorf("%s is neither a regular file nor a symlink; move it out of %s/", p, Dir)
 	}
 	info, err := d.Info()
 	if err != nil {
@@ -185,7 +185,7 @@ func Load(path string) (Snapshot, bool, error) {
 	}
 	var s Snapshot
 	if err := json.Unmarshal(b, &s); err != nil {
-		return Snapshot{}, false, fmt.Errorf("信任记录 %s 解析失败（删掉它再 sbx trust 一次）：%w", path, err)
+		return Snapshot{}, false, fmt.Errorf("failed to parse the trust record %s (delete it and run sbx trust again): %w", path, err)
 	}
 	if s.Files == nil {
 		s.Files = map[string]File{}
@@ -207,9 +207,9 @@ func Save(path string, s Snapshot) error {
 type Kind string
 
 const (
-	Added    Kind = "新增"
-	Removed  Kind = "删除"
-	Modified Kind = "修改"
+	Added    Kind = "added"
+	Removed  Kind = "removed"
+	Modified Kind = "modified"
 )
 
 // Change 是一处变更。Old/New 为 nil 表示内容没存进快照（二进制或太大），
@@ -250,11 +250,11 @@ func change(k Kind, p string, o, n File) Change {
 	c := Change{Kind: k, Path: p, Old: body(o), New: body(n)}
 	switch {
 	case n.Omitted == "too-large" || o.Omitted == "too-large":
-		c.Note = "文件太大，快照里没存内容"
+		c.Note = "file is too large; its content is not kept in the snapshot"
 	case n.Omitted == "binary" || o.Omitted == "binary":
-		c.Note = "二进制文件，快照里没存内容"
+		c.Note = "binary file; its content is not kept in the snapshot"
 	case n.Link || o.Link:
-		c.Note = "符号链接"
+		c.Note = "symlink"
 	}
 	return c
 }

@@ -56,7 +56,7 @@ func (a *App) logsCmd() *cobra.Command {
 func (a *App) showLogs(t task.Task, follow bool, tail int) error {
 	b, err := os.ReadFile(t.RunLogPath())
 	if os.IsNotExist(err) {
-		return fmt.Errorf("Task %s 没有 run.log —— 它没有用 sbx run -p 跑过。\n交互模式的输出在 tmux 里：sbx attach %s", t.Name, t.Name)
+		return fmt.Errorf("task %s has no run.log — it was never run with sbx run -p.\nInteractive output lives in tmux: sbx attach %s", t.Name, t.Name)
 	}
 	if err != nil {
 		return err

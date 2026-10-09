@@ -70,6 +70,17 @@ git worktree add -b sbx/fix-login ~/.sbx/worktrees/shop-e76272/fix-login <HEAD �
 
 构建时，`HTTPS_PROXY=http://host.docker.internal:7890` 通过 build-arg 传入。失败会自动重试一次。整个过程几分钟，之后再用直接命中缓存。
 
+> **想用自己的环境？** 上面这两层里，**只有第 1 层（Profile）是可以换掉的**，第 2 层（Agent 层）永远由 sbx 叠加——claude、tmux、mise 和 `agent` 用户都在那一层，不用你操心。换掉第 1 层有两种写法，优先级高于 `profile`：
+>
+> ```toml
+> image = "ghcr.io/me/devbox:2026-10"   # 配置里写；直接拿这个镜像当底，不构建 Profile 层
+> ```
+> ```bash
+> <repo>/.sbx/Dockerfile                # 或者仓库里放一份 Dockerfile，不用写任何配置
+> ```
+>
+> 两个坑：底**必须是 Debian / Ubuntu 系**（Agent 层用 `apt-get`，Alpine 会在构建时挂掉）；另外 `[deps].mask` 的默认值是按 `profile` 字段查的，**换镜像不会连带换掉它**——只写 `image` 的话，`profile` 还是默认的 `web-go`，于是 Rust 镜像也会继承 `node_modules` 和 `.next`，而且 mask 取并集、只能加不能删。所以换镜像时记得把 `profile` 一并设成最接近的内置值（`py-rust` 给的是 `.venv` + `target`）。完整说明见 [commands.md](commands.md)。
+
 **⑤ 写 state 目录。** 创建 `~/.sbx/state/shop-e76272/fix-login/gen/`。
 
 **⑥ 启动共享代理（`Ensure`）。**
@@ -242,6 +253,8 @@ docker exec sbx-proxy grep TCP_DENIED /var/log/squid/access.log
 2. 容器在同一个路径挂载了主仓库的 `.git`，所以新的对象和 `refs/heads/sbx/fix-login` 直接写进你的主仓库。
 3. 你在宿主机上执行 `git log sbx/fix-login`，马上能看到这个提交，不需要任何同步。
 4. 作者是你的名字和邮箱，来自环境变量。
+
+> **第 2 点是有代价的：这个 `.git` 是可写挂载的，它同时是一条逃逸路径。** 不可写就没有第 3 点——沙箱里的提交要出现在你的仓库里，就得能写你的 `.git`。但能写 `.git` 也就能写 `.git/hooks/*` 和 `.git/config`，而 git hook 会在你下次碰这个仓库时**以你的身份、在宿主机上**执行。这是 design.md 里的风险 **R1**，明知而接受，至今没有缓解。跑真正不可信的代码时，请用一个用完就扔的 clone。
 
 **完成时。** claude 停下来等待输入，触发 `Stop` hook，`status.json` 变成 `idle`。
 

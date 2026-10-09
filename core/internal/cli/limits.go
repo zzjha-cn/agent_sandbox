@@ -59,7 +59,7 @@ func (a *App) checkConcurrency(t task.Task) error {
 	running, err := a.runningAgents()
 	if err != nil {
 		// 数不出来不该挡住正常使用；真起不来的话后面的 docker 调用会报错
-		a.logf("警告: 统计运行中的 Task 失败，跳过并发检查：%v", err)
+		a.logf("warning: failed to count running tasks; skipping the concurrency check: %v", err)
 		return nil
 	}
 	return concurrencyError(running, t.ID(), a.Cfg.MaxRunning, a.Cfg.Resources.Memory)
@@ -75,8 +75,8 @@ func concurrencyError(running []string, self string, max int, mem string) error 
 	if len(running) < max {
 		return nil
 	}
-	return fmt.Errorf("已经有 %d 个 Task 在跑，达到 max_running = %d：%s\n"+
-		"先 sbx stop 掉一个，或者在 ~/.sbx/config.toml 里调大 max_running（注意内存：每个 Task 上限 %s）",
+	return fmt.Errorf("%d task(s) are already running, reaching max_running = %d: %s\n"+
+		"stop one with sbx stop, or raise max_running in ~/.sbx/config.toml (mind the memory: %s per task)",
 		len(running), max, strings.Join(running, "、"), mem)
 }
 
@@ -96,7 +96,7 @@ func (a *App) warnMemoryBudget() {
 		return
 	}
 	if msg := budgetWarning(a.Cfg.MaxRunning, a.Cfg.Resources.Memory, per, int64(total)); msg != "" {
-		a.logf("警告: %s", msg)
+		a.logf("warning: %s", msg)
 	}
 }
 
@@ -109,8 +109,8 @@ func budgetWarning(maxRunning int, mem string, per, total int64) string {
 	if float64(want) <= float64(total)*vmBudget {
 		return ""
 	}
-	return fmt.Sprintf("max_running(%d) × resources.memory(%s) = %s，超过 Docker VM 内存 %s 的 %.0f%%。"+
-		"并发跑满时可能触发 VM 级 OOM；调小 max_running 或 memory，或者把 Docker 的内存调大。",
+	return fmt.Sprintf("max_running(%d) × resources.memory(%s) = %s, over Docker VM memory %s × %.0f%%."+
+		"Running them all at once may trigger a VM-level OOM; lower max_running or memory, or give Docker more memory.",
 		maxRunning, mem, humanBytes(want), humanBytes(total), vmBudget*100)
 }
 

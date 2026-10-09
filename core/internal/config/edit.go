@@ -71,7 +71,7 @@ func currentAllow(text string) ([]string, error) {
 		return nil, nil
 	}
 	if _, err := toml.Decode(text, &c); err != nil {
-		return nil, fmt.Errorf("config.toml 解析失败，先手动修好再试：%w", err)
+		return nil, fmt.Errorf("failed to parse config.toml; fix it by hand and try again: %w", err)
 	}
 	return c.Network.Allow, nil
 }
@@ -146,7 +146,7 @@ func arrayEnd(lines []string, start int) (int, error) {
 			}
 		}
 	}
-	return 0, errors.New("config.toml 里的 allow 数组没有收尾的 ]")
+	return 0, errors.New("the allow array in config.toml has no closing ]")
 }
 
 func quoteJoin(hosts []string) string {

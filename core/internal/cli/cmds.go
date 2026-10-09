@@ -47,7 +47,7 @@ func (a *App) requireRunning(t task.Task) error {
 		return err
 	}
 	if !exists || !st.Running {
-		return fmt.Errorf("Task %s 没有在运行；用 sbx run %s 启动", t.Name, t.Name)
+		return fmt.Errorf("task %s is not running; start it with sbx run %s", t.Name, t.Name)
 	}
 	return nil
 }
@@ -58,10 +58,10 @@ func (a *App) attach(t task.Task) error {
 	}
 	rt := agent.Runtime{Docker: a.Docker, Container: t.Container()}
 	if !rt.HasSession() {
-		return fmt.Errorf("Task %s 的 Agent 会话不存在；用 sbx run %s 重新拉起", t.Name, t.Name)
+		return fmt.Errorf("task %s has no agent session; bring it back with sbx run %s", t.Name, t.Name)
 	}
 	if agentExited(t) {
-		fmt.Fprintf(a.Out, "提示：claude 已经退出，会话里现在是一个 shell。用 sbx run %s 重新拉起（默认接上这个 Task 的上次对话）。\n", t.Name)
+		fmt.Fprintf(a.Out, "note: claude has exited and the session is now a plain shell. Bring it back with sbx run %s (resumes this task's last conversation by default).\n", t.Name)
 	}
 	return a.Docker.ExecInteractive(t.Container(), docker.ExecOpts{User: "agent"}, "tmux", "attach", "-t", agent.Session)
 }
@@ -99,19 +99,19 @@ func (a *App) stopCmd() *cobra.Command {
 				return err
 			}
 			if !exists {
-				return fmt.Errorf("Task %s 不存在", t.Name)
+				return fmt.Errorf("task %s does not exist", t.Name)
 			}
 			if st.Running {
 				if err := a.Docker.Stop(t.Container()); err != nil {
 					return err
 				}
 			}
-			fmt.Fprintf(a.Out, "已停止 %s\n", t.Name)
+			fmt.Fprintf(a.Out, "stopped %s\n", t.Name)
 			// dedicated 下停的是这个 Task 自己的 sidecar，shared 下只有最后一个 Task 停了才停
 			if stopped, err := a.egress(t).StopIfIdle(); err != nil {
 				return err
 			} else if stopped {
-				fmt.Fprintf(a.Out, "已停止 %s\n", a.proxyName(t))
+				fmt.Fprintf(a.Out, "stopped %s\n", a.proxyName(t))
 			}
 			return nil
 		},
@@ -219,7 +219,7 @@ func (a *App) pathCmd() *cobra.Command {
 				return err
 			}
 			if _, err := os.Stat(t.Worktree()); err != nil {
-				return fmt.Errorf("Task %s 的工作目录不存在（%s）；用 sbx run %s 创建", t.Name, t.Worktree(), t.Name)
+				return fmt.Errorf("the working directory of task %s does not exist (%s); create it with sbx run %s", t.Name, t.Worktree(), t.Name)
 			}
 			fmt.Fprintln(a.Out, t.Worktree())
 			return nil
@@ -253,7 +253,7 @@ func (a *App) doneCmd() *cobra.Command {
 			if stopped, err := a.proxy().StopIfIdle(); err != nil {
 				errs = append(errs, err)
 			} else if stopped {
-				fmt.Fprintln(a.Out, "没有运行中的 Task 了，已停止 "+proxy.SharedName)
+				fmt.Fprintln(a.Out, "no tasks are running any more; stopped "+proxy.SharedName)
 			}
 			return errors.Join(errs...)
 		},
@@ -275,7 +275,7 @@ func (a *App) done(t task.Task, force, dropping bool) error {
 			return err
 		}
 		if dirty != "" {
-			return fmt.Errorf("worktree 有未提交的改动，先在 sbx shell %s 里提交，或加 --force 丢弃：\n%s", t.Name, dirty)
+			return fmt.Errorf("the worktree has uncommitted changes; commit them in sbx shell %s, or pass --force to discard them:\n%s", t.Name, dirty)
 		}
 	}
 	meta, _, _ := t.ReadMeta()
@@ -320,9 +320,9 @@ func (a *App) done(t task.Task, force, dropping bool) error {
 		return nil
 	}
 	if t.IsMain() {
-		fmt.Fprintf(a.Out, "已结束 %s（仓库根保持不变）\n", t.Name)
+		fmt.Fprintf(a.Out, "finished %s (the repo root is unchanged)\n", t.Name)
 	} else {
-		fmt.Fprintf(a.Out, "已结束 %s，分支 %s 保留。合并：git merge %s；删除分支：git branch -D %s\n",
+		fmt.Fprintf(a.Out, "finished %s; branch %s is kept. Merge it with git merge %s, or delete it with git branch -D %s\n",
 			t.Name, t.Branch(), t.Branch(), t.Branch())
 	}
 	return nil

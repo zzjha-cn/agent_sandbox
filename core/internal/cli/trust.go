@@ -28,30 +28,30 @@ func (a *App) trustCmd() *cobra.Command {
 			}
 			path := trust.Path(a.Home, a.WS.ID)
 			if cur.Empty() && !had {
-				fmt.Fprintf(a.Out, "这个仓库没有 %s/，不需要信任确认。\n", trust.Dir)
+				fmt.Fprintf(a.Out, "this repo has no %s/, nothing to confirm.\n", trust.Dir)
 				return nil
 			}
 			if had && old.Hash == cur.Hash {
-				fmt.Fprintf(a.Out, "%s/ 已信任（%s，确认于 %s）\n", trust.Dir, cur.Hash[:12], old.TrustedAt.Format("2006-01-02 15:04"))
+				fmt.Fprintf(a.Out, "%s/ is trusted (%s, confirmed %s)\n", trust.Dir, cur.Hash[:12], old.TrustedAt.Format("2006-01-02 15:04"))
 				return nil
 			}
 			a.printTrustChanges(a.Out, cur, old, had)
 			if show {
-				fmt.Fprintf(a.Out, "\n（--show 只看不写。确认无误后执行 sbx trust）\n")
+				fmt.Fprintf(a.Out, "\n(--show only looks, it does not record. Run sbx trust once it looks right)\n")
 				return nil
 			}
 			if !yes {
-				fmt.Fprint(a.Out, "\n把以上内容记为已信任？[y/N] ")
+				fmt.Fprint(a.Out, "\nRecord the above as trusted? [y/N] ")
 				line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
 				if strings.ToLower(strings.TrimSpace(line)) != "y" {
-					fmt.Fprintln(a.Out, "已取消。")
+					fmt.Fprintln(a.Out, "Cancelled.")
 					return nil
 				}
 			}
 			if err := trust.Save(path, cur); err != nil {
 				return err
 			}
-			fmt.Fprintf(a.Out, "已信任 %s/（%s），记录在 %s\n", trust.Dir, cur.Hash[:12], path)
+			fmt.Fprintf(a.Out, "trusted %s/ (%s), recorded in %s\n", trust.Dir, cur.Hash[:12], path)
 			return nil
 		},
 	}
@@ -72,9 +72,9 @@ func (a *App) trustState() (cur, old trust.Snapshot, had bool, err error) {
 // printTrustChanges 第一次信任时把 .sbx/ 的内容整个列出来；之后只列变更。
 func (a *App) printTrustChanges(w io.Writer, cur, old trust.Snapshot, had bool) {
 	if !had {
-		fmt.Fprintf(w, "这个仓库第一次用 sbx，先看一下 %s/ 里有什么（它会影响沙箱怎么跑）：\n", trust.Dir)
+		fmt.Fprintf(w, "This repo is using sbx for the first time. Here is what %s/ contains (it affects how the sandbox runs):\n", trust.Dir)
 	} else {
-		fmt.Fprintf(w, "%s/ 和上次信任时相比有变化：\n", trust.Dir)
+		fmt.Fprintf(w, "%s/ has changed since you last trusted it:\n", trust.Dir)
 	}
 	for _, c := range trust.Diff(old, cur) {
 		fmt.Fprintf(w, "\n[%s] %s/%s", c.Kind, trust.Dir, c.Path)
@@ -85,12 +85,12 @@ func (a *App) printTrustChanges(w io.Writer, cur, old trust.Snapshot, had bool) 
 		if c.Old == nil && c.New == nil {
 			continue
 		}
-		oldLabel, newLabel := "上次信任/"+c.Path, "现在/"+c.Path
+		oldLabel, newLabel := "trusted/"+c.Path, "now/"+c.Path
 		if c.Old == nil {
-			oldLabel = "(之前没有)"
+			oldLabel = "(did not exist)"
 		}
 		if c.New == nil {
-			newLabel = "(已删除)"
+			newLabel = "(deleted)"
 		}
 		showDiff(c.Path, oldLabel, newLabel, c.Old, c.New, w)
 	}
@@ -111,9 +111,9 @@ func (a *App) requireTrust() error {
 	}
 	a.printTrustChanges(a.Err, cur, old, had)
 	if !had {
-		return fmt.Errorf("%s/ 还没有确认过。看过上面的内容后执行：sbx trust", trust.Dir)
+		return fmt.Errorf("%s/ has not been confirmed. Review the above, then run: sbx trust", trust.Dir)
 	}
-	return fmt.Errorf("%s/ 自上次信任后变过。看过上面的改动后执行：sbx trust", trust.Dir)
+	return fmt.Errorf("%s/ has changed since you last trusted it. Review the changes above, then run: sbx trust", trust.Dir)
 }
 
 // retrust 在 sbx 自己改写 .sbx/ 之后（net allow --project）顺手更新信任记录：
@@ -129,7 +129,7 @@ func (a *App) retrust(trustedBefore bool) {
 		return
 	}
 	if err := trust.Save(trust.Path(a.Home, a.WS.ID), cur); err != nil {
-		a.logf("警告: 更新信任记录失败，下次 sbx run 时需要执行一次 sbx trust：%v", err)
+		a.logf("warning: failed to update the trust record; run sbx trust once before the next sbx run: %v", err)
 	}
 }
 

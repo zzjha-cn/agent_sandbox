@@ -50,7 +50,7 @@ var authCLIs = map[string]authCLI{
 
 // pendingAgents 是设计里有、但还没实现的 Agent：和打错名字区分开，报错里给出原因。
 var pendingAgents = map[string]string{
-	"codex": "Codex 的登录（codex login --device-auth）还没验证，推迟到 M3-6",
+	"codex": "Codex login (codex login --device-auth) is not verified yet; deferred to M3-6",
 }
 
 // resolveAgent 把命令行上的 Agent 名解析成一条 authCLI。
@@ -62,9 +62,9 @@ func resolveAgent(name string) (string, authCLI, error) {
 		return name, cli, nil
 	}
 	if why, ok := pendingAgents[name]; ok {
-		return "", authCLI{}, errors.New(why + "；目前只有 " + strings.Join(knownAgents(), "、"))
+		return "", authCLI{}, errors.New(why + "; currently only " + strings.Join(knownAgents(), ", "))
 	}
-	return "", authCLI{}, fmt.Errorf("不认识的 Agent %q；目前只有 %s", name, strings.Join(knownAgents(), "、"))
+	return "", authCLI{}, fmt.Errorf("unknown agent %q; currently only %s", name, strings.Join(knownAgents(), ", "))
 }
 
 func knownAgents() []string {
@@ -112,32 +112,32 @@ func (a *App) loginCmd() *cobra.Command {
 				return nil
 			case logout:
 				if !st.LoggedIn {
-					fmt.Fprintln(a.Out, "本来就没有登录")
+					fmt.Fprintln(a.Out, "was not logged in to begin with")
 					return nil
 				}
 				if err := a.Docker.Interactive(a.authArgs(tag, cli, false, cli.logout...)...); err != nil {
 					return err
 				}
-				fmt.Fprintln(a.Out, "已退出登录；凭据从 sbx-home 里清掉了。运行中的 Task 要等下次启动 Agent 才受影响。")
+				fmt.Fprintln(a.Out, "Logged out; credentials removed from sbx-home. Running tasks are only affected the next time their agent starts.")
 				return nil
 			case st.LoggedIn && !force:
 				fmt.Fprintln(a.Out, st.Describe())
-				fmt.Fprintf(a.Out, "要换账号：先 sbx login %s --logout，或者直接 sbx login %s --force 重新走一遍。\n", name, name)
+				fmt.Fprintf(a.Out, "To switch accounts: run sbx login %s --logout first, or just sbx login %s --force to go through it again.\n", name, name)
 				return nil
 			}
-			fmt.Fprintf(a.Err, "在临时容器里打开 %s 的登录流程；按提示打开链接、粘回授权码。Ctrl-C 可以中断。\n", name)
+			fmt.Fprintf(a.Err, "Opening the %s login flow in a temporary container; follow the prompts, open the link and paste the code back. Ctrl-C aborts.\n", name)
 			if err := a.Docker.Interactive(a.authArgs(tag, cli, true, cli.login(console, email)...)...); err != nil {
-				return fmt.Errorf("登录没有完成：%w", err)
+				return fmt.Errorf("login did not complete: %w", err)
 			}
 			after, err := a.authStatus(tag, cli)
 			if err != nil {
 				return err
 			}
 			if !after.LoggedIn {
-				return fmt.Errorf("登录流程结束了，但 sbx-home 里还是没有凭据；重新执行 sbx login %s 再试一次", name)
+				return fmt.Errorf("the login flow finished but there are still no credentials in sbx-home; run sbx login %s again", name)
 			}
 			fmt.Fprintln(a.Out, after.Describe())
-			fmt.Fprintln(a.Out, "凭据存在 volume sbx-home 里，所有 Task 共享；sbx done 不会删除它。")
+			fmt.Fprintln(a.Out, "Credentials live in the sbx-home volume and are shared by every task; sbx done does not delete it.")
 			return nil
 		},
 	}

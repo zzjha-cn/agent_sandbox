@@ -59,7 +59,7 @@ func ImageInputs(ref, claudeVersion string, uid, gid int) Inputs {
 func BuiltinInputs(profile, claudeVersion string, uid, gid int) (Inputs, error) {
 	pf, err := assets.FS.ReadFile("profiles/" + profile + "/Dockerfile")
 	if err != nil {
-		return Inputs{}, fmt.Errorf("未知的内置 profile %q", profile)
+		return Inputs{}, fmt.Errorf("unknown built-in profile %q", profile)
 	}
 	return Inputs{
 		Profile:       profile,
@@ -114,7 +114,7 @@ func (b Builder) Ensure(in Inputs) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	fmt.Fprintf(b.Out, "构建 Agent 层 %s …\n", tag)
+	fmt.Fprintf(b.Out, "building the agent layer %s ...\n", tag)
 	files := map[string][]byte{"Dockerfile": in.AgentFile, "entrypoint.sh": in.Entrypoint}
 	args := map[string]string{
 		"BASE":           ptag,
@@ -136,9 +136,9 @@ func (b Builder) EnsureProfile(in Inputs) (string, error) {
 		if ok, err := b.Docker.ImageExists(ptag); err != nil {
 			return "", err
 		} else if !ok {
-			fmt.Fprintf(b.Out, "拉取镜像 %s …\n", ptag)
+			fmt.Fprintf(b.Out, "pulling image %s ...\n", ptag)
 			if _, err := b.Docker.Run("pull", ptag); err != nil {
-				return "", fmt.Errorf("拉不到镜像 %s：%w", ptag, err)
+				return "", fmt.Errorf("cannot pull image %s: %w", ptag, err)
 			}
 		}
 		return ptag, b.checkBase(ptag)
@@ -149,7 +149,7 @@ func (b Builder) EnsureProfile(in Inputs) (string, error) {
 		}
 		return ptag, err
 	}
-	fmt.Fprintf(b.Out, "构建 Profile 镜像 %s …\n", ptag)
+	fmt.Fprintf(b.Out, "building the profile image %s ...\n", ptag)
 	if err := b.build(ptag, map[string][]byte{"Dockerfile": in.ProfileFile}, nil); err != nil {
 		return "", err
 	}
@@ -173,13 +173,13 @@ func (b Builder) checkBase(ref string) error {
 	if strings.Contains(low, "debian") || strings.Contains(low, "ubuntu") {
 		return nil
 	}
-	name := "（读不到 /etc/os-release）"
+	name := "(cannot read /etc/os-release)"
 	for _, line := range strings.Split(out, "\n") {
 		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "PRETTY_NAME="); ok {
 			name = strings.Trim(v, `"`)
 		}
 	}
-	return fmt.Errorf("%s 不是 Debian/Ubuntu 系镜像：%s。sbx 的 Agent 层要用 apt-get 和 useradd（ADR 0007）", ref, name)
+	return fmt.Errorf("%s is not a Debian/Ubuntu-based image: %s. The sbx agent layer needs apt-get and useradd (ADR 0007)", ref, name)
 }
 
 // build 在临时目录里准备构建上下文，失败时重试 1 次（M0-4：偶发 TLS EOF）。
@@ -207,7 +207,7 @@ func (b Builder) build(tag string, files map[string][]byte, args map[string]stri
 		BuildArgs: all, Labels: map[string]string{"sbx.kind": "image"}}
 	err = b.Docker.Build(spec, b.Out, b.Out)
 	if err != nil {
-		fmt.Fprintf(b.Out, "构建失败，重试一次：%v\n", err)
+		fmt.Fprintf(b.Out, "build failed, retrying once: %v\n", err)
 		err = b.Docker.Build(spec, b.Out, b.Out)
 	}
 	return err

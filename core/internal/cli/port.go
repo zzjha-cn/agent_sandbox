@@ -33,7 +33,7 @@ func (a *App) portCmd() *cobra.Command {
 			}
 			port, err := strconv.Atoi(args[1])
 			if err != nil || port < 1 || port > 65535 {
-				return fmt.Errorf("端口要是 1-65535 的数字：%q", args[1])
+				return fmt.Errorf("the port must be a number between 1 and 65535: %q", args[1])
 			}
 			if rm {
 				return a.removePorts(t, port)
@@ -68,7 +68,7 @@ func (a *App) addPort(t task.Task, port int) error {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(a.Out, "%s 已经映射过了：%s\n", t.Name, addr)
+			fmt.Fprintf(a.Out, "%s is already mapped: %s\n", t.Name, addr)
 			return nil
 		}
 		if err := a.Docker.Rm(name); err != nil && !docker.IsNotFound(err) {
@@ -103,8 +103,8 @@ func (a *App) addPort(t task.Task, port int) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(a.Out, "%s 的 %d 端口 → %s\n", t.Name, port, addr)
-	fmt.Fprintf(a.Out, "收回：sbx port %s %d --rm\n", t.Name, port)
+	fmt.Fprintf(a.Out, "task %s: port %d -> %s\n", t.Name, port, addr)
+	fmt.Fprintf(a.Out, "take it back with: sbx port %s %d --rm\n", t.Name, port)
 	return nil
 }
 
@@ -120,7 +120,7 @@ func (a *App) portAddr(name string) (string, error) {
 			return "http://" + strings.TrimSpace(addr) + "/", nil
 		}
 	}
-	return "", fmt.Errorf("读不到 %s 的端口映射：%s", name, out)
+	return "", fmt.Errorf("cannot read the port mapping of %s: %s", name, out)
 }
 
 func (a *App) listPorts(t task.Task) error {
@@ -129,7 +129,7 @@ func (a *App) listPorts(t task.Task) error {
 		return err
 	}
 	if len(items) == 0 {
-		fmt.Fprintf(a.Out, "Task %s 没有映射任何端口。映射：sbx port %s <port>\n", t.Name, t.Name)
+		fmt.Fprintf(a.Out, "task %s has no port mappings. Map one with: sbx port %s <port>\n", t.Name, t.Name)
 		return nil
 	}
 	var rows [][]string
@@ -137,7 +137,7 @@ func (a *App) listPorts(t task.Task) error {
 		name := it.Str("Names")
 		addr, err := a.portAddr(name)
 		if err != nil {
-			addr = "（已停止）"
+			addr = "(stopped)"
 		}
 		rows = append(rows, []string{strings.TrimPrefix(name, t.Container()+"-port-"), addr, it.Str("State")})
 	}
@@ -159,7 +159,7 @@ func (a *App) removePorts(t task.Task, port int) error {
 	}
 	if len(names) == 0 {
 		if port > 0 {
-			fmt.Fprintf(a.Out, "Task %s 的 %d 端口没有映射过\n", t.Name, port)
+			fmt.Fprintf(a.Out, "task %s: port %d is not mapped\n", t.Name, port)
 		}
 		return nil
 	}
@@ -170,14 +170,14 @@ func (a *App) removePorts(t task.Task, port int) error {
 		}
 		if !exists {
 			if port > 0 {
-				fmt.Fprintf(a.Out, "Task %s 的 %d 端口没有映射过\n", t.Name, port)
+				fmt.Fprintf(a.Out, "task %s: port %d is not mapped\n", t.Name, port)
 			}
 			continue
 		}
 		if err := a.Docker.Rm(n); err != nil && !docker.IsNotFound(err) {
 			return err
 		}
-		fmt.Fprintf(a.Out, "已收回 %s\n", n)
+		fmt.Fprintf(a.Out, "took back %s\n", n)
 	}
 	return nil
 }
