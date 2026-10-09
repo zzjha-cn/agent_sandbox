@@ -194,3 +194,22 @@ func (s Shared) AccessLog() ([]Entry, error) {
 	}
 	return ParseAccessLog(strings.NewReader(out)), nil
 }
+
+// DeniedCounts 按 TaskID 统计「不在白名单」的被拒次数（sbx ls 的 DENIED 列）。
+// 只数这一类：策略拦截（云端 MCP、遥测）和认证失败都是预期行为，放进这一列只是噪音。
+// since 非零时只数这之后的——shared 模式下日志是全局的，不切窗口会把同名旧 Task 的历史算进来。
+func DeniedCounts(entries []Entry, since time.Time, policy []string) map[string]int {
+	out := map[string]int{}
+	for _, e := range entries {
+		if !e.Denied() || e.TaskID == "" || e.TaskID == "-" {
+			continue
+		}
+		if !since.IsZero() && e.TS.Before(since) {
+			continue
+		}
+		if Classify(e, policy) == KindNotAllowed {
+			out[e.TaskID]++
+		}
+	}
+	return out
+}

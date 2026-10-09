@@ -50,10 +50,21 @@ fix-login   running  sbx/fix-login   1      3f +48 -6    8s ago       ~/.sbx/wor
 
 ### 1. 装
 
+从发布包装（`sbx` 是单个二进制，只调用 `docker` 和 `git`）：
+
+```bash
+tar -xzf sbx_<版本>_<os>_<arch>.tar.gz
+sudo install -m 0755 sbx /usr/local/bin/sbx
+sbx --version
+```
+
+或者从源码：
+
 ```bash
 cd core
 make build
 ln -sf "$PWD/bin/sbx" /usr/local/bin/sbx   # 可选
+make release                               # 交叉编译 darwin+linux × amd64+arm64 到 dist/
 ```
 
 ### 2. 配（需要宿主机代理时才要）
@@ -152,6 +163,26 @@ sbx trust          # 确认这个仓库的 .sbx/ 内容
 
 项目层跟着仓库走，所以**密钥类字段和绝对路径在那一层会直接报错**。也正因为它会被 `git pull` 改掉，`.sbx/` 和上次确认的内容不一致时 `sbx run` 会停下来给你看 diff；没有 `.sbx/` 的仓库完全碰不到这套东西。字段全集和改完什么时候生效：[docs/commands.md](docs/commands.md#配置四层adr-00090010design-91)。
 
+## 团队怎么用
+
+项目层配置跟着仓库走，所以新人接入就三步：
+
+1. 把 `<repo>/.sbx/sandbox.toml` 提交进仓库（Profile、网络模式、额外白名单、依赖遮盖），项目要自己的镜像就再加一个 `<repo>/.sbx/Dockerfile`。
+2. 队友 clone 下来执行 `sbx trust`，看一眼 sbx 摊开给他的内容。
+3. `sbx run`。
+
+**这个文件里写不了的东西**（三条红线，是强制的不是建议）：任何像凭据的字段、任何绝对路径、任何会在容器里执行的命令（`on_idle` 这类）。一个仓库不该决定你的凭据从哪来，也不该决定你的沙箱里跑什么。
+
+## 出问题了看这里
+
+| 现象 | 怎么回事 |
+|---|---|
+| `sbx ls` 里是 `exited(oom)` | 容器撞到内存上限了。调大 `resources.memory`，或者调小 `max_running`——`sbx doctor` 会告诉你这两个数乘起来在不在 Docker VM 的预算里 |
+| Agent 说某个下载失败了 | allowlist 模式下被代理拦了。`sbx net denied` 看拦了什么，`sbx net allow <host>` 放行并对运行中的 Task 热加载 |
+| `sbx run` 停下来让你登录 | `sbx-home` 里的凭据过期了。`sbx login` 一次，所有 Task 共享 |
+| `sbx run` 卡在 `.sbx/` 上 | 项目配置被改过。它会把改动打出来——看完执行 `sbx trust` |
+| 说不清哪里不对 | `sbx doctor`。docker、代理、登录、信任、通知、Agent 首次启动状态都查一遍，每个问题给一条可以直接复制的修复命令 |
+
 ## 文档
 
 | 文档 | 讲什么 |
@@ -165,9 +196,9 @@ sbx trust          # 确认这个仓库的 .sbx/ 内容
 
 ## 项目状态
 
-**M1（MVP）和 M2（安全与配置）都已完成，下一步是 M3。** 可用命令：`run / attach / shell / stop / ls / path / done / net / memory / login / config / trust / upgrade`。
+**M1、M2 和 M3 的绝大部分都已完成**，只剩 Codex（M3-6）。可用命令：`run / attach / shell / stop / ls / path / done / drop / logs / port / net / memory / login / config / trust / doctor / upgrade`。
 
-已知边界：内置 Profile 只有 `web-go`；没有 `sbx merge`；上游代理只支持 http（只有 SOCKS 的话要自己加一层转发）。
+已知边界：没有 `sbx merge`；Codex 还没接（M3-6）；上游代理只支持 http（只有 SOCKS 的话要自己加一层转发）；底层镜像必须是 Debian/Ubuntu 系。
 
 路线图见 [implementation-checklist.md](docs/implementation-checklist.md)。
 

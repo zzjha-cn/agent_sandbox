@@ -251,7 +251,7 @@ footer code{font-size:12.5px}
   <p class="subline">One container, one git worktree and one branch per task. Inside, <code>--dangerously-skip-permissions</code> is fine. Outside, nothing changed.</p>
   <div class="meta">
     <span class="chip on">M1 complete</span>
-    <span class="chip">M2 done</span>
+    <span class="chip">M3 nearly done</span>
     <span class="chip">Go 1.27</span>
     <span class="chip">Apache-2.0</span>
   </div>
@@ -640,7 +640,7 @@ Hot-reloaded into 3 running tasks; no restart needed</pre></div>
         </table>
       </div>
       <div class="a" style="margin-top:12px">
-        <p>Being honest about the gap: <strong>there is no <code>sbx logs</code> yet.</strong> Headless runs that write a transcript to a file are M3-7. Today the agent's output lives in the tmux session, so read it with <code>attach</code> while the container is still up.</p>
+        <p>For a run you started with <code>sbx run &lt;task&gt; -p "&lt;prompt&gt;"</code>, the whole transcript is on disk: <code>sbx logs &lt;task&gt;</code> reads it from the host, so it still works after the container has stopped (a headless run stops its own container when it finishes). An interactive agent's output lives in the tmux session instead — read that with <code>attach</code> while the container is up.</p>
       </div>
     </div>
   </div>
@@ -795,9 +795,8 @@ core/assets/agent-layer/Dockerfile       <span class="c"># tmux, git, jq, claude
       <div class="a" style="margin-top:12px">
         <p>Files that are <strong>injected rather than baked</strong> — the hooks, the settings sbx passes to Claude, the status line — are re-rendered into <code>/sbx/gen</code> on every run. Changing those takes effect on the next <code>sbx run</code> with <strong>no image rebuild at all</strong>.</p>
       </div>
-      <div class="note">
-        <span class="t">The honest limit</span>
-        <p><b>A per-project <code>.sbx/Dockerfile</code>, or pointing a project at your own image, is not implemented yet</b> (M3-2), and <code>py-rust</code> is M3-1. So customising the image today means editing sbx's own assets and rebuilding — fine for yourself, not yet a way to ship a per-repo image to a team.</p>
+      <div class="a" style="margin-top:12px">
+        <p>A project can bring its own image: commit a <code>.sbx/Dockerfile</code> and sbx builds on it instead of a built-in profile (or point <code>image</code> at a registry tag). It lives under <code>.sbx/</code>, so it goes through <code>sbx trust</code> like the rest of the project config. It has to be Debian or Ubuntu based — the agent layer installs its tools with apt. And if the project declares runtime versions (<code>.nvmrc</code>, <code>.tool-versions</code>, <code>rust-toolchain.toml</code>…), mise installs them into a volume every task shares, so the second task to ask for the same version gets it instantly.</p>
       </div>
     </div>
 
@@ -850,18 +849,18 @@ core/assets/agent-layer/Dockerfile       <span class="c"># tmux, git, jq, claude
     <div class="num">07</div>
     <div>
       <h2>Where it stands today</h2>
-      <p>M1 (the MVP) and M2 (security and configuration) are done; M3 is next.</p>
+      <p>M1, M2 and nearly all of M3 are done; only Codex support (M3-6) is left.</p>
     </div>
   </div>
 
   <div class="body">
-    <p>Available commands: <code>run / attach / shell / stop / ls / path / done / net / memory / login / config / trust / upgrade</code>.</p>
+    <p>Available commands: <code>run / attach / shell / stop / ls / path / done / drop / logs / port / net / memory / login / config / trust / doctor / upgrade</code>.</p>
     <h3>Limits worth knowing up front</h3>
     <ul class="limits">
-      <li><code>web-go</code> is the only profile (Go + Node + Python); changing the image means editing sbx's own Dockerfiles and rebuilding — per-project images are M2/M3 work (M3-2)</li>
+      <li>two built-in profiles (<code>web-go</code>, <code>py-rust</code>); a project can bring its own image with <code>.sbx/Dockerfile</code>, as long as it is Debian or Ubuntu based</li>
       <li>a host proxy has to speak HTTP; a SOCKS-only proxy needs a shim of your own</li>
       <li>there is no <code>sbx merge</code>; merging is always done by a person in the main repo</li>
-      <li>there is no <code>sbx logs</code> and no headless mode yet (M3-7); read the agent's output with <code>sbx attach</code></li>
+      <li>there is no Codex support yet (M3-6)</li>
     </ul>
   </div>
 </section>

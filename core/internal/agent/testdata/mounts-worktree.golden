@@ -4,6 +4,7 @@ sbx-demo-abc123-t1-dep-0 -> /h/.sbx/worktrees/demo-abc123/t1/node_modules volume
 sbx-demo-abc123-t1-dep-1 -> /h/.sbx/worktrees/demo-abc123/t1/web/node_modules volume=true ro=false
 sbx-home -> /home/agent volume=true ro=false
 sbx-cache -> /sbx/cache volume=true ro=false
+sbx-mise -> /home/agent/.local/share/mise volume=true ro=false
 /h/.sbx/state/demo-abc123/t1 -> /sbx/state volume=false ro=false
 /h/.sbx/state/demo-abc123/t1/gen -> /sbx/gen volume=false ro=true
 /nonexistent/.claude/skills -> /sbx/host-claude/skills volume=false ro=true

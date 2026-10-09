@@ -10,26 +10,36 @@ import (
 
 func TestDerive(t *testing.T) {
 	run := docker.State{Status: "running", Running: true}
+	code := func(n int) *int { return &n }
 	cases := []struct {
-		st     docker.State
-		exists bool
-		s      *AgentStatus
-		want   string
+		st      docker.State
+		exists  bool
+		s       *AgentStatus
+		runExit *int
+		want    string
 	}{
-		{docker.State{}, false, nil, "absent"},
-		{docker.State{Status: "exited", ExitCode: 0}, true, nil, "stopped"},
-		{docker.State{Status: "exited", ExitCode: 143}, true, nil, "stopped"},
-		{docker.State{Status: "created"}, true, nil, "stopped"},
-		{docker.State{Status: "exited", ExitCode: 2}, true, nil, "exited(2)"},
-		{docker.State{Status: "exited", ExitCode: 137, OOMKilled: true}, true, nil, "exited(oom)"},
-		{run, true, nil, "starting"},
-		{run, true, &AgentStatus{State: "idle"}, "idle"},
-		{run, true, &AgentStatus{State: "running"}, "running"},
-		{run, true, &AgentStatus{State: "exited"}, "exited(agent)"},
-		{run, true, &AgentStatus{State: "weird"}, "starting"},
+		{docker.State{}, false, nil, nil, "absent"},
+		{docker.State{Status: "exited", ExitCode: 0}, true, nil, nil, "stopped"},
+		{docker.State{Status: "exited", ExitCode: 143}, true, nil, nil, "stopped"},
+		{docker.State{Status: "created"}, true, nil, nil, "stopped"},
+		{docker.State{Status: "exited", ExitCode: 2}, true, nil, nil, "exited(2)"},
+		{docker.State{Status: "exited", ExitCode: 137, OOMKilled: true}, true, nil, nil, "exited(oom)"},
+		{run, true, nil, nil, "starting"},
+		{run, true, &AgentStatus{State: "idle"}, nil, "idle"},
+		{run, true, &AgentStatus{State: "running"}, nil, "running"},
+		{run, true, &AgentStatus{State: "exited"}, nil, "exited(agent)"},
+		{run, true, &AgentStatus{State: "weird"}, nil, "starting"},
+		// headless 跑完是容器自己 kill 1 停的，容器退出码只是 SIGTERM，
+		// 要显示的是 claude 的退出码（M3-7）
+		{docker.State{Status: "exited", ExitCode: 137}, true, &AgentStatus{State: "exited"}, code(0), "exited(0)"},
+		{docker.State{Status: "exited", ExitCode: 137}, true, nil, code(2), "exited(2)"},
+		// 但 OOM 优先：那是容器被杀，不是 claude 正常结束
+		{docker.State{Status: "exited", ExitCode: 137, OOMKilled: true}, true, nil, code(0), "exited(oom)"},
+		// 还在跑的时候，上一轮留下的退出码不该影响状态
+		{run, true, &AgentStatus{State: "running"}, code(0), "running"},
 	}
 	for i, c := range cases {
-		if got := Derive(c.st, c.exists, c.s); got != c.want {
+		if got := Derive(c.st, c.exists, c.s, c.runExit); got != c.want {
 			t.Errorf("case %d: got %s want %s", i, got, c.want)
 		}
 	}

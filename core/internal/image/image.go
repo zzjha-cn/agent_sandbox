@@ -9,19 +9,50 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"sandx/assets"
 	"sandx/internal/docker"
 )
 
 // Inputs 决定派生镜像的 hash。
+// ProfileFile 和 BaseImage 二选一：前者是要构建的 Dockerfile（内置 Profile 或
+// <repo>/.sbx/Dockerfile），后者是直接拿来用的现成镜像（配置里的 image，M3-2）。
 type Inputs struct {
 	Profile       string
 	ProfileFile   []byte // Profile 的 Dockerfile
+	BaseImage     string // 直接用这个镜像当底，不构建 Profile 层
 	AgentFile     []byte // Agent 层 Dockerfile
 	Entrypoint    []byte
 	ClaudeVersion string
 	UID, GID      int
+}
+
+// CustomInputs 用一份自备的 Dockerfile 当 Profile（<repo>/.sbx/Dockerfile，M3-2）。
+// name 只用于镜像 tag，内容变了 hash 就变，所以不会和内置 Profile 撞车。
+func CustomInputs(name string, dockerfile []byte, claudeVersion string, uid, gid int) Inputs {
+	return Inputs{
+		Profile:       name,
+		ProfileFile:   dockerfile,
+		AgentFile:     assets.Read("agent-layer/Dockerfile"),
+		Entrypoint:    assets.Read("agent-layer/entrypoint.sh"),
+		ClaudeVersion: claudeVersion,
+		UID:           uid,
+		GID:           gid,
+	}
+}
+
+// ImageInputs 直接拿一个现成镜像当底（配置里的 image，M3-2）。
+func ImageInputs(ref, claudeVersion string, uid, gid int) Inputs {
+	return Inputs{
+		Profile:       "custom",
+		BaseImage:     ref,
+		AgentFile:     assets.Read("agent-layer/Dockerfile"),
+		Entrypoint:    assets.Read("agent-layer/entrypoint.sh"),
+		ClaudeVersion: claudeVersion,
+		UID:           uid,
+		GID:           gid,
+	}
 }
 
 // BuiltinInputs 返回内置 Profile 的输入。
@@ -51,14 +82,17 @@ func hash12(parts ...[]byte) string {
 	return hex.EncodeToString(h.Sum(nil))[:12]
 }
 
-// ProfileTag 是 Profile 层镜像的 tag。
+// ProfileTag 是 Profile 层镜像的 tag。用现成镜像时就是那个镜像本身。
 func (in Inputs) ProfileTag() string {
+	if in.BaseImage != "" {
+		return in.BaseImage
+	}
 	return "sbx/profile-" + in.Profile + ":" + hash12(in.ProfileFile)
 }
 
 // Tag 是派生镜像的 tag。
 func (in Inputs) Tag() string {
-	h := hash12(in.ProfileFile, in.AgentFile, in.Entrypoint, []byte(in.ClaudeVersion),
+	h := hash12(in.ProfileFile, []byte(in.BaseImage), in.AgentFile, in.Entrypoint, []byte(in.ClaudeVersion),
 		[]byte(strconv.Itoa(in.UID)), []byte(strconv.Itoa(in.GID)))
 	return "sbx/" + in.Profile + ":" + h
 }
@@ -97,11 +131,55 @@ func (b Builder) Ensure(in Inputs) (string, error) {
 // EnsureProfile 确保 Profile 层镜像存在，返回 tag。
 func (b Builder) EnsureProfile(in Inputs) (string, error) {
 	ptag := in.ProfileTag()
+	if in.BaseImage != "" {
+		// 现成镜像：本地没有就拉一次，不构建
+		if ok, err := b.Docker.ImageExists(ptag); err != nil {
+			return "", err
+		} else if !ok {
+			fmt.Fprintf(b.Out, "拉取镜像 %s …\n", ptag)
+			if _, err := b.Docker.Run("pull", ptag); err != nil {
+				return "", fmt.Errorf("拉不到镜像 %s：%w", ptag, err)
+			}
+		}
+		return ptag, b.checkBase(ptag)
+	}
 	if ok, err := b.Docker.ImageExists(ptag); err != nil || ok {
+		if err == nil {
+			return ptag, b.checkBase(ptag)
+		}
 		return ptag, err
 	}
 	fmt.Fprintf(b.Out, "构建 Profile 镜像 %s …\n", ptag)
-	return ptag, b.build(ptag, map[string][]byte{"Dockerfile": in.ProfileFile}, nil)
+	if err := b.build(ptag, map[string][]byte{"Dockerfile": in.ProfileFile}, nil); err != nil {
+		return "", err
+	}
+	return ptag, b.checkBase(ptag)
+}
+
+// checkBase 确认底层镜像是 Debian 或 Ubuntu 系（ADR 0007）。
+// Agent 层要用 apt-get 装东西、用 useradd 建用户，换成 Alpine 之类会在构建中途
+// 以难懂的方式失败，不如在这里说清楚。
+// Node 不在这里查：claude 是 npm 包，Node 因此属于 Agent 层，底层没有它会自己装。
+func (b Builder) checkBase(ref string) error {
+	// 末尾 exit 0：镜像里没有某个命令会让整条命令非 0 退出，那会被当成
+	// "镜像跑不起来" 而放行，正好漏掉要查的情况
+	out, err := b.Docker.Run("run", "--rm", "--entrypoint", "sh", ref, "-c",
+		"cat /etc/os-release 2>/dev/null; exit 0")
+	if err != nil {
+		// 跑不起来的镜像后面构建时一样会失败，这里不拦
+		return nil
+	}
+	low := strings.ToLower(out)
+	if strings.Contains(low, "debian") || strings.Contains(low, "ubuntu") {
+		return nil
+	}
+	name := "（读不到 /etc/os-release）"
+	for _, line := range strings.Split(out, "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "PRETTY_NAME="); ok {
+			name = strings.Trim(v, `"`)
+		}
+	}
+	return fmt.Errorf("%s 不是 Debian/Ubuntu 系镜像：%s。sbx 的 Agent 层要用 apt-get 和 useradd（ADR 0007）", ref, name)
 }
 
 // build 在临时目录里准备构建上下文，失败时重试 1 次（M0-4：偶发 TLS EOF）。

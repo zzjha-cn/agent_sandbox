@@ -8,6 +8,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	"sandx/internal/docker"
@@ -138,6 +140,23 @@ func (t Task) ReadStatus() (*AgentStatus, error) {
 	return &s, nil
 }
 
+// RunLog 是 headless 的输出，RunExit 里是它的退出码（M3-7）。
+func (t Task) RunLogPath() string  { return filepath.Join(t.StateDir(), "run.log") }
+func (t Task) RunExitPath() string { return filepath.Join(t.StateDir(), "run.exit") }
+
+// RunExit 返回上一次 headless 运行的退出码；没跑过或还没结束时返回 nil。
+func (t Task) RunExit() *int {
+	b, err := os.ReadFile(t.RunExitPath())
+	if err != nil {
+		return nil
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil {
+		return nil
+	}
+	return &n
+}
+
 // HasPriorSession 报告这个 Task 以前跑过 claude（hooks 写过 events.log），
 // 用于决定重新拉起时要不要带 --continue。
 func (t Task) HasPriorSession() bool {
@@ -145,9 +164,10 @@ func (t Task) HasPriorSession() bool {
 	return err == nil
 }
 
-// Derive 根据容器状态和 status.json 推导 Task 状态：
+// Derive 根据容器状态、status.json 和 headless 的退出码推导 Task 状态：
 // absent / stopped / exited(<code>) / exited(oom) / exited(agent) / starting / running / idle。
-func Derive(st docker.State, exists bool, s *AgentStatus) string {
+// runExit 非 nil 表示这个 Task 跑完过一次 headless（M3-7）。
+func Derive(st docker.State, exists bool, s *AgentStatus, runExit *int) string {
 	if !exists {
 		return "absent"
 	}
@@ -155,6 +175,10 @@ func Derive(st docker.State, exists bool, s *AgentStatus) string {
 		switch {
 		case st.OOMKilled:
 			return "exited(oom)"
+		// headless 跑完是容器自己 kill 1 停的，容器的退出码只是 SIGTERM，
+		// 真正有意义的是 claude 的退出码
+		case runExit != nil:
+			return fmt.Sprintf("exited(%d)", *runExit)
 		case st.Status == "created" || (st.Status == "exited" && (st.ExitCode == 0 || st.ExitCode == 143 || st.ExitCode == 137)):
 			// docker stop 会以 SIGTERM/SIGKILL 结束，视为正常停止
 			return "stopped"

@@ -97,3 +97,26 @@ func TestMatches(t *testing.T) {
 		}
 	}
 }
+
+func TestDeniedCounts(t *testing.T) {
+	now := time.Now()
+	at := func(d time.Duration) time.Time { return now.Add(d) }
+	entries := []Entry{
+		{TS: at(-time.Hour), TaskID: "ws.a", Status: 403, Host: "old.example.com"}, // 窗口之前
+		{TS: at(-time.Minute), TaskID: "ws.a", Status: 403, Host: "a.example.com"},
+		{TS: at(-time.Minute), TaskID: "ws.a", Status: 403, Host: "b.example.com"},
+		{TS: at(-time.Minute), TaskID: "ws.b", Status: 403, Host: "a.example.com"},
+		{TS: at(-time.Minute), TaskID: "ws.a", Status: 403, Host: "mcp-proxy.anthropic.com"}, // 策略拦截不算
+		{TS: at(-time.Minute), TaskID: "ws.a", Status: 407, Host: "a.example.com"},           // 认证失败不算
+		{TS: at(-time.Minute), TaskID: "ws.a", Status: 200, Host: "ok.example.com"},          // 没被拒
+		{TS: at(-time.Minute), TaskID: "-", Status: 403, Host: "a.example.com"},              // 认不出归属
+	}
+	got := DeniedCounts(entries, at(-10*time.Minute), PolicyList())
+	if got["ws.a"] != 2 || got["ws.b"] != 1 || len(got) != 2 {
+		t.Fatalf("%v", got)
+	}
+	// 不给窗口时连旧的一起数
+	if all := DeniedCounts(entries, time.Time{}, PolicyList()); all["ws.a"] != 3 {
+		t.Fatalf("%v", all)
+	}
+}

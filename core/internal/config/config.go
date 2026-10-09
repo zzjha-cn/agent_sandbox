@@ -68,13 +68,38 @@ type Agent struct {
 }
 
 type Config struct {
-	DefaultAgent string           `toml:"default_agent"`
-	Profile      string           `toml:"profile"`
-	MaxRunning   int              `toml:"max_running"`
-	Network      Network          `toml:"network"`
-	Resources    Resources        `toml:"resources"`
-	Deps         Deps             `toml:"deps"`
-	Agents       map[string]Agent `toml:"agents"`
+	DefaultAgent string `toml:"default_agent"`
+	Profile      string `toml:"profile"`
+	// Image 直接指定一个现成镜像当底，覆盖 profile（M3-2、design §5.2）。
+	// design 原来写的是 profile.image，但 profile 是标量，TOML 里没法再当表用，
+	// 所以单开一个顶层键。
+	Image      string `toml:"image"`
+	MaxRunning int    `toml:"max_running"`
+	// OnIdle / OnExit 是在容器里执行的通知命令（M3-10、design §7.2）。
+	// 它们只能写在全局层或工作区层——项目层的红线会拦住（跟着仓库走的配置
+	// 不该决定沙箱里执行什么命令）。
+	OnIdle         string           `toml:"on_idle"`
+	OnExit         string           `toml:"on_exit"`
+	NotifyThrottle int              `toml:"notify_throttle"` // 秒；两次同类通知的最小间隔
+	Network        Network          `toml:"network"`
+	Resources      Resources        `toml:"resources"`
+	Deps           Deps             `toml:"deps"`
+	Agents         map[string]Agent `toml:"agents"`
+}
+
+// profileMasks 是各 Profile 默认要遮盖的依赖目录（M3-5、ADR 0008）。
+// 这些目录在容器里各挂一个独立 volume 盖住，装依赖不会落到宿主机的 worktree 里。
+var profileMasks = map[string][]string{
+	"web-go":  {"node_modules", ".next"},
+	"py-rust": {".venv", "target"},
+}
+
+// ProfileMasks 返回某个 Profile 的默认遮盖项；不认识的 Profile 退回通用的一条。
+func ProfileMasks(profile string) []string {
+	if m, ok := profileMasks[profile]; ok {
+		return append([]string(nil), m...)
+	}
+	return []string{"node_modules"}
 }
 
 // Default 返回内置默认值（ADR 0012 修订后的 B 方案）。
@@ -83,11 +108,13 @@ func Default() Config {
 		DefaultAgent: "claude",
 		Profile:      "web-go",
 		MaxRunning:   3,
+		// Notification 是"等人处理"时反复触发的事件，不节流会刷屏
+		NotifyThrottle: 600,
 		// 默认不拦截出网（2026-10-08 决定，ADR 0005 修订）：白名单改成按需开启，
 		// 写 network.mode = "allowlist" 或 sbx run --net allowlist 才生效。
 		Network:   Network{Proxy: "shared", Mode: "open"},
 		Resources: Resources{CPUs: 2, Memory: "3g", Pids: 1024},
-		Deps:      Deps{Mask: []string{"node_modules"}},
+		Deps:      Deps{Mask: ProfileMasks("web-go")},
 		Agents:    map[string]Agent{"claude": {Version: "latest"}},
 	}
 }
@@ -148,6 +175,9 @@ func (c Config) Validate() error {
 	}
 	if c.MaxRunning <= 0 {
 		return fieldf("max_running", "max_running 必须大于 0")
+	}
+	if c.NotifyThrottle < 0 {
+		return fieldf("notify_throttle", "notify_throttle 不能是负数")
 	}
 	for name, ag := range c.Agents {
 		if ag.APIKeyEnv != "" && ag.APIKeyFile != "" {

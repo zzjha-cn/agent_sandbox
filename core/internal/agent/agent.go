@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"sandx/assets"
@@ -62,28 +63,73 @@ func InspectHostClaude(dir string) HostClaude {
 	return h
 }
 
-// hookEvents 是状态 hooks（M0-5、design §7.2）。
-var hookEvents = []struct{ event, state, matcher string }{
-	{"SessionStart", "idle", ""},
-	{"UserPromptSubmit", "running", ""},
-	{"PreToolUse", "running", "*"},
-	{"Stop", "idle", ""},
-	{"Notification", "idle", ""},
+// hookEvents 是状态 hooks（M0-5、design §7.2）。notify 非空的事件还会执行
+// 对应的通知命令（M3-10）：on_idle 挂在 Notification 上而不是 Stop 上，
+// 这样短暂的停顿不会触发通知。
+var hookEvents = []struct{ event, state, matcher, notify string }{
+	{"SessionStart", "idle", "", ""},
+	{"UserPromptSubmit", "running", "", ""},
+	{"PreToolUse", "running", "*", ""},
+	{"Stop", "idle", "", ""},
+	{"Notification", "idle", "", "idle"},
 	// claude 退出（Ctrl-D、/exit、崩溃）后把状态标成 exited，
 	// 否则 sbx ls 会一直停在最后一次 hook 写下的 idle。
-	{"SessionEnd", "exited", ""},
+	{"SessionEnd", "exited", "", "exit"},
+}
+
+// GenInput 是 gen 目录的全部输入。
+type GenInput struct {
+	Host          HostClaude
+	BlockCloudMCP bool
+	OnIdle        string // 空表示没配
+	OnExit        string
+	Throttle      int    // 两次同类通知的最小间隔（秒）
+	Prompt        string // headless 的 prompt；空表示交互模式
+}
+
+// throttle 是写进 gen 目录给 notify.sh 读的节流窗口（秒）。
+// 没配通知就不写这个文件。
+func (in GenInput) throttle() string {
+	if in.OnIdle == "" && in.OnExit == "" {
+		return ""
+	}
+	return strconv.Itoa(in.Throttle)
+}
+
+// notifyCmd 返回某个事件要执行的通知命令；没配、或者这个事件下不该由 hook 发通知时返回空。
+func (in GenInput) notifyCmd(kind string) string {
+	switch kind {
+	case "idle":
+		return in.OnIdle
+	case "exit":
+		// headless 下由包装脚本来发：只有它拿得到 claude 的退出码，
+		// 而 SessionEnd hook 发的那条会先把节流窗口占掉（M3-7 实测）。
+		if in.Prompt != "" {
+			return ""
+		}
+		return in.OnExit
+	}
+	return ""
 }
 
 // SettingsJSON 生成通过 --settings 注入的 settings.sbx.json。
-// blockCloudMCP 为真时写入 disableClaudeAiConnectors：代理那边已经拦了
+// BlockCloudMCP 为真时写入 disableClaudeAiConnectors：代理那边已经拦了
 // mcp-proxy.anthropic.com（ADR 0015），不从源头关掉的话 claude 会反复重试，
 // 实测一分钟内撞出三百多次 403（R11）。
-func SettingsJSON(blockCloudMCP bool) []byte {
+func SettingsJSON(in GenInput) []byte {
 	hooks := map[string]any{}
 	for _, h := range hookEvents {
-		entry := map[string]any{"hooks": []any{map[string]string{
+		// status.sh 排在前面：状态先落盘，通知后发。
+		// 通知是网络 IO，可能挂住；sbx ls 的状态不能等它。
+		cmds := []any{map[string]string{
 			"type": "command", "command": "/sbx/gen/hooks/status.sh " + h.state,
-		}}}
+		}}
+		if h.notify != "" && in.notifyCmd(h.notify) != "" {
+			cmds = append(cmds, map[string]string{
+				"type": "command", "command": NotifySh + " " + h.notify,
+			})
+		}
+		entry := map[string]any{"hooks": cmds}
 		if h.matcher != "" {
 			entry["matcher"] = h.matcher
 		}
@@ -92,7 +138,7 @@ func SettingsJSON(blockCloudMCP bool) []byte {
 	out := map[string]any{"hooks": hooks}
 	// 状态栏脚本和 hooks 一样从 /sbx/gen 注入：沙箱里没有宿主机的 ~/.claude/scripts。
 	out["statusLine"] = map[string]string{"type": "command", "command": "/sbx/gen/statusline.sh"}
-	if blockCloudMCP {
+	if in.BlockCloudMCP {
 		out["disableClaudeAiConnectors"] = true
 	}
 	b, _ := json.MarshalIndent(out, "", "  ")
@@ -100,16 +146,44 @@ func SettingsJSON(blockCloudMCP bool) []byte {
 }
 
 // RenderGen 原子写入 gen 目录（容器内只读挂载到 /sbx/gen）。
-func RenderGen(genDir string, h HostClaude, blockCloudMCP bool) error {
-	if err := fsutil.AtomicWrite(filepath.Join(genDir, "hooks", "status.sh"), assets.Read("agent-layer/hooks/status.sh"), 0o755); err != nil {
-		return err
+// 配置里删掉的东西这里要跟着删，否则上一次的 prompt 或通知命令会留在容器里继续生效。
+func RenderGen(genDir string, in GenInput) error {
+	for _, f := range []struct{ name, body string }{
+		{"hooks/status.sh", string(assets.Read("agent-layer/hooks/status.sh"))},
+		{"hooks/notify.sh", string(assets.Read("agent-layer/hooks/notify.sh"))},
+	} {
+		if err := fsutil.AtomicWrite(filepath.Join(genDir, filepath.FromSlash(f.name)), []byte(f.body), 0o755); err != nil {
+			return err
+		}
+	}
+	// 通知命令原文落盘，不做任何转义：TOML 里怎么写的，bash 看到的就是什么
+	for _, f := range []struct {
+		name, body string
+		mode       os.FileMode
+	}{
+		{"hooks/on_idle.sh", in.OnIdle, 0o755},
+		{"hooks/on_exit.sh", in.OnExit, 0o755},
+		{"prompt.txt", in.Prompt, 0o644},
+		{"notify.throttle", in.throttle(), 0o644},
+	} {
+		p := filepath.Join(genDir, filepath.FromSlash(f.name))
+		if f.body == "" {
+			if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				return err
+			}
+			continue
+		}
+		if err := fsutil.AtomicWrite(p, []byte(f.body+"\n"), f.mode); err != nil {
+			return err
+		}
 	}
 	if err := fsutil.AtomicWrite(filepath.Join(genDir, "statusline.sh"), assets.Read("agent-layer/statusline.sh"), 0o755); err != nil {
 		return err
 	}
-	if err := fsutil.AtomicWrite(filepath.Join(genDir, "settings.sbx.json"), SettingsJSON(blockCloudMCP), 0o644); err != nil {
+	if err := fsutil.AtomicWrite(filepath.Join(genDir, "settings.sbx.json"), SettingsJSON(in), 0o644); err != nil {
 		return err
 	}
+	h := in.Host
 	md := filepath.Join(genDir, "host-claude", "CLAUDE.md")
 	if !h.HasMD {
 		if err := os.Remove(md); err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -147,6 +221,8 @@ func Mounts(in MountInput) []docker.Mount {
 	m = append(m,
 		docker.Mount{Source: "sbx-home", Target: "/home/agent", Volume: true},
 		docker.Mount{Source: "sbx-cache", Target: "/sbx/cache", Volume: true},
+		// 叠在 sbx-home 之上：mise 装的运行时是所有 Task 共享的，不该跟着登录态走（M3-3）
+		docker.Mount{Source: "sbx-mise", Target: MiseDir, Volume: true},
 		docker.Mount{Source: in.StateDir, Target: "/sbx/state"},
 		docker.Mount{Source: in.GenDir, Target: "/sbx/gen", ReadOnly: true},
 	)

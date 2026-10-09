@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -170,8 +169,8 @@ func (a *App) printDenied(rows []proxy.DeniedHost, all bool, since time.Duration
 	if len(shown) == 0 {
 		fmt.Fprintf(a.Out, "没有被拒的请求（%s）\n", scope)
 	} else {
-		w := tabwriter.NewWriter(a.Out, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "HOST\tCOUNT\tLAST\tKIND\tTASK")
+		// KIND 列是中文，用按显示宽度对齐的表
+		var rows [][]string
 		for _, r := range shown {
 			task := "-"
 			if len(r.Tasks) > 0 {
@@ -180,9 +179,9 @@ func (a *App) printDenied(rows []proxy.DeniedHost, all bool, since time.Duration
 					task = fmt.Sprintf("%s 等 %d 个", task, len(r.Tasks))
 				}
 			}
-			fmt.Fprintf(w, "%s\t%d\t%s\t%s\t%s\n", r.Host, r.Count, humanAgo(time.Since(r.Last)), r.Kind, task)
+			rows = append(rows, []string{r.Host, fmt.Sprint(r.Count), humanAgo(time.Since(r.Last)), string(r.Kind), task})
 		}
-		if err := w.Flush(); err != nil {
+		if err := writeTable(a.Out, []string{"HOST", "COUNT", "LAST", "KIND", "TASK"}, rows); err != nil {
 			return err
 		}
 	}

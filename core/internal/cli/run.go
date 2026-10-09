@@ -3,9 +3,11 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -19,8 +21,19 @@ import (
 
 const smokeTimeout = 30 * time.Second
 
+// runOpts 是一次 sbx run 的选项。
+type runOpts struct {
+	Base   string
+	Detach bool
+	Fresh  bool
+	Prompt string // 非空 = headless（M3-7）
+}
+
+// headless 报告这次是不是 headless 运行。
+func (o runOpts) headless() bool { return o.Prompt != "" }
+
 func (a *App) runCmd() *cobra.Command {
-	var base, netMode, proxyMode string
+	var base, netMode, proxyMode, prompt string
 	var detach, fresh, cloudMCP bool
 	cmd := &cobra.Command{
 		Use:   "run [task]",
@@ -60,7 +73,13 @@ func (a *App) runCmd() *cobra.Command {
 			if err := a.requireTrust(); err != nil {
 				return err
 			}
-			return a.run(t, base, detach, fresh)
+			o := runOpts{Base: base, Detach: detach, Fresh: fresh}
+			if cmd.Flags().Changed("prompt") {
+				if o.Prompt, err = readPrompt(prompt, cmd.InOrStdin()); err != nil {
+					return err
+				}
+			}
+			return a.run(t, o)
 		},
 	}
 	cmd.Flags().StringVar(&base, "base", "", "starting point for the new branch (default: current HEAD)")
@@ -68,6 +87,7 @@ func (a *App) runCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&fresh, "fresh", false, "start a new conversation instead of continuing this task's last one")
 	cmd.Flags().StringVar(&netMode, "net", "", "network mode for this run: open (default, everything allowed) or allowlist")
 	cmd.Flags().StringVar(&proxyMode, "proxy", "", "egress proxy for this task: shared (default, one squid for everyone) or dedicated (its own sidecar)")
+	cmd.Flags().StringVarP(&prompt, "prompt", "p", "", "headless: run this prompt and exit instead of opening the session (\"-\" reads stdin)")
 	cmd.Flags().BoolVar(&cloudMCP, "cloud-mcp", false, "let this task reach Claude's cloud connectors (off by default; see ADR 0015)")
 	return cmd
 }
@@ -82,10 +102,33 @@ func (u undo) run() {
 	}
 }
 
-func (a *App) run(t task.Task, base string, detach bool, fresh bool) error {
+// readPrompt 取 -p 的值；"-" 表示从 stdin 读（喂长 prompt 用）。
+func readPrompt(v string, stdin io.Reader) (string, error) {
+	if v == "-" {
+		b, err := io.ReadAll(stdin)
+		if err != nil {
+			return "", err
+		}
+		v = string(b)
+	}
+	if strings.TrimSpace(v) == "" {
+		return "", errors.New("-p 的内容是空的；不给 prompt 的话去掉 -p 就是交互模式")
+	}
+	return v, nil
+}
+
+func (a *App) run(t task.Task, o runOpts) error {
 	st, exists, err := a.Docker.Inspect(t.Container())
 	if err != nil {
 		return err
+	}
+	// design §10.1 第 4 步：-p 不能插队到一个活着的会话里，两个 claude 会抢同一棵 worktree
+	if o.headless() && exists && st.Running {
+		s, _ := t.ReadStatus()
+		if d := task.Derive(st, exists, s, t.RunExit()); d == "running" || d == "idle" || d == "starting" {
+			return fmt.Errorf("Task %s 里已经有一个会话在跑（%s）。sbx attach %s 看看，或者 sbx stop %s 之后再 -p",
+				t.Name, d, t.Name, t.Name)
+		}
 	}
 	// 只有真要启动一个容器时才查并发和内存预算：attach 一个已经在跑的 Task 不新增占用
 	if !exists || !st.Running {
@@ -95,16 +138,19 @@ func (a *App) run(t task.Task, base string, detach bool, fresh bool) error {
 		a.warnMemoryBudget()
 	}
 	if exists {
-		if base != "" {
+		if o.Base != "" {
 			a.logf("Task %s 已存在，忽略 --base", t.Name)
 		}
-		if err := a.resume(t, st, fresh); err != nil {
+		if err := a.resume(t, st, o); err != nil {
 			return err
 		}
-	} else if err := a.create(t, base, fresh); err != nil {
+	} else if err := a.create(t, o); err != nil {
 		return err
 	}
-	if detach {
+	if o.headless() {
+		return a.afterHeadless(t, o.Detach)
+	}
+	if o.Detach {
 		fmt.Fprintf(a.Out, "Task %s 已在后台运行。进入：sbx attach %s\n", t.Name, t.Name)
 		return nil
 	}
@@ -112,7 +158,7 @@ func (a *App) run(t task.Task, base string, detach bool, fresh bool) error {
 }
 
 // resume 处理容器已存在的情况：已停止就启动，claude 不在就补拉起。
-func (a *App) resume(t task.Task, st docker.State, fresh bool) error {
+func (a *App) resume(t task.Task, st docker.State, o runOpts) error {
 	meta, ok, err := t.ReadMeta()
 	if err != nil {
 		return err
@@ -128,7 +174,7 @@ func (a *App) resume(t task.Task, st docker.State, fresh bool) error {
 	if _, err := p.AttachTask(a.proxySpec(t, meta.TaskID)); err != nil {
 		return err
 	}
-	if err := agent.RenderGen(t.GenDir(), a.hostClaude(), !a.Cfg.Network.CloudMCP); err != nil {
+	if err := agent.RenderGen(t.GenDir(), a.genInput(a.hostClaude(), o)); err != nil {
 		return err
 	}
 	if !st.Running {
@@ -137,7 +183,19 @@ func (a *App) resume(t task.Task, st docker.State, fresh bool) error {
 			return err
 		}
 	}
-	return a.startAgent(t, fresh)
+	return a.startAgent(t, o)
+}
+
+// genInput 把生效配置和本次运行的参数汇成 gen 目录的输入。
+func (a *App) genInput(host agent.HostClaude, o runOpts) agent.GenInput {
+	return agent.GenInput{
+		Host:          host,
+		BlockCloudMCP: !a.Cfg.Network.CloudMCP,
+		OnIdle:        a.Cfg.OnIdle,
+		OnExit:        a.Cfg.OnExit,
+		Throttle:      a.Cfg.NotifyThrottle,
+		Prompt:        o.Prompt,
+	}
 }
 
 func (a *App) hostClaude() agent.HostClaude {
@@ -153,17 +211,20 @@ func (a *App) proxySpec(t task.Task, taskID string) proxy.TaskSpec {
 	if a.Cfg.Network.CloudMCP {
 		block = nil
 	}
+	// 通知域名：on_idle/on_exit 里的 webhook 主机自动放行（design §6.3）。
+	// 无条件加，open 模式下也加——模式随时可能切回 allowlist。
+	notify, _ := proxy.HostsIn(a.Cfg.OnIdle, a.Cfg.OnExit)
 	return proxy.TaskSpec{
 		TaskID:   taskID,
 		Network:  t.Network(),
 		CredFile: filepath.Join(t.StateDir(), "proxy.cred"),
-		Allow:    proxy.RenderAllow(block, proxy.BuiltinList("builtin"), proxy.BuiltinList(a.Cfg.Profile), a.Cfg.Network.Allow),
+		Allow:    proxy.RenderAllow(block, proxy.BuiltinList("builtin"), proxy.BuiltinList(a.Cfg.Profile), a.Cfg.Network.Allow, notify),
 		Block:    block,
 		Open:     a.Cfg.Network.Mode == "open",
 	}
 }
 
-func (a *App) create(t task.Task, base string, fresh bool) (err error) {
+func (a *App) create(t task.Task, o runOpts) (err error) {
 	var u undo
 	step := "准备 worktree"
 	defer func() {
@@ -175,7 +236,7 @@ func (a *App) create(t task.Task, base string, fresh bool) (err error) {
 	}()
 
 	// 1. worktree
-	baseSHA, err := a.prepareWorktree(t, base)
+	baseSHA, err := a.prepareWorktree(t, o.Base)
 	if err != nil {
 		return err
 	}
@@ -211,6 +272,10 @@ func (a *App) create(t task.Task, base string, fresh bool) (err error) {
 		u.add(func() { a.Docker.NetworkRm(t.Network()) })
 	}
 	step = "接入出网代理"
+	if _, skipped := proxy.HostsIn(a.Cfg.OnIdle, a.Cfg.OnExit); len(skipped) > 0 {
+		a.logf("提示: 通知命令里的 %s 含变量或是 IP，没法自动放行；需要的话执行 sbx net allow <host>",
+			strings.Join(skipped, "、"))
+	}
 	u.add(func() { p.DetachTask(t.ID(), t.Network()); p.StopIfIdle() })
 	proxyURL, err := p.AttachTask(a.proxySpec(t, t.ID()))
 	if err != nil {
@@ -226,7 +291,7 @@ func (a *App) create(t task.Task, base string, fresh bool) (err error) {
 	// 6. gen 目录
 	step = "渲染生成文件"
 	host := a.hostClaude()
-	if err := agent.RenderGen(t.GenDir(), host, !a.Cfg.Network.CloudMCP); err != nil {
+	if err := agent.RenderGen(t.GenDir(), a.genInput(host, o)); err != nil {
 		return err
 	}
 
@@ -283,7 +348,7 @@ func (a *App) create(t task.Task, base string, fresh bool) (err error) {
 
 	// 9. 预置、登录检查、启动 Agent
 	step = "启动 Agent"
-	return a.startAgent(t, fresh)
+	return a.startAgent(t, o)
 }
 
 func (a *App) prepareWorktree(t task.Task, base string) (string, error) {
@@ -334,8 +399,9 @@ func (a *App) ensureSharedVolumes(tag string) error {
 	scripts := map[string]string{
 		sharedHome:  "chown " + uid + ":" + gid + " /v",
 		"sbx-cache": "mkdir -p /v/npm /v/pip /v/uv /v/go-mod /v/go-build /v/cargo && chown -R " + uid + ":" + gid + " /v",
+		"sbx-mise":  "chown " + uid + ":" + gid + " /v",
 	}
-	for _, vol := range []string{sharedHome, "sbx-cache"} {
+	for _, vol := range []string{sharedHome, "sbx-cache", "sbx-mise"} {
 		created, err := a.Docker.VolumeCreate(vol, map[string]string{"sbx.kind": "shared"})
 		if err != nil {
 			return err
@@ -375,7 +441,7 @@ func (a *App) ensureVolumes(t task.Task, tag string, u *undo) error {
 
 // startAgent 预置首次启动状态、检查登录、在 tmux 里拉起 claude 并做冒烟检查。
 // 会话还在但 claude 已经退出时（Ctrl-D、/exit），在原会话里重新拉起。
-func (a *App) startAgent(t task.Task, fresh bool) error {
+func (a *App) startAgent(t task.Task, o runOpts) error {
 	rt := agent.Runtime{Docker: a.Docker, Container: t.Container(), Worktree: t.Worktree()}
 	hasSession := rt.HasSession()
 	if hasSession && !agentExited(t) {
@@ -393,31 +459,79 @@ func (a *App) startAgent(t task.Task, fresh bool) error {
 	if err := a.importMemory(t.Container()); err != nil {
 		a.logf("警告: 导入项目记忆失败：%v", err)
 	}
+	a.installRuntimes(t, rt)
 	// 配了 API key 就不查订阅登录态：key 在建容器时注进了环境变量（design §7.1）
 	if err := a.checkAuth(t, rt, key); err != nil {
 		return err
 	}
-	cont := !fresh && t.HasPriorSession()
-	statusFile := filepath.Join(t.StateDir(), "status.json")
-	os.Remove(statusFile)
-	if hasSession {
-		a.logf("claude 已退出，正在原会话里重新拉起 …")
-		if err := rt.RespawnClaude(cont); err != nil {
+	cont := !o.Fresh && t.HasPriorSession()
+	os.Remove(filepath.Join(t.StateDir(), "status.json"))
+	os.Remove(filepath.Join(t.StateDir(), "run.exit"))
+	if o.headless() {
+		if err := rotateRunLog(filepath.Join(t.StateDir(), "run.log"), runLogLimit); err != nil {
 			return err
 		}
-	} else if _, err := rt.StartClaude(cont); err != nil {
+	}
+	cmdOf := func() string {
+		if o.headless() {
+			return agent.HeadlessCmd(agent.HeadlessOpts{Continue: cont, Notify: a.Cfg.OnExit != ""})
+		}
+		return agent.ClaudeCmd(cont)
+	}
+	if hasSession {
+		a.logf("claude 已退出，正在原会话里重新拉起 …")
+		if err := rt.Respawn(cmdOf()); err != nil {
+			return err
+		}
+	} else if _, err := rt.StartSession(cmdOf()); err != nil {
 		return err
 	}
 	if cont {
 		a.logf("接上 Task %s 的上次对话（--continue；要新开一段用 --fresh）", t.Name)
 	}
 	a.logf("等待 claude 就绪 …")
-	return rt.SmokeCheck(smokeTimeout, func() bool {
-		s, err := t.ReadStatus()
-		return err == nil && s != nil && s.Event == "SessionStart"
-	}, func() bool {
-		return agentExited(t)
-	})
+	sm := agent.Smoke{
+		Timeout: smokeTimeout,
+		Ready: func() bool {
+			s, err := t.ReadStatus()
+			return err == nil && s != nil && s.Event == "SessionStart"
+		},
+		Exited: func() bool { return agentExited(t) },
+	}
+	if o.headless() {
+		// headless 的任务可能几秒就跑完，正常结束不算启动失败；
+		// 跑完了也算"就绪"，别再等 SessionStart（那条可能已经被 SessionEnd 覆盖了）
+		sm.Exited = nil
+		ready := sm.Ready
+		sm.Ready = func() bool { return ready() || t.RunExit() != nil }
+	}
+	return rt.SmokeCheck(sm)
+}
+
+// installRuntimes 按项目里的版本文件装运行时（M3-3）。装不上只警告不拦：
+// 项目可能声明了一个 mise 装不了的运行时，但别的活照样能干。
+func (a *App) installRuntimes(t task.Task, rt agent.Runtime) {
+	files := agent.VersionFiles(t.Worktree())
+	if len(files) == 0 {
+		return
+	}
+	a.logf("按 %s 装运行时（mise，装过的会直接复用）…", strings.Join(files, "、"))
+	if out, err := rt.MiseInstall(); err != nil {
+		a.logf("警告: mise install 没成功，继续启动：%v\n%s", err, lastLines(out, 10))
+		return
+	}
+	if sum := rt.MiseSummary(); sum != "" {
+		a.logf("运行时：%s", sum)
+	}
+}
+
+// lastLines 取输出的最后 n 行，错误信息不要刷屏。
+func lastLines(s string, n int) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
 }
 
 // agentExited 报告 hooks 写下的状态是不是"claude 已退出"。
@@ -449,4 +563,27 @@ func (a *App) checkAuth(t task.Task, rt agent.Runtime, key apiKey) error {
 
 func (a *App) loginHelp(t task.Task) string {
 	return "沙箱里的 claude 还没有登录（sbx-home 里没有凭据）。先执行一次：\n\n  sbx login\n\n登录完成后重新执行 sbx run " + t.Name + "。"
+}
+
+// afterHeadless 收尾 headless 这一次运行：前台就跟着 run.log 看到结束，
+// --detach 就只打一行怎么回来看。
+func (a *App) afterHeadless(t task.Task, detach bool) error {
+	if detach {
+		fmt.Fprintf(a.Out, "Task %s 已在后台跑 prompt。跟随输出：sbx logs -f %s\n", t.Name, t.Name)
+		return nil
+	}
+	if err := a.showLogs(t, true, 0); err != nil {
+		return err
+	}
+	code := 0
+	if c := t.RunExit(); c != nil {
+		code = *c
+	}
+	fmt.Fprintf(a.Out, "\nTask %s 跑完了（exit=%d），容器已停。\n", t.Name, code)
+	fmt.Fprintf(a.Out, "看改动：cd $(sbx path %s)；继续：sbx run %s；收尾：sbx done %s\n", t.Name, t.Name, t.Name)
+	if code != 0 {
+		// claude 的退出码往上透，脚本里 sbx run -p ... && next 才有意义
+		return fmt.Errorf("claude 以 %d 退出（完整输出：sbx logs %s）", code, t.Name)
+	}
+	return nil
 }

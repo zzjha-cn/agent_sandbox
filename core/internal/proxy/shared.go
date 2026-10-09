@@ -322,6 +322,36 @@ func (s Shared) DetachTask(taskID, network string) error {
 	return nil
 }
 
+// Health 报告 sbx-proxy 的状态，不做任何修改（sbx doctor 用，R8）。
+// running=false 且没有 shared Task 在跑是正常的：最后一个 Task 停掉后它会被 StopIfIdle 停掉，
+// 所以 tasks 一并返回，由调用方判断这是"闲着"还是"挂了"。
+func (s Shared) Health() (running bool, tasks int, detail string, err error) {
+	items, err := s.Docker.ListByLabel("container", "sbx.role=agent", "sbx.proxy=shared")
+	if err != nil {
+		return false, 0, "", err
+	}
+	for _, it := range items {
+		if it.Str("State") == "running" {
+			tasks++
+		}
+	}
+	st, exists, err := s.Docker.Inspect(s.name())
+	if err != nil {
+		return false, tasks, "", err
+	}
+	if !exists {
+		return false, tasks, "还没创建过", nil
+	}
+	if !st.Running {
+		return false, tasks, "已停止", nil
+	}
+	out, err := s.Docker.Exec(s.name(), docker.ExecOpts{}, "squid", "-f", confPath, "-k", "check")
+	if err != nil {
+		return true, tasks, "在跑，但配置检查没过：" + strings.TrimSpace(out), nil
+	}
+	return true, tasks, "运行中，配置无错误", nil
+}
+
 // StopIfIdle 在没有运行中的 shared Task 时停掉 sbx-proxy（不删除）。
 func (s Shared) StopIfIdle() (stopped bool, err error) {
 	items, err := s.Docker.ListByLabel("container", "sbx.role=agent", "sbx.proxy=shared")

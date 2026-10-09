@@ -9,11 +9,15 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// 项目层的两条红线（M2-2、design §9.1）：这一层是跟着仓库走的，clone 下来就会生效，
-// 所以它既不该决定凭据从哪来，也不该指向宿主机上的具体路径。
+// 项目层的三条红线（M2-2、M3-10、design §9.1）：这一层是跟着仓库走的，clone 下来就会生效，
+// 所以它不该决定凭据从哪来、不该指向宿主机上的具体路径，也不该决定沙箱里执行什么命令。
 var (
 	secretKey = regexp.MustCompile(`(?i)(key|token|secret|password|credential)`)
 	absPath   = regexp.MustCompile(`^(/|~/|[A-Za-z]:[\\/])`)
+	// execKey 是会让命令在容器里跑起来的字段（on_idle、on_exit……）。
+	// 用模式而不是固定名单：以后加 on_start、notify_cmd 也自动被挡住。
+	// 信任确认虽然会把 .sbx/ 的改动摊开给人看，但不该指望每个人都读懂一行 shell。
+	execKey = regexp.MustCompile(`(?i)^(on_[a-z0-9_]+|.*_(cmd|command|script|hook))$`)
 )
 
 // checkProject 在项目层配置里找密钥类字段和绝对路径，发现就直接报错。
@@ -32,6 +36,10 @@ func checkProject(data, path string) error {
 		}
 		if secretKey.MatchString(last) {
 			bad = append(bad, fmt.Sprintf("%s（密钥类字段只能写在 %s 或 %s 层）", key, LayerGlobal, LayerWorkspace))
+			return
+		}
+		if execKey.MatchString(last) {
+			bad = append(bad, fmt.Sprintf("%s（会在容器里执行的命令只能写在 %s 或 %s 层）", key, LayerGlobal, LayerWorkspace))
 			return
 		}
 		if s, ok := v.(string); ok && absPath.MatchString(s) {

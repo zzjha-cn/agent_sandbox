@@ -63,24 +63,37 @@ func ClaudeCmd(continueConv bool) string {
 	return cmd + "; printf '\n" + ExitNotice + "。Ctrl-b d 离开容器；sbx run 可以在这个会话里重新拉起。\n\n'; exec bash -l"
 }
 
-// StartClaude 新建 tmux 会话并在里面拉起 claude；会话已存在时什么都不做。
-func (r Runtime) StartClaude(continueConv bool) (started bool, err error) {
+// StartSession 新建 tmux 会话并在里面跑 cmd；会话已存在时什么都不做。
+func (r Runtime) StartSession(cmd string) (started bool, err error) {
 	if r.HasSession() {
 		return false, nil
 	}
 	_, err = r.Docker.Exec(r.Container, docker.ExecOpts{User: "agent", Workdir: r.Worktree},
-		"tmux", "new-session", "-d", "-s", Session, "-x", "220", "-y", "50",
-		ClaudeCmd(continueConv))
+		"tmux", "new-session", "-d", "-s", Session, "-x", "220", "-y", "50", cmd)
 	return err == nil, err
 }
 
-// RespawnClaude 在已存在的会话里重新拉起 claude：claude 退出后窗口里留着的是 shell，
+// Respawn 在已存在的会话里换一条命令：claude 退出后窗口里留着的是 shell，
 // -k 杀掉它并在同一个窗口里重开，这样 attach 的人不用重新进。
-func (r Runtime) RespawnClaude(continueConv bool) error {
+func (r Runtime) Respawn(cmd string) error {
 	_, err := r.Docker.Exec(r.Container, docker.ExecOpts{User: "agent", Workdir: r.Worktree},
-		"tmux", "respawn-window", "-k", "-t", Session, "-c", r.Worktree, ClaudeCmd(continueConv))
+		"tmux", "respawn-window", "-k", "-t", Session, "-c", r.Worktree, cmd)
 	return err
 }
+
+// StartClaude / RespawnClaude 是交互模式的薄包装。
+func (r Runtime) StartClaude(continueConv bool) (bool, error) {
+	return r.StartSession(ClaudeCmd(continueConv))
+}
+
+func (r Runtime) RespawnClaude(continueConv bool) error { return r.Respawn(ClaudeCmd(continueConv)) }
+
+// StartHeadless / RespawnHeadless 同上，跑的是 claude -p（M3-7）。
+func (r Runtime) StartHeadless(o HeadlessOpts) (bool, error) {
+	return r.StartSession(HeadlessCmd(o))
+}
+
+func (r Runtime) RespawnHeadless(o HeadlessOpts) error { return r.Respawn(HeadlessCmd(o)) }
 
 // Capture 抓取 tmux 画面。
 func (r Runtime) Capture() (string, error) {
@@ -90,29 +103,44 @@ func (r Runtime) Capture() (string, error) {
 // 已知会卡住交互模式的对话框（M0-5、R9）。
 var dialogRe = regexp.MustCompile(`(?i)select login method|bypass permissions mode|choose the text style|do you trust the files|trust this folder`)
 
+// Smoke 描述一次冒烟检查。Exited 为 nil 表示"退出不算失败"——headless 的任务
+// 可能几秒就跑完，不能把正常结束当成启动失败。
+type Smoke struct {
+	Timeout time.Duration
+	Ready   func() bool // 就绪判定（读宿主机上的 status.json）
+	Exited  func() bool // 异常退出判定；nil 时跳过
+}
+
+// DialogIn 返回画面上出现的首次启动对话框（没有就返回空）。
+// sbx doctor 和启动冒烟用的是同一份判据（R9）。
+func DialogIn(screen string) string { return dialogRe.FindString(screen) }
+
 // SmokeCheck 轮询 tmux 画面和 status.json，确认 claude 已就绪且没有卡在对话框上。
-// sessionStarted 和 agentExited 由调用方提供，用于读取宿主机上的 status.json。
 // 会话现在不会随 claude 退出而消失，所以"启动后就退出"要靠 SessionEnd 或画面上的提示来判断。
-func (r Runtime) SmokeCheck(timeout time.Duration, sessionStarted, agentExited func() bool) error {
-	deadline := time.Now().Add(timeout)
+func (r Runtime) SmokeCheck(sm Smoke) error {
+	deadline := time.Now().Add(sm.Timeout)
 	var screen string
 	for time.Now().Before(deadline) {
 		time.Sleep(time.Second)
 		if !r.HasSession() {
+			// headless 跑完会 kill 1 停掉容器，tmux 会话跟着消失：那是正常结束，不是启动失败
+			if sm.Exited == nil {
+				return nil
+			}
 			return fmt.Errorf("claude 启动后退出了（tmux 会话已结束）")
 		}
 		screen, _ = r.Capture()
-		if agentExited() || strings.Contains(screen, ExitNotice) {
+		if sm.Exited != nil && (sm.Exited() || strings.Contains(screen, ExitNotice)) {
 			return fmt.Errorf("claude 启动后立刻退出了，画面最后 20 行：\n%s", lastLines(screen, 20))
 		}
-		if m := dialogRe.FindString(screen); m != "" {
+		if m := DialogIn(screen); m != "" {
 			return fmt.Errorf("claude 卡在首次启动对话框上（%q），预置字段可能已随版本变化（R9）：\n%s", m, lastLines(screen, 20))
 		}
-		if sessionStarted() {
+		if sm.Ready() {
 			return nil
 		}
 	}
-	return fmt.Errorf("%s 内没有等到 SessionStart，画面最后 20 行：\n%s", timeout, lastLines(screen, 20))
+	return fmt.Errorf("%s 内没有等到 SessionStart，画面最后 20 行：\n%s", sm.Timeout, lastLines(screen, 20))
 }
 
 func lastLines(s string, n int) string {

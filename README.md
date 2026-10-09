@@ -51,14 +51,25 @@ fix-login   running  sbx/fix-login   1      3f +48 -6    8s ago       ~/.sbx/wor
 
 ## Quick start
 
-**Prerequisites**: Docker Desktop running (10GB of memory recommended), Go 1.27, a Claude subscription.
+**Prerequisites**: Docker Desktop running (10GB of memory recommended), a Claude subscription. Building from source also needs Go 1.27.
 
 ### 1. Install
+
+From a release archive (`sbx` is a single binary that only shells out to `docker` and `git`):
+
+```bash
+tar -xzf sbx_<version>_<os>_<arch>.tar.gz
+sudo install -m 0755 sbx /usr/local/bin/sbx
+sbx --version
+```
+
+Or from source:
 
 ```bash
 cd core
 make build
 ln -sf "$PWD/bin/sbx" /usr/local/bin/sbx   # optional
+make release                               # cross-compile into dist/ for darwin+linux, amd64+arm64
 ```
 
 ### 2. Configure (only if you need a host proxy)
@@ -92,6 +103,8 @@ That's it. Worktree, branch, container, network and proxy credentials are all se
 
 ```bash
 sbx run fix-login              # start (running it again resumes, continuing the last conversation)
+sbx run nightly -p "fix the failing tests"   # headless: run a prompt, stop the container when done
+sbx logs nightly -f            # follow a headless run's output
 sbx run add-search --detach    # queue up another one without entering it
 sbx ls                         # who's running, commits ahead, diff size, time since last activity
 sbx attach fix-login           # back into the session (Ctrl-b, release, d to leave)
@@ -157,6 +170,26 @@ sbx trust          # review this repo's .sbx/ and record it as trusted
 
 The project layer travels with the repo, so **secret-looking keys and absolute paths are rejected outright in that layer**. And because a `git pull` can change it under you, `sbx run` stops and shows you the diff whenever `.sbx/` differs from what you last confirmed — repos without a `.sbx/` directory never see any of this. Full field list and when changes take effect: [docs/commands.md](docs/commands.md#配置四层adr-00090010design-91).
 
+## Working as a team
+
+The project layer travels with the repo, so onboarding a teammate is three steps:
+
+1. Commit `<repo>/.sbx/sandbox.toml` (profile, network mode, extra allowlist entries, dep masks) — and `<repo>/.sbx/Dockerfile` if the project needs its own image.
+2. Your teammate clones, runs `sbx trust` and reads what the diff shows them.
+3. `sbx run`.
+
+What *cannot* be in that file, by design: anything that looks like a credential, any absolute path, and any command that would run in the container (`on_idle` and friends). Those three red lines are enforced, not advisory — a repo cannot decide where your credentials come from or what runs inside your sandbox.
+
+## Troubleshooting
+
+| Symptom | What's going on |
+|---|---|
+| `exited(oom)` in `sbx ls` | The container hit its memory cap. Raise `resources.memory`, or lower `max_running` — `sbx doctor` tells you whether the total fits in your Docker VM |
+| The agent says a download failed | In allowlist mode the proxy blocked it. `sbx net denied` shows what, `sbx net allow <host>` fixes it and hot-reloads running tasks |
+| `sbx run` stops and asks you to log in | The credentials in `sbx-home` expired. `sbx login` once; every task shares it |
+| `sbx run` stops on `.sbx/` | Someone changed the project config. It prints the diff — read it, then `sbx trust` |
+| Something is off and you don't know what | `sbx doctor`. It checks docker, the proxy, login, trust, notifications and the agent's first-run state, and prints a fix for each problem |
+
 ## Documentation
 
 > The [introduction page](https://zzjha-cn.github.io/agent_sandbox/) is in English; the in-repo reference docs are in Chinese.
@@ -172,9 +205,9 @@ The project layer travels with the repo, so **secret-looking keys and absolute p
 
 ## Status
 
-**M1 (the MVP) and M2 (security and configuration) are done; M3 is next.** Available commands: `run / attach / shell / stop / ls / path / done / net / memory / login / config / trust / upgrade`.
+**M1, M2 and nearly all of M3 are done** — only Codex support (M3-6) is left. Available commands: `run / attach / shell / stop / ls / path / done / drop / logs / port / net / memory / login / config / trust / doctor / upgrade`.
 
-Known limits: `web-go` is the only built-in profile; there is no `sbx merge`; a host proxy has to speak HTTP (SOCKS-only needs a shim of your own).
+Known limits: there is no `sbx merge` and no Codex support yet (M3-6); a host proxy has to speak HTTP (SOCKS-only needs a shim of your own); base images have to be Debian or Ubuntu.
 
 Roadmap: [implementation-checklist.md](docs/implementation-checklist.md).
 

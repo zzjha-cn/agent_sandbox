@@ -1,0 +1,18 @@
+# py-rust Profile 的语言栈白名单（design §6.3）
+# Python
+pypi.org
+files.pythonhosted.org
+astral.sh
+# Rust
+crates.io
+static.crates.io
+index.crates.io
+static.rust-lang.org
+sh.rustup.rs
+# 源码和常用发布渠道
+github.com
+.githubusercontent.com
+# 国内镜像
+pypi.tuna.tsinghua.edu.cn
+mirrors.aliyun.com
+rsproxy.cn

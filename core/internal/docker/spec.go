@@ -33,7 +33,8 @@ type RunSpec struct {
 	Workdir    string
 	Resources  Resources
 	AddHosts   []string
-	LogMaxSize string // 非空时限制 json-file 日志大小（保留 2 个文件）
+	Publish    []string // -p 的参数，形如 127.0.0.1::3000（宿主机端口留空表示随机）
+	LogMaxSize string   // 非空时限制 json-file 日志大小（保留 2 个文件）
 	Entrypoint string
 	Cmd        []string
 }
@@ -75,6 +76,9 @@ func (s RunSpec) Args() []string {
 	}
 	for _, h := range s.AddHosts {
 		args = append(args, "--add-host", h)
+	}
+	for _, p := range s.Publish {
+		args = append(args, "-p", p)
 	}
 	if s.LogMaxSize != "" {
 		args = append(args, "--log-opt", "max-size="+s.LogMaxSize, "--log-opt", "max-file=2")

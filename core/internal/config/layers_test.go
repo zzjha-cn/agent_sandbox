@@ -233,3 +233,52 @@ func TestProxyAndUpstreamLayers(t *testing.T) {
 		t.Fatalf("非法的 proxy 要报错并指出来源，得到：%v", err)
 	}
 }
+
+// M3-10：通知命令和节流窗口也是分层的。
+func TestNotifyLayers(t *testing.T) {
+	d := t.TempDir()
+	global := write(t, d, "g3.toml", "on_idle = \"curl https://a.io/x\"\non_exit = \"echo bye\"\n", false)
+	ws := write(t, d, "w3.toml", "on_idle = \"curl https://b.io/y\"\nnotify_throttle = 60\n", false)
+	ld, err := LoadLayers([]Layer{global, ws})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ld.Config.OnIdle != "curl https://b.io/y" || ld.Config.OnExit != "echo bye" || ld.Config.NotifyThrottle != 60 {
+		t.Fatalf("%+v", ld.Config)
+	}
+	if got := ld.Sources["on_idle"].String(); got != "w3.toml" {
+		t.Errorf("on_idle 来自 %q", got)
+	}
+	// 默认有节流：Notification 会反复触发
+	if Default().NotifyThrottle == 0 {
+		t.Error("默认该有节流窗口")
+	}
+}
+
+// M3-5：没人写过 deps.mask 时，默认遮盖项跟着最终生效的 profile 走。
+// 这件事必须在合并之后做——列表是取并集的，先放 web-go 的再并 py-rust 的会得到四不像。
+func TestProfileDefaultMasks(t *testing.T) {
+	d := t.TempDir()
+	ws := write(t, d, "w4.toml", "profile = \"py-rust\"\n", false)
+	ld, err := LoadLayers([]Layer{ws})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(ld.Config.Deps.Mask, ","); got != ".venv,target" {
+		t.Fatalf("py-rust 的默认遮盖项：%s", got)
+	}
+	// 自己写了就以自己写的为准（并上内置默认）
+	custom := write(t, d, "w5.toml", "profile = \"py-rust\"\n[deps]\nmask = [\"node_modules\"]\n", false)
+	ld, err = LoadLayers([]Layer{custom})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 自己写的追加在 profile 默认值后面，而不是被 web-go 的默认值污染
+	if got := strings.Join(ld.Config.Deps.Mask, ","); got != ".venv,target,node_modules" {
+		t.Fatalf("写过的要和 profile 默认值并集：%s", got)
+	}
+	// 不认识的 profile 退回通用的一条
+	if got := ProfileMasks("whatever"); len(got) != 1 || got[0] != "node_modules" {
+		t.Fatalf("%v", got)
+	}
+}

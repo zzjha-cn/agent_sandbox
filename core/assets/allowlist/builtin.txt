@@ -4,3 +4,9 @@
 .openai.com
 .chatgpt.com
 github.com
+
+# mise：按项目的版本文件装运行时（M3-3）
+mise.jdx.dev
+mise.run
+github.com
+objects.githubusercontent.com

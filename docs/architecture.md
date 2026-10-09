@@ -420,10 +420,10 @@ core/
 
 | 项 | 计划 |
 |---|---|
-| Codex、`port`、`doctor`、通知、headless | M3 |
-| 更多 Profile、自定义镜像 | M3-1、M3-2 |
-| 发布物和 CI | M3-14 |
+| Codex、`sbx port`、`sbx drop` | M3-6、M3-11、M3-12 |
+| 更多 Profile、自定义镜像、mise | M3-1、M3-2、M3-3 |
+| 发布物（交叉编译、安装说明） | M3-14、M3-15 |
 
-M2 的内容（项目级配置和信任确认、`login`、`net denied/allow`、open 模式、dedicated 代理、API key、`max_running` 和内存预算）已全部完成。
+M2 全部完成。M3 的无人值守主线也已完成：headless（`sbx run -p`）与 `sbx logs`、`sbx ls` 的 DENIED 列和 `--all`、`on_idle`/`on_exit` 通知、`sbx doctor`。
 
 已知现象：claude 画面会提示 `Remote managed settings failed to load (401)`，暂不影响使用，继续观察。

@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -11,6 +13,7 @@ import (
 
 	"sandx/internal/fsutil"
 	"sandx/internal/image"
+	"sandx/internal/trust"
 )
 
 // claudeVersionFile 记录 sbx upgrade 解析出的 claude 版本；配置为 latest 时用它固定镜像。
@@ -32,8 +35,26 @@ func (a *App) claudeVersion() string {
 	return "latest"
 }
 
+// imageInputs 决定这次用哪个底（design §5.2、M3-2）。优先级：
+// 配置里的 image > <repo>/.sbx/Dockerfile > 内置 Profile。
+// .sbx/Dockerfile 在信任确认的覆盖范围内，所以"项目自带 Dockerfile"这件事
+// 天然要先过 sbx trust。
 func (a *App) imageInputs() (image.Inputs, error) {
-	return image.BuiltinInputs(a.Cfg.Profile, a.claudeVersion(), os.Getuid(), os.Getgid())
+	uid, gid := os.Getuid(), os.Getgid()
+	if ref := strings.TrimSpace(a.Cfg.Image); ref != "" {
+		return image.ImageInputs(ref, a.claudeVersion(), uid, gid), nil
+	}
+	if a.WS.Root != "" {
+		p := filepath.Join(a.WS.Root, trust.Dir, "Dockerfile")
+		b, err := os.ReadFile(p)
+		if err == nil {
+			return image.CustomInputs(a.WS.ID, b, a.claudeVersion(), uid, gid), nil
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			return image.Inputs{}, err
+		}
+	}
+	return image.BuiltinInputs(a.Cfg.Profile, a.claudeVersion(), uid, gid)
 }
 
 var semver = regexp.MustCompile(`^\d+\.\d+\.\d+\S*$`)

@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -119,6 +118,25 @@ func (a *App) stopCmd() *cobra.Command {
 	}
 }
 
+// tildePath 把 home 前缀缩写成 ~。
+func tildePath(p, home string) string {
+	if home != "" && (p == home || strings.HasPrefix(p, home+"/")) {
+		return "~" + p[len(home):]
+	}
+	return p
+}
+
+// labels 把 docker ps 那一列逗号分隔的 label 拆成 map。
+func labels(it docker.Item) map[string]string {
+	m := map[string]string{}
+	for _, kv := range strings.Split(it.Str("Labels"), ",") {
+		if k, v, ok := strings.Cut(kv, "="); ok {
+			m[k] = v
+		}
+	}
+	return m
+}
+
 // taskNames 汇总当前 ws 下的 Task：有容器的，加上有 state 目录的。
 func (a *App) taskNames() ([]string, error) {
 	set := map[string]bool{}
@@ -127,10 +145,8 @@ func (a *App) taskNames() ([]string, error) {
 		return nil, err
 	}
 	for _, it := range items {
-		for _, kv := range strings.Split(it.Str("Labels"), ",") {
-			if v, ok := strings.CutPrefix(kv, "sbx.task="); ok {
-				set[v] = true
-			}
+		if n := labels(it)["sbx.task"]; n != "" {
+			set[n] = true
 		}
 	}
 	ents, err := os.ReadDir(filepath.Join(a.Home, "state", a.WS.ID))
@@ -148,67 +164,6 @@ func (a *App) taskNames() ([]string, error) {
 	}
 	sort.Strings(names)
 	return names, nil
-}
-
-// TaskRow 是 sbx ls 的一行。
-type TaskRow struct {
-	Task, Status, Branch, Ahead, Diff, LastActive, Path string
-}
-
-// tildePath 把 home 前缀缩写成 ~。
-func tildePath(p, home string) string {
-	if home != "" && (p == home || strings.HasPrefix(p, home+"/")) {
-		return "~" + p[len(home):]
-	}
-	return p
-}
-
-// padCJK 把 s 右侧补空格到 n 个显示宽度：CJK 字符占两格，ASCII 占一格。
-// tabwriter 按字节算宽度，中英混排的列会错位，需要对齐的地方用这个。
-func padCJK(s string, n int) string {
-	w := 0
-	for _, r := range s {
-		if r >= 0x1100 && (r <= 0x115f || (r >= 0x2e80 && r <= 0xa4cf) || (r >= 0xac00 && r <= 0xd7a3) ||
-			(r >= 0xf900 && r <= 0xfaff) || (r >= 0xfe30 && r <= 0xfe6f) || (r >= 0xff00 && r <= 0xff60) ||
-			(r >= 0xffe0 && r <= 0xffe6) || (r >= 0x20000 && r <= 0x3fffd)) {
-			w += 2
-		} else {
-			w++
-		}
-	}
-	if w >= n {
-		return s
-	}
-	return s + strings.Repeat(" ", n-w)
-}
-
-func (a *App) row(t task.Task) TaskRow {
-	home, _ := os.UserHomeDir()
-	r := TaskRow{Task: t.Name, Branch: t.Branch(), Ahead: "-", Diff: "-", LastActive: "-", Path: tildePath(t.Worktree(), home)}
-	st, exists, err := a.Docker.Inspect(t.Container())
-	s, _ := t.ReadStatus()
-	if err != nil {
-		r.Status = "error"
-	} else {
-		r.Status = task.Derive(st, exists, s)
-	}
-	if s != nil && s.TS > 0 {
-		r.LastActive = humanAgo(time.Since(time.Unix(s.TS, 0)))
-	}
-	if r.Branch == "" {
-		r.Branch = "(repo root)"
-		return r
-	}
-	meta, ok, _ := t.ReadMeta()
-	if ok && meta.Base != "" && t.WS.BranchExists(t.Branch()) {
-		if n, err := workspace.Git(t.WS.Root, "rev-list", "--count", meta.Base+".."+t.Branch()); err == nil {
-			r.Ahead = n
-		}
-		if d, err := workspace.Git(t.WS.Root, "diff", "--shortstat", meta.Base+"..."+t.Branch()); err == nil {
-			r.Diff = compactStat(d)
-		}
-	}
-	return r
 }
 
 // compactStat 把 "3 files changed, 10 insertions(+), 2 deletions(-)" 压成 "3f +10 -2"。
@@ -243,35 +198,6 @@ func humanAgo(d time.Duration) string {
 		return fmt.Sprintf("%dh ago", int(d.Hours()))
 	default:
 		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
-	}
-}
-
-func (a *App) lsCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "ls",
-		Short: "List the tasks in this workspace",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := a.load(); err != nil {
-				return err
-			}
-			names, err := a.taskNames()
-			if err != nil {
-				return err
-			}
-			fmt.Fprintf(a.Out, "workspace %s (%s)\n", a.WS.ID, a.WS.Root)
-			w := tabwriter.NewWriter(a.Out, 0, 4, 2, ' ', 0)
-			fmt.Fprintln(w, "TASK\tSTATUS\tBRANCH\tAHEAD\tDIFF\tLAST-ACTIVE\tPATH")
-			for _, n := range names {
-				t, err := a.task(n)
-				if err != nil {
-					continue
-				}
-				r := a.row(t)
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Task, r.Status, r.Branch, r.Ahead, r.Diff, r.LastActive, r.Path)
-			}
-			return w.Flush()
-		},
 	}
 }
 
@@ -317,7 +243,7 @@ func (a *App) doneCmd() *cobra.Command {
 			for _, n := range args {
 				t, err := a.task(n)
 				if err == nil {
-					err = a.done(t, force)
+					err = a.done(t, force, false)
 				}
 				if err != nil {
 					errs = append(errs, fmt.Errorf("%s: %w", n, err))
@@ -336,7 +262,9 @@ func (a *App) doneCmd() *cobra.Command {
 	return cmd
 }
 
-func (a *App) done(t task.Task, force bool) error {
+// done 结束一个 Task。dropping 为真时是 sbx drop 调的，分支马上就要删掉，
+// 这里就别再说"分支保留"了。
+func (a *App) done(t task.Task, force, dropping bool) error {
 	wtExists := false
 	if _, err := os.Stat(t.Worktree()); err == nil {
 		wtExists = true
@@ -355,6 +283,11 @@ func (a *App) done(t task.Task, force bool) error {
 	if taskID == "" {
 		taskID = t.ID()
 	}
+	// 端口转发容器接在 Task 网络上，不先删掉网络就删不动（M3-11）
+	if err := a.removePorts(t, 0); err != nil {
+		return err
+	}
+
 	if err := a.Docker.Rm(t.Container()); err != nil && !docker.IsNotFound(err) {
 		return err
 	}
@@ -383,6 +316,9 @@ func (a *App) done(t task.Task, force bool) error {
 		return err
 	}
 	os.Remove(filepath.Dir(t.StateDir()))
+	if dropping {
+		return nil
+	}
 	if t.IsMain() {
 		fmt.Fprintf(a.Out, "已结束 %s（仓库根保持不变）\n", t.Name)
 	} else {

@@ -29,3 +29,4 @@ go.work.sum
 /notes
 CLAUDE.md
 private
+dist/

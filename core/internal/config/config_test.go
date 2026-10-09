@@ -18,7 +18,7 @@ func TestDefaultWhenMissing(t *testing.T) {
 	if cfg.Network.Mode != "open" || cfg.Network.Proxy != "shared" || cfg.Network.CloudMCP {
 		t.Fatalf("%+v", cfg.Network)
 	}
-	if len(cfg.Deps.Mask) != 1 || cfg.Deps.Mask[0] != "node_modules" {
+	if len(cfg.Deps.Mask) != 2 || cfg.Deps.Mask[0] != "node_modules" || cfg.Deps.Mask[1] != ".next" {
 		t.Fatal(cfg.Deps)
 	}
 }

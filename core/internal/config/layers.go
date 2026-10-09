@@ -80,6 +80,8 @@ func Paths(home, wsRoot, wsID string) []Layer {
 // 校验放在全部合并完之后：单独一层往往是不完整的，分开校验会误报。
 func LoadLayers(layers []Layer) (Loaded, error) {
 	ld := Loaded{Config: Default(), Sources: map[string]Source{}, Layers: layers}
+	// 默认遮盖项跟 profile 走，而 profile 要合并完才知道，所以先清空、最后再补（M3-5）
+	ld.Config.Deps.Mask = nil
 	for i := range ld.Layers {
 		l := &ld.Layers[i]
 		data, err := os.ReadFile(l.Path)
@@ -105,6 +107,10 @@ func LoadLayers(layers []Layer) (Loaded, error) {
 		}
 		mergeLayer(&ld.Config, src, md, l.Name, ld.Sources)
 	}
+	// 补上这个 profile 的默认遮盖项（M3-5）。放在合并之后：profile 可能被后面的层
+	// 改掉，而列表是取并集的——先放 web-go 的默认值再并上 py-rust 的，会得到一份
+	// 四不像（多出来的遮盖项会在 worktree 里凭空建出目录来）。
+	ld.Config.Deps.Mask = union(ProfileMasks(ld.Config.Profile), ld.Config.Deps.Mask)
 	if err := ld.Config.Validate(); err != nil {
 		return ld, ld.annotate(err)
 	}
@@ -145,7 +151,11 @@ func bindings(c *Config) []binding {
 	return []binding{
 		{Key: "default_agent", Str: &c.DefaultAgent},
 		{Key: "profile", Str: &c.Profile},
+		{Key: "image", Str: &c.Image},
 		{Key: "max_running", Int: &c.MaxRunning},
+		{Key: "on_idle", Str: &c.OnIdle},
+		{Key: "on_exit", Str: &c.OnExit},
+		{Key: "notify_throttle", Int: &c.NotifyThrottle},
 		{Key: "network.upstream", Str: &c.Network.Upstream},
 		{Key: "network.proxy", Str: &c.Network.Proxy},
 		{Key: "network.mode", Str: &c.Network.Mode},

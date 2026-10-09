@@ -16,6 +16,9 @@ import (
 	"sandx/internal/workspace"
 )
 
+// Version 是 sbx 自己的版本，由 main 在启动时注入（make release 打进去）。
+var Version = "dev"
+
 // App 持有一次命令执行的公共依赖。
 type App struct {
 	Verbose bool
@@ -23,10 +26,19 @@ type App struct {
 	Err     io.Writer
 	Docker  *docker.Client
 
+	In_    io.Reader // 测试里替换；为空时用 os.Stdin
 	Home   string
 	Cfg    config.Config
 	Loaded config.Loaded // 分层结果：每个值来自哪一层（sbx config show）
 	WS     workspace.Workspace
+}
+
+// In 是确认提示读输入的地方。
+func (a *App) In() io.Reader {
+	if a.In_ != nil {
+		return a.In_
+	}
+	return os.Stdin
 }
 
 // Execute 是 main 的入口。
@@ -35,6 +47,7 @@ func Execute() int {
 	root := &cobra.Command{
 		Use:           "sbx",
 		Short:         "Run Claude Code / Codex tasks in container sandboxes",
+		Version:       Version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRun: func(cmd *cobra.Command, args []string) {
@@ -46,7 +59,7 @@ func Execute() int {
 		},
 	}
 	root.PersistentFlags().BoolVarP(&app.Verbose, "verbose", "v", false, "print every docker and git command sbx runs")
-	root.AddCommand(app.runCmd(), app.attachCmd(), app.shellCmd(), app.stopCmd(), app.lsCmd(), app.pathCmd(), app.doneCmd(), app.memoryCmd(), app.loginCmd(), app.configCmd(), app.trustCmd(), app.upgradeCmd(), app.netCmd())
+	root.AddCommand(app.runCmd(), app.attachCmd(), app.shellCmd(), app.stopCmd(), app.lsCmd(), app.pathCmd(), app.doneCmd(), app.dropCmd(), app.portCmd(), app.logsCmd(), app.memoryCmd(), app.loginCmd(), app.configCmd(), app.trustCmd(), app.upgradeCmd(), app.netCmd(), app.doctorCmd())
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(app.Err, "sbx:", err)
 		return 1

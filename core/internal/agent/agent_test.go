@@ -63,7 +63,7 @@ func TestSettingsJSON(t *testing.T) {
 		}
 		DisableConnectors bool `json:"disableClaudeAiConnectors"`
 	}
-	if err := json.Unmarshal(SettingsJSON(true), &v); err != nil {
+	if err := json.Unmarshal(SettingsJSON(GenInput{BlockCloudMCP: true}), &v); err != nil {
 		t.Fatal(err)
 	}
 	if !v.DisableConnectors {
@@ -72,7 +72,7 @@ func TestSettingsJSON(t *testing.T) {
 	var open struct {
 		DisableConnectors bool `json:"disableClaudeAiConnectors"`
 	}
-	json.Unmarshal(SettingsJSON(false), &open)
+	json.Unmarshal(SettingsJSON(GenInput{}), &open)
 	if open.DisableConnectors {
 		t.Fatal("cloud_mcp=true 时不应该写 disableClaudeAiConnectors")
 	}
@@ -162,7 +162,7 @@ func TestInspectHostClaude(t *testing.T) {
 		t.Fatal(h.Warnings)
 	}
 	gen := filepath.Join(dir, "gen")
-	if err := RenderGen(gen, h, true); err != nil {
+	if err := RenderGen(gen, GenInput{Host: h, BlockCloudMCP: true}); err != nil {
 		t.Fatal(err)
 	}
 	if b, _ := os.ReadFile(filepath.Join(gen, "host-claude", "CLAUDE.md")); string(b) != "hi" {
@@ -182,7 +182,7 @@ func TestSettingsStatusLine(t *testing.T) {
 	var got struct {
 		StatusLine struct{ Type, Command string } `json:"statusLine"`
 	}
-	if err := json.Unmarshal(SettingsJSON(false), &got); err != nil {
+	if err := json.Unmarshal(SettingsJSON(GenInput{}), &got); err != nil {
 		t.Fatal(err)
 	}
 	if got.StatusLine.Type != "command" || got.StatusLine.Command != "/sbx/gen/statusline.sh" {
@@ -271,5 +271,90 @@ func TestPreseedApprovesAPIKey(t *testing.T) {
 	before := run("")
 	if len(before["approved"].([]any)) != 1 {
 		t.Errorf("没配 key 时不该改动已有记录：%v", before)
+	}
+}
+
+// 配了 on_idle/on_exit 时，对应事件上要多挂一条通知命令，而且排在 status.sh 之后：
+// 状态先落盘，通知后发（通知是网络 IO，可能挂住）。
+func TestSettingsHooksNotify(t *testing.T) {
+	var v struct {
+		Hooks map[string][]struct {
+			Hooks []struct{ Type, Command string }
+		}
+	}
+	in := GenInput{OnIdle: "curl https://a.io/x"}
+	if err := json.Unmarshal(SettingsJSON(in), &v); err != nil {
+		t.Fatal(err)
+	}
+	notif := v.Hooks["Notification"][0].Hooks
+	if len(notif) != 2 || !strings.HasPrefix(notif[0].Command, "/sbx/gen/hooks/status.sh") ||
+		notif[1].Command != "/sbx/gen/hooks/notify.sh idle" {
+		t.Fatalf("Notification 的 hooks：%+v", notif)
+	}
+	// 没配 on_exit，SessionEnd 就只有状态那一条
+	if end := v.Hooks["SessionEnd"][0].Hooks; len(end) != 1 {
+		t.Fatalf("SessionEnd 的 hooks：%+v", end)
+	}
+	// 一条都没配时，所有事件都只有状态
+	json.Unmarshal(SettingsJSON(GenInput{}), &v)
+	for ev, entries := range v.Hooks {
+		if len(entries[0].Hooks) != 1 {
+			t.Errorf("%s 不该有通知：%+v", ev, entries[0].Hooks)
+		}
+	}
+}
+
+// 配置里删掉 on_idle / prompt 之后，上一次渲染的文件要跟着删，
+// 否则容器里会继续用旧的命令和旧的 prompt。
+func TestRenderGenRemovesStaleFiles(t *testing.T) {
+	gen := filepath.Join(t.TempDir(), "gen")
+	in := GenInput{OnIdle: "curl https://a.io/x", OnExit: "echo bye", Prompt: "do it", Throttle: 60}
+	if err := RenderGen(gen, in); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"hooks/on_idle.sh", "hooks/on_exit.sh", "prompt.txt", "notify.throttle", "hooks/notify.sh"} {
+		if _, err := os.Stat(filepath.Join(gen, filepath.FromSlash(f))); err != nil {
+			t.Fatalf("%s 没渲染：%v", f, err)
+		}
+	}
+	if b, _ := os.ReadFile(filepath.Join(gen, "prompt.txt")); string(b) != "do it\n" {
+		t.Fatalf("prompt 原样落盘：%q", b)
+	}
+	if b, _ := os.ReadFile(filepath.Join(gen, "notify.throttle")); strings.TrimSpace(string(b)) != "60" {
+		t.Fatalf("throttle：%q", b)
+	}
+	if st, _ := os.Stat(filepath.Join(gen, "hooks", "on_idle.sh")); st.Mode().Perm()&0o111 == 0 {
+		t.Fatal("on_idle.sh 必须可执行")
+	}
+	if err := RenderGen(gen, GenInput{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"hooks/on_idle.sh", "hooks/on_exit.sh", "prompt.txt", "notify.throttle"} {
+		if _, err := os.Stat(filepath.Join(gen, filepath.FromSlash(f))); !os.IsNotExist(err) {
+			t.Errorf("%s 应该被删掉：%v", f, err)
+		}
+	}
+}
+
+// headless 下 on_exit 由包装脚本发（它才有退出码）；挂在 SessionEnd 上的那条要让位，
+// 否则它会先把节流窗口占掉，真正带退出码的那条就发不出去了（M3-7 实测踩到）。
+func TestHeadlessOwnsExitNotify(t *testing.T) {
+	var v struct {
+		Hooks map[string][]struct {
+			Hooks []struct{ Type, Command string }
+		}
+	}
+	json.Unmarshal(SettingsJSON(GenInput{OnExit: "echo bye", OnIdle: "echo idle", Prompt: "do it"}), &v)
+	if got := v.Hooks["SessionEnd"][0].Hooks; len(got) != 1 {
+		t.Errorf("headless 下 SessionEnd 不该再挂通知：%+v", got)
+	}
+	// on_idle 不受影响：交互和 headless 都由 Notification 事件发
+	if got := v.Hooks["Notification"][0].Hooks; len(got) != 2 {
+		t.Errorf("Notification 的通知丢了：%+v", got)
+	}
+	// 交互模式下 SessionEnd 照旧
+	json.Unmarshal(SettingsJSON(GenInput{OnExit: "echo bye"}), &v)
+	if got := v.Hooks["SessionEnd"][0].Hooks; len(got) != 2 {
+		t.Errorf("交互模式下 SessionEnd 要发通知：%+v", got)
 	}
 }
