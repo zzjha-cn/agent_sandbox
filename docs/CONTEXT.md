@@ -1,6 +1,6 @@
 # sbx — AI 编码 Agent 沙箱运行时
 
-> 状态：M1（MVP）已实现（2026-10-06）。实现现状见 [architecture.md](architecture.md) 和 [walkthrough.md](walkthrough.md)，完整设计见 [design.md](design.md)，实施清单见 [implementation-checklist.md](implementation-checklist.md)（M1 详细清单见 [m1-checklist.md](m1-checklist.md)），决策详见 [private/adr/](private/adr/)。
+> 状态：M1（MVP）已实现（2026-10-06）。实现现状见 [architecture.md](architecture.md) 和 [walkthrough.md](walkthrough.md)，完整设计见 [design.md](design.md)，实施清单见 [implementation-checklist.md](implementation-checklist.md)（M1 详细清单见 [m1-checklist.md](m1-checklist.md)，M4 见 [m4-checklist.md](m4-checklist.md)），决策详见 [private/adr/](private/adr/)。
 
 ## 定位
 
@@ -73,7 +73,7 @@
 |---|---|
 | [0001](private/adr/0001-container-isolation.md) | 用容器级隔离，不绑定特定 Docker 实现 |
 | [0002](private/adr/0002-task-scoped-sandbox.md) | 每个 Task 一个 Sandbox，Workspace → Task → Sandbox |
-| [0003](private/adr/0003-worktree-with-writable-git.md) | 用 worktree，主 `.git` 可写挂载（已接受风险） |
+| [0003](private/adr/0003-worktree-with-writable-git.md) | 用 worktree，主 `.git` 可写挂载（R1 已由 0019 缓解） |
 | [0004](private/adr/0004-agent-in-tmux.md) | Agent 跑在容器内的 tmux 里，另有 headless 模式 |
 | [0005](private/adr/0005-egress-proxy-allowlist.md) | 用 Squid 做 Egress Proxy，白名单为默认，可切换 open |
 | [0006](private/adr/0006-auth-and-host-config.md) | 共享 sbx-home 存放登录态，宿主机配置只读挂入 |
@@ -87,6 +87,9 @@
 | [0014](private/adr/0014-proxy-shared-or-dedicated.md) | Egress Proxy 默认共享，可以配置为独占 |
 | [0015](private/adr/0015-block-cloud-mcp-by-default.md) | 默认拦截 claude.ai 云端 MCP 连接器 |
 | [0016](private/adr/0016-project-memory-sync.md) | 项目自动记忆：导入沙箱，手动导回 |
+| [0017](private/adr/0017-private-access.md) | 用具名「私有源」统一处理内网 / 私有化接入（已被 0018 部分取代，设计见 [private-access.md](private-access.md)） |
+| [0018](private/adr/0018-boundary-and-prep.md) | 前置依赖用 prep 固化，活的依赖用 sidecar 开窄洞（设计见 [boundary.md](boundary.md)） |
+| [0019](private/adr/0019-git-readonly-mounts.md) | 用嵌套只读挂载封住 `.git` 的代码执行面（R1），修订 0003 |
 
 ## M0 验证结论（2026-10-04）
 

@@ -426,17 +426,25 @@ http_access allow u_<id>
 
 ### 8.2 威胁、缓解与残余风险
 
+分级的尺子是：**这个威胁触及的东西，是不是"用完即弃"的。** 容器内的一切随 Task 销毁，所以那一层的埋点和持久化基本自行消解；真正要紧的是**不被丢弃的那几个面**——宿主机、worktree 里会被 merge 的代码、跨 Task 共享的 volume、以及 forward 接上的外部资源。
+
 | 威胁 | 缓解 | 残余风险 |
 |---|---|---|
+| 通过 `.git/hooks`、`.git/config` 在宿主机执行代码（R1） | `hooks/` 与 `config` 叠只读挂载，开关 `git.protect` 默认开（ADR 0019） | **有限**：submodule 的 `.git/modules/<name>/` 仍可写；项目自带 `core.hooksPath`（husky）指向 worktree 的情况不受保护 |
+| **在产出的代码里埋点，随 merge 进主干** | —（这是产出本身，沙箱按设计无法拦） | **存在，且是最主要的一条**。只能靠合并前 review；`sbx ls` 的 diff 统计和 Task 的 forward 标记辅助判断该用什么尺度看 |
 | 读写宿主机的其他文件 | 只挂载 worktree 和 `.git`；凭据目录不挂载 | worktree 里的 `.env` 可见，建议只放开发用的假凭据 |
 | 篡改宿主机的 Agent 配置，植入 hooks | 宿主机配置只读挂入；settings 由 `sbx` 生成 | 无 |
-| 通过 `.git/hooks`、`.git/config` 在宿主机执行代码 | —（ADR 0003 的已接受风险） | **存在**。后续可以评估：启动前做快照比对，或在宿主机侧设置 `core.hooksPath` |
 | 篡改主仓库的 refs 和默认分支 | — | **存在**。依赖你在合并前 review |
 | 篡改 `.sbx/` 来扩大自己的权限 | 信任哈希，变更后拒绝启动（ADR 0010） | 当前运行中的 Task 不受影响，直到它重启 |
-| 数据外传 | internal 网络，只能经过 squid 白名单 | 白名单内的域名（比如 GitHub gist）仍然可以被滥用 |
+| 数据外传 | **默认 `network.mode = "open"`，不拦截**（2026-10-08 起，ADR 0005 修订）。切 `allowlist` 后只能经白名单出网 | 这一条的权重取决于**接触面**而非出口：容器里本来就没有比源码更敏感的东西（agent 按设计就在读它）。但一旦用 `[[forward]]` 接入 🔴 级资源，接触面扩大，**建议同时切 `allowlist`**（ADR 0018） |
+| 污染共享缓存 `sbx-cache`，影响其他 Task 和 Workspace | — | **存在**。但与"上游 npm 包本身有漏洞"是同一种效果，沙箱的职责是约束恶意代码跑起来之后能干什么，而不是验证供应链。`go-mod`/`npm` 有 `go.sum`/integrity 兜底，`go-build`（实测 242MB）没有。不单独处理，归入隔离边界 |
+| 盗用共享登录态 `sbx-home` | —（共享是 ADR 0006 的设计目标，不共享就要每个 Task 重新登录） | **存在，无缓解，设计使然**。范围包括订阅凭据和跨所有 Workspace 的会话历史。`allowlist` 模式下外传路径较窄（白名单里只有 LLM API 和包源） |
+| 经 `[[forward]]` 破坏内部服务的真实数据 | 逐条显式声明；`to` 必须解析到私有地址；只能写在全局/工作区层；启动时解析并固化 IP；`sbx run` 逐条打印；记入 Task meta（ADR 0018） | **存在**。网络层管不了"连上去之后能干什么"——缓解必须在服务侧：只读账号、独立 schema、权限模型、流量控制 |
+| prep 构建期的凭据与内网可达被滥用 | 凭据用 BuildKit `--mount=type=secret`，不落层、不进沙箱；`.sbx/` 受信任确认 | 构建期是新的攻击面；trust 保护的是 Dockerfile 文本，不是 `FROM` 背后的镜像内容 |
 | 推送到远端 | 容器里没有 git 凭据 | 无 |
 | 资源耗尽，拖垮其他 Task | 每个 Task 的 CPU、内存、pids 上限；全局并发上限 | 无 |
 | 绕过 proxy 的 iptables 规则 | 不依赖容器内的 iptables，用网络拓扑隔离 | 无 |
+| 给 Task 容器加非 internal 网卡以绕过 squid | 明确禁止；forwarder 是 Task 网络里的普通 peer，不提供默认路由（ADR 0018） | 无 |
 
 ---
 

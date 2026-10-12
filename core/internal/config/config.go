@@ -212,7 +212,7 @@ func (c Config) Upstream() (host string, port string, err error) {
 	}
 	u, err := url.Parse(s)
 	if err != nil || u.Hostname() == "" || u.Port() == "" {
-		return "", "", fieldf("network.upstream", "network.upstream 非法：%q（示例：http://host.docker.internal:7890）", c.Network.Upstream)
+		return "", "", fieldf("network.upstream", "network.upstream is invalid: %q (example: http://host.docker.internal:7890)", c.Network.Upstream)
 	}
 	if u.Scheme != "http" {
 		return "", "", fieldf("network.upstream", "network.upstream only supports http upstreams: %q", c.Network.Upstream)
