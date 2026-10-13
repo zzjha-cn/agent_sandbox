@@ -20,6 +20,9 @@ const (
 	LayerGlobal    = "global"
 	LayerProject   = "project"
 	LayerWorkspace = "workspace"
+	// LayerPrep 是 prep 镜像里的 /sbx/prep.json（M4-15）。它不是文件层，不参与
+	// LoadLayers 的循环，而是在 sbx run 里合并进来的——但权限和项目层完全相同。
+	LayerPrep = "prep"
 )
 
 // Layer 是一层配置文件。Project 为 true 时要额外过 M2-2 的校验。
@@ -135,6 +138,35 @@ func (ld Loaded) annotate(err error) error {
 	return err
 }
 
+// MergePrep 把 prep 镜像里 /sbx/prep.json 的声明并入已经合并好的配置（M4-15、
+// boundary.md §2.5）。
+//
+// 权限等同项目层：先过 checkProject 的红线，字段是白名单而不是任意配置。理由是它和
+// .sbx/sandbox.toml 一样跟着仓库走、一样受信任确认覆盖，不该因为"藏在镜像里"反而更大。
+//
+// 它排在最后合并，但**不覆盖任何文件层已经写过的键**：顺序上在后不等于优先级更高，
+// 你在 ~/.sbx 里亲手写下的值不该被一个镜像里的 JSON 顶掉。
+func (ld *Loaded) MergePrep(allow []string, env map[string]string) error {
+	if err := CheckPrepManifest(allow, env); err != nil {
+		return err
+	}
+	if len(allow) > 0 {
+		ld.Config.Network.Allow = union(ld.Config.Network.Allow, allow)
+		mark(ld.Sources, "network.allow", LayerPrep, true)
+	}
+	for k, v := range env {
+		if _, taken := ld.Sources["env."+k]; taken {
+			continue
+		}
+		if ld.Config.Env == nil {
+			ld.Config.Env = map[string]string{}
+		}
+		ld.Config.Env[k] = v
+		mark(ld.Sources, "env."+k, LayerPrep, false)
+	}
+	return ld.Config.Validate()
+}
+
 // binding 把一个配置字段和它的点号 key 绑在一起，合并和打印都走这张表。
 type binding struct {
 	Key  string
@@ -165,6 +197,11 @@ func bindings(c *Config) []binding {
 		{Key: "resources.memory", Str: &c.Resources.Memory},
 		{Key: "resources.pids", Int: &c.Resources.Pids},
 		{Key: "deps.mask", List: &c.Deps.Mask},
+		{Key: "git.protect", Bool: &c.Git.Protect},
+		{Key: "prep.file", Str: &c.Prep.File},
+		{Key: "prep.watch", List: &c.Prep.Watch},
+		{Key: "prep.secrets", List: &c.Prep.Secrets},
+		{Key: "prep.on_drift", Str: &c.Prep.OnDrift},
 	}
 }
 
@@ -189,6 +226,38 @@ func mergeLayer(dst *Config, src Config, md toml.MetaData, layer string, srcs ma
 		}
 		mark(srcs, d.Key, layer, d.List != nil)
 	}
+	// env 和 prep.secret 一样逐键合并：后面的层改一个变量，不该把前面的整份顶掉。
+	for k, v := range src.Env {
+		if !md.IsDefined("env", k) {
+			continue
+		}
+		if dst.Env == nil {
+			dst.Env = map[string]string{}
+		}
+		dst.Env[k] = v
+		mark(srcs, "env."+k, layer, false)
+	}
+	// services / forward 按 name 合并：同名的后面层整条覆盖，新名字追加在后。
+	// 不走 union 是因为它们是结构体，"同一个 db 换个镜像"必须是覆盖而不是两条。
+	if md.IsDefined("services") {
+		dst.Services = mergeServices(dst.Services, src.Services)
+		mark(srcs, "services", layer, true)
+	}
+	if md.IsDefined("forward") {
+		dst.Forward = mergeForwards(dst.Forward, src.Forward)
+		mark(srcs, "forward", layer, true)
+	}
+	// prep.secret 是 id -> 宿主机路径的 map，和 agents 一样逐键合并。
+	for id, path := range src.Secret() {
+		if !md.IsDefined("prep", "secret", id) {
+			continue
+		}
+		if dst.Prep.Secret == nil {
+			dst.Prep.Secret = map[string]string{}
+		}
+		dst.Prep.Secret[id] = path
+		mark(srcs, "prep.secret."+id, layer, false)
+	}
 	for name, a := range src.Agents {
 		cur, touched := dst.Agents[name], false
 		df, sf := agentFields(&cur), agentFields(&a)
@@ -208,6 +277,39 @@ func mergeLayer(dst *Config, src Config, md toml.MetaData, layer string, srcs ma
 		}
 		dst.Agents[name] = cur
 	}
+}
+
+func mergeServices(old, add []Service) []Service {
+	out := append([]Service(nil), old...)
+	for _, s := range add {
+		if i := indexFunc(len(out), func(i int) bool { return out[i].Name == s.Name }); i >= 0 {
+			out[i] = s
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+func mergeForwards(old, add []Forward) []Forward {
+	out := append([]Forward(nil), old...)
+	for _, f := range add {
+		if i := indexFunc(len(out), func(i int) bool { return out[i].Name == f.Name }); i >= 0 {
+			out[i] = f
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
+func indexFunc(n int, eq func(int) bool) int {
+	for i := 0; i < n; i++ {
+		if eq(i) {
+			return i
+		}
+	}
+	return -1
 }
 
 // agentFields 是 agents.<name> 下可配置的字段，顺序就是 sbx config show 的输出顺序。
@@ -251,6 +353,25 @@ func (ld Loaded) Show() [][3]string {
 	for _, b := range bindings(&ld.Config) {
 		rows = append(rows, [3]string{b.Key, b.render(), ld.Sources[b.Key].String()})
 	}
+	ids := make([]string, 0, len(ld.Config.Prep.Secret))
+	for id := range ld.Config.Prep.Secret {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		key := "prep.secret." + id
+		rows = append(rows, [3]string{key, ld.Config.Prep.Secret[id], ld.Sources[key].String()})
+	}
+	for _, k := range sortedMapKeys(ld.Config.Env) {
+		key := "env." + k
+		rows = append(rows, [3]string{key, strconv.Quote(ld.Config.Env[k]), ld.Sources[key].String()})
+	}
+	for _, s := range ld.Config.Services {
+		rows = append(rows, [3]string{"services." + s.Name, fmt.Sprintf("%s port %d", s.Image, s.Port), ld.Sources["services"].String()})
+	}
+	for _, f := range ld.Config.Forward {
+		rows = append(rows, [3]string{"forward." + f.Name, fmt.Sprintf("%d -> %s", f.Port, f.To), ld.Sources["forward"].String()})
+	}
 	names := make([]string, 0, len(ld.Config.Agents))
 	for n := range ld.Config.Agents {
 		names = append(names, n)
@@ -268,6 +389,15 @@ func (ld Loaded) Show() [][3]string {
 		}
 	}
 	return rows
+}
+
+func sortedMapKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func (b binding) render() string {

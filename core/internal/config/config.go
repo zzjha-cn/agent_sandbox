@@ -34,6 +34,26 @@ type Deps struct {
 	Mask []string `toml:"mask"`
 }
 
+// Prep 是前置依赖的固化（M4-6、boundary.md §2）：在宿主机上 docker build 出一个镜像，
+// 内容播种进 Task 的 volume。构建期有网有凭据，Task 容器一行私有网络配置都不需要。
+type Prep struct {
+	File    string   `toml:"file"`    // 相对仓库根，默认 .sbx/prep.Dockerfile
+	Watch   []string `toml:"watch"`   // 参与 tag 哈希的文件（go.mod、package-lock.json……）
+	Secrets []string `toml:"secrets"` // BuildKit secret 的 **id**，没有值，可以进仓库
+	OnDrift string   `toml:"on_drift"`
+	// Secret 把 id 映射到宿主机上的文件路径。只能写在全局层或工作区层——
+	// 项目层整棵 prep.secret 子树都被红线挡住。
+	Secret map[string]string `toml:"secret"`
+}
+
+// Git 控制对宿主机仓库元数据的保护（M4-1、ADR 0019）。
+type Git struct {
+	// Protect 为 true 时把 .git/hooks 和 .git/config 以只读挂进容器。
+	// 关掉等于回到 ADR 0003 的原始风险：容器里写一个 pre-commit hook，
+	// 下次在宿主机上 git commit 就执行它。这是个安全开关，项目层不得设置。
+	Protect bool `toml:"protect"`
+}
+
 // MemoryBytes 把 resources.memory（3g / 512m / 1024）换成字节数。
 // 格式由 Validate 保证，这里解析不出来就返回 0，调用方按"算不出来"处理。
 func (r Resources) MemoryBytes() int64 {
@@ -78,13 +98,20 @@ type Config struct {
 	// OnIdle / OnExit 是在容器里执行的通知命令（M3-10、design §7.2）。
 	// 它们只能写在全局层或工作区层——项目层的红线会拦住（跟着仓库走的配置
 	// 不该决定沙箱里执行什么命令）。
-	OnIdle         string           `toml:"on_idle"`
-	OnExit         string           `toml:"on_exit"`
-	NotifyThrottle int              `toml:"notify_throttle"` // 秒；两次同类通知的最小间隔
-	Network        Network          `toml:"network"`
-	Resources      Resources        `toml:"resources"`
-	Deps           Deps             `toml:"deps"`
-	Agents         map[string]Agent `toml:"agents"`
+	OnIdle         string    `toml:"on_idle"`
+	OnExit         string    `toml:"on_exit"`
+	NotifyThrottle int       `toml:"notify_throttle"` // 秒；两次同类通知的最小间隔
+	Network        Network   `toml:"network"`
+	Resources      Resources `toml:"resources"`
+	Deps           Deps      `toml:"deps"`
+	Git            Git       `toml:"git"`
+	Prep           Prep      `toml:"prep"`
+	// Env 是额外注入 Task 容器的环境变量。prep 的 /sbx/prep.json 也往这里并（M4-15）。
+	Env      map[string]string `toml:"env"`
+	Services []Service         `toml:"services"`
+	// Forward 只能来自全局层或工作区层（boundary.md §3.3.2）。
+	Forward []Forward        `toml:"forward"`
+	Agents  map[string]Agent `toml:"agents"`
 }
 
 // profileMasks 是各 Profile 默认要遮盖的依赖目录（M3-5、ADR 0008）。
@@ -115,7 +142,11 @@ func Default() Config {
 		Network:   Network{Proxy: "shared", Mode: "open"},
 		Resources: Resources{CPUs: 2, Memory: "3g", Pids: 1024},
 		Deps:      Deps{Mask: ProfileMasks("web-go")},
-		Agents:    map[string]Agent{"claude": {Version: "latest"}},
+		Git:       Git{Protect: true},
+		// on_drift 默认只提醒不构建：自动构建意味着每次 sbx run 都可能悄悄连内网，
+		// 边界就糊了（boundary.md §2.6）。
+		Prep:   Prep{File: ".sbx/prep.Dockerfile", OnDrift: "warn"},
+		Agents: map[string]Agent{"claude": {Version: "latest"}},
 	}
 }
 
@@ -185,6 +216,19 @@ func (c Config) Validate() error {
 				"agents.%s sets both api_key_env and api_key_file; pick one", name)
 		}
 	}
+	switch c.Prep.OnDrift {
+	case "warn", "build", "fail":
+	default:
+		return fieldf("prep.on_drift", "prep.on_drift must be warn, build or fail: %q", c.Prep.OnDrift)
+	}
+	if err := c.validateSidecars(); err != nil {
+		return err
+	}
+	for _, id := range c.Prep.Secrets {
+		if _, ok := c.Prep.Secret[id]; !ok {
+			return fieldf("prep.secrets", "prep.secrets lists %q but [prep.secret] has no path for it; add it to ~/.sbx/config.toml", id)
+		}
+	}
 	switch c.Network.Mode {
 	case "allowlist", "open":
 	default:
@@ -219,6 +263,9 @@ func (c Config) Upstream() (host string, port string, err error) {
 	}
 	return u.Hostname(), u.Port(), nil
 }
+
+// Secret 返回 prep.secret 的内容，供配置合并逐键处理。
+func (c Config) Secret() map[string]string { return c.Prep.Secret }
 
 // ClaudeVersion 返回 agents.claude.version，默认 latest。
 func (c Config) ClaudeVersion() string {

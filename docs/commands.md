@@ -28,7 +28,7 @@ ln -sf "$PWD/bin/sbx" /usr/local/bin/sbx    # 可选，放进 PATH
 
 需要 Docker Desktop 已启动，内存建议 10GB。
 
-需要宿主机代理时写 `~/.sbx/config.toml`（全部字段见[下文](#配置文件sbxconfigtoml)）：
+需要宿主机代理时写 `~/.sbx/config.toml`（全部字段见下文「配置：四层」一节）：
 
 ```toml
 [network]
@@ -180,7 +180,7 @@ sbx ls                          # 不进目录也能看 AHEAD / DIFF
 ```bash
 sbx attach fix-login      # 回到 Agent 的 tmux 会话
 sbx shell fix-login       # 在同一个容器里另开一个 bash（不打扰 Agent）
-sbx stop fix-login        # 停容器，保留一切；sbx run 可恢复
+sbx stop fix-login        # 停容器和它的伴生服务/forwarder，保留一切；sbx run 可恢复
 ```
 
 三个都要求容器在运行，否则提示你去 `sbx run`。
@@ -212,6 +212,7 @@ cd "$(sbx path fix-login)"
 | `AHEAD` | 相对 base 的提交数。**`0` 意味着 Agent 还没提交过任何东西** |
 | `DIFF` | `3f +10 -2` = 3 个文件、+10 行、-2 行（相对 base 的三点 diff） |
 | `DENIED` | 这个 Task 被代理拦掉的请求数（只数"不在白名单"那一类）。`-` 表示这次没统计到（代理没在跑） |
+| `LINKS` | 挂着的伴生容器：`svc:1 fwd:2`。**`fwd` 非 0 的分支是接过真实内部服务跑出来的**，事后 review 该用不一样的尺度看 |
 | `LAST-ACTIVE` | hooks 最后一次写状态的时间 |
 | `PATH` | worktree 路径（`~` 缩写） |
 
@@ -319,6 +320,9 @@ sbx trust             # 确认这个仓库的 .sbx/ 内容（见下）
 | `~/.claude/projects/<key>/memory/` | 每次 `run` 导入；回来要 `sbx memory pull`（ADR 0016） |
 | git `user.name` / `user.email` | 读仓库配置，注入成 `GIT_AUTHOR_*` / `GIT_COMMITTER_*` |
 | 时区 | 读 `/etc/localtime`，注入 `TZ` |
+| 仓库的 `.git` | bind 挂载，**可写**；但 `.git/hooks` 和 `.git/config` 以**只读**盖在它上面（M4-1） |
+
+`.git` 必须可写：沙箱里的提交能直接出现在你宿主机的 `git log sbx/<task>` 里、不需要任何同步，靠的就是这个。但"写一下就能在宿主机上执行代码"的那两个口子——埋一个 `pre-commit`，或者把 `core.hooksPath` 指到 agent 控得住的地方——是只读的，submodule（含嵌套）一并处理。身份走 `GIT_AUTHOR_*` 环境变量，所以 `git commit` 不受影响。想退回没有防护的行为写 `git.protect = false`；它是**安全开关**，项目层开关都不许设。
 
 **不会进去的**：`~/.claude/settings.json`、`~/.claude/scripts/`、`plugins/`、MCP 配置、各种 API key。沙箱的 claude 配置是另外两层：
 
@@ -367,7 +371,11 @@ sbx trust             # 确认这个仓库的 .sbx/ 内容（见下）
 | `trust` | `--show` | false（展示并询问；加上则只看不写） |
 | | `-y, --yes` | false（先问） |
 | `config show` | 无 | |
-| `attach/shell/stop/ls/path/upgrade` | 无 | |
+| `prep init` | `--force` | false（已存在就报错） |
+| `prep build` | `--check` | false（构建并播种；加上则只报告） |
+| `prep reseed <task>` | `--yes` | false（要输 Task 名确认） |
+| `prep drop` | `--all` | false（保留当前 tag 的镜像） |
+| `attach/shell/stop/ls/path/upgrade/prep show` | 无 | |
 
 ---
 
@@ -388,6 +396,135 @@ profile = "web-go"     # 内置：web-go（Go + Node + Python）| py-rust（uv +
 **语言运行时按项目走（mise）**：worktree 里有 `.tool-versions`、`mise.toml`、`.nvmrc`、`.python-version`、`rust-toolchain.toml` 时，`sbx run` 会在容器里跑一次 `mise install`，装到全局共享的 `sbx-mise` volume 里——**第二个用同样版本的 Task 直接复用**（实测 51s → 2.8s）。装不上只警告，不挡住 Task 启动。
 
 **依赖遮盖的默认值跟着 Profile 走**：web-go 是 `node_modules`、`.next`，py-rust 是 `.venv`、`target`。自己写 `deps.mask` 时是**追加**，不是替换。
+
+---
+
+## 私有依赖固化：`sbx prep`（M4-6…M4-9、boundary.md §2）
+
+**要解决的问题**：依赖在公司私有源上，而 Task 容器只有一条经 squid 的 HTTP 出口，到不了内网。给沙箱开内网权限是最贵的做法——凭据要进容器，接触面一下子铺开。
+
+**换个方向**：把「取」挪到宿主机上，Task 只负责用。宿主机上 `docker build` 一次，有完整的内网可达性和凭据；产出的镜像当种子，内容播种进 Task 的 volume。**凭据只在 build 期存在，agent 永远碰不到，Task 容器一行私有网络配置都不需要。**
+
+```
+.sbx/prep.Dockerfile ──build（有网有凭据）──> sbx/prep-<ws>:<hash> ──cp──> Task volume
+```
+
+### 四步上手
+
+```bash
+sbx prep init             # 生成带注释的模板，契约写在注释里（也是给 agent 看的 ground truth）
+# 编辑 .sbx/prep.Dockerfile，或者让 agent 照着注释填
+sbx prep build --check    # 只构建 + 报告会播种什么，不碰任何 volume
+sbx prep build            # 构建；新建的 Task 从它播种
+```
+
+`--check` 的报告就是反馈回路，具体到能照着改：
+
+```console
+$ sbx prep build --check
+seeded:   node_modules 57kB · cache/npm 8kB
+declared: allow +1 (gitlab.corp.test) · env +1 (NODE_ENV)
+warning:  .next is in deps.mask but /src/.next does not exist in the image
+(--check: nothing was seeded)
+```
+
+### 播种的契约
+
+写 Dockerfile 的时候只要记住两条——其余的 sbx 自己认：
+
+| 镜像里的位置 | 播到哪儿 |
+|---|---|
+| `WORKDIR` 下命中 `deps.mask` 的目录（`node_modules`、`.venv`、`target`…） | 这个 Task 对应的依赖 volume |
+| `/sbx/cache/*` | 全局共享的 `sbx-cache` |
+
+`/sbx/cache` 和容器里的 `GOMODCACHE` / `npm_config_cache` 指向同一处，所以 Dockerfile 里照常 `go mod download`、`npm ci` 就行，不用改任何环境变量。
+
+**凭据用 BuildKit secret**，不要 `COPY` 也不要 `ARG`——它只在那一条 `RUN` 的挂载期间可见，不落进任何镜像层（`docker history` 里也看不到）：
+
+```dockerfile
+RUN --mount=type=secret,id=netrc,target=/root/.netrc \
+    go mod download
+```
+
+```toml
+# <repo>/.sbx/sandbox.toml —— 只有 id，没有值，可以进仓库
+[prep]
+secrets = ["netrc"]
+
+# ~/.sbx/config.toml —— 值在这里，项目层整段被红线挡住
+[prep.secret]
+netrc = "~/.sbx/secrets/corp.netrc"
+```
+
+### 新鲜度：tag 就是内容哈希
+
+`tag = hash(prep.Dockerfile + watch 列出的文件内容)`。所以**"这个 tag 的镜像不存在"就等于"依赖漂移了或者从没构建过"**，不需要另记一份状态。
+
+解析 Dockerfile 猜不出它 `COPY` 了什么，所以要项目层明说哪些文件算数（相对路径，是事实陈述，红线放行）：
+
+```toml
+[prep]
+watch = ["go.mod", "go.sum", "package-lock.json"]
+on_drift = "warn"   # warn（默认）| build | fail
+```
+
+- `warn`（默认）：提醒一句，Task 照常起，依赖 volume 是空的。**默认不自动构建**——自动构建意味着每次 `sbx run` 都可能悄悄连一次内网，边界就糊了。
+- `build`：自动构建。它是**安全开关**，只能写在全局层或工作区层，项目层不得设置。
+- `fail`：直接报错，适合 CI。
+
+### 只在 volume 新建时播种
+
+`sbx run` 建 Task 时，只往**这次新建的** volume 里播种，不碰已经装好东西的 volume。对运行中的 Task 重新播种会抹掉它自己装的依赖，所以那是一条单独的、必须确认的命令：
+
+```console
+$ sbx prep reseed fix-login
+this overwrites fix-login's dependency volumes (node_modules, .next) with the contents of sbx/prep-shop-e76272:a1b2c3d4e5f6.
+anything the agent installed in them is lost.
+Type the task name to confirm (fix-login):
+```
+
+它还会拒绝对正在跑的 Task 动手——边写边换 volume 的结果没人能预料。
+
+> **共享缓存是个例外**：`sbx-cache` 是全局的，装过一次 sbx 的人它早就存在了，照"只在新建时播种"的话 go-mod / npm 这类缓存种子对老用户**永远不生效**。缓存又和依赖目录不同——`cp -a` 进子目录是合并不是覆盖，重播不会抹掉谁装的东西。所以它按 tag 变化重播，标记写在 `sbx-cache/.sbx-prep/<ws>`（放 volume 里而不是宿主机 state：volume 删了标记跟着没，不会错判）。
+
+### 看一眼现在是什么状态
+
+```console
+$ sbx prep show
+dockerfile: .sbx/prep.Dockerfile
+watching:   go.mod, go.sum
+tag:        sbx/prep-shop-e76272:a1b2c3d4e5f6
+
+TASK       SEED     FROM
+fix-login  seeded   a1b2c3d4e5f6
+add-search stale    9f8e7d6c5b4a      ← 它是用旧种子建的
+main       no seed  -
+```
+
+`tag` 后面跟着 `<- not built yet (sbx prep build)` 就说明漂移了。
+
+### 构建期的网络：两条代理注入路都要堵
+
+Docker Desktop 会把它设置里的代理注入 `docker build`——不管掉的话构建会原样重演"全走代理、到不了内网"。sbx 在 `prep build` 里把两条路都堵上：
+
+| 注入路径 | 怎么堵 |
+|---|---|
+| `~/.docker/config.json` 的 `proxies`（**CLI 自己转成 `--build-arg`**） | 显式传同名的空 `--build-arg` 盖住 |
+| 进程环境里的 `HTTP_PROXY` 等（影响 CLI 自己的出站连接） | 置空后再执行 |
+
+**只清环境变量是没用的**，Docker Desktop 用的是第一条。
+
+### 子命令
+
+| 命令 | 作用 |
+|---|---|
+| `sbx prep init [--force]` | 生成带注释的 `.sbx/prep.Dockerfile` 模板 |
+| `sbx prep build [--check]` | 构建并播种；`--check` 只报告不碰 volume |
+| `sbx prep show` | 当前 tag、是否漂移、哪些 Task 是从哪个种子建的 |
+| `sbx prep reseed <task> [--yes]` | 对一个**已停止**的 Task 重新播种（破坏性，要输 Task 名确认） |
+| `sbx prep drop [--all]` | 删这个 Workspace 的 prep 镜像；默认保留当前这个 |
+
+> 没有 `.sbx/prep.Dockerfile` 的仓库完全不受影响：prep 是特殊场景的补丁，不是必经之路。
 
 ---
 
@@ -428,6 +565,8 @@ sbx drop spike -y   # 脚本里用
 **标量后者覆盖前者，列表取并集。** 后一条的代价要知道：列表项只能加不能减，想去掉内置默认的 `node_modules` 目前没有办法。
 
 `<ws>` 是 `sbx ls` 第一行打印的 Workspace id（如 `shop-e76272`），不是目录名——同名仓库不会撞车。
+
+还有第五个来源：prep 镜像里的 `/sbx/prep.json`（M4-15、boundary.md §2.5）。它只能声明 `allow` / `env` / `ca` 三个白名单字段，**权限等同项目层**（走同一套红线），在 `sbx config show` 里来源显示为 `prep`。它排在最后合并，但**不覆盖任何文件层已经写过的键**——顺序在后不等于优先级更高，你亲手写下的值不该被一个镜像里的 JSON 顶掉。
 
 ### `sbx config show`
 
@@ -496,6 +635,7 @@ sbx trust -y       # 不询问直接记下
 - 快照里**存了文本文件的内容**（≤256KB），所以第二次变更能直接给你 diff，不用去翻 git 历史。二进制和超大文件只存哈希：变了会告诉你，但给不出 diff。
 - 记录在 `~/.sbx/trust/<ws>.json`，**按 Workspace 分开**。同一份代码 clone 到两个目录是两个 Workspace，各自确认各自的。
 - 只拦 `sbx run`。**已经在跑的 Task 不受影响**，`attach`、`shell`、`ls` 照常。
+- **安全开关只能写在全局层或工作区层**（目前是 `git.protect`）。和"密钥类字段""执行类字段"那种按键名形状猜的红线不同，这一条是一份显式清单：跟着仓库走的配置不该有能力关掉保护，哪怕信任确认会把改动摊开给你看。
 - `sbx net allow --project` 写完 `.sbx/sandbox.toml` 会顺手更新信任记录——这次改动是你让 sbx 做的。但**仅限写之前本来就是已信任状态**，否则会把别人留下的、你还没看过的改动一起放行。
 
 ```toml
@@ -524,6 +664,43 @@ pids   = 1024
 [deps]
 mask = ["node_modules"]       # 每一项在容器里挂一个独立 volume 遮住，避免污染宿主机
 
+# 前置依赖固化（M4-6、boundary.md §2）。没有 .sbx/prep.Dockerfile 时整段不起作用
+[prep]
+# file   = ".sbx/prep.Dockerfile"
+# watch  = ["go.mod", "go.sum"]   # 这些文件变了就算种子陈旧（tag = 两者内容的哈希）
+# secrets = ["netrc"]             # 只有 BuildKit secret 的 id，没有值，可以进仓库
+# on_drift = "warn"               # warn（默认，只提醒）| build（自动构建）| fail
+#                                 # 安全开关，只能写在全局层或工作区层
+
+# [prep.secret]                   # id -> 宿主机路径。整段只能写在全局层或工作区层
+# netrc = "~/.sbx/secrets/corp.netrc"
+
+[git]
+protect = true                # 把 .git/hooks 和 .git/config 只读挂载（M4-1）。
+                              # 这是安全开关，只能写在全局层或工作区层
+
+# 注入 Task 容器的环境变量。prep 的 /sbx/prep.json 也往这里并（M4-15）；
+# 代理和 git 身份那几个变量盖不住——它们是沙箱的骨架
+# [env]
+# GOFLAGS = "-mod=mod"
+
+# 伴生容器（M4-10、boundary.md §3.2）。字段只有这四个：没有地址、没有凭据、
+# 不能挂宿主机路径、不能提权，所以**可以写在项目层**、可以进仓库
+# [[services]]
+# name  = "db"
+# image = "postgres:16"
+# port  = 5432                    # 容器里按 db:5432 访问——服务名，不是 localhost
+# env   = { POSTGRES_PASSWORD = "dev" }
+
+# 单目标 TCP 洞（M4-12、boundary.md §3.3）。**只能写在全局层或工作区层**，
+# 项目层整段被红线挡住：跟着仓库走的配置不该决定你的机器往哪儿连
+# [[forward]]
+# name = "staging-db"
+# port = 5432                     # 容器里按 staging-db:5432 访问
+# to   = "10.10.16.80:5432"       # 裸端口号（to = 5432）表示宿主机
+# host = "gitlab.corp.internal"   # 可选：容器里仍用真实域名访问，保住 SNI 和证书
+# allow_public = false            # 解除"目标必须是私有地址"，会醒目警告
+
 [agents.claude]
 version      = "latest"       # 写死版本会让 sbx upgrade 拒绝执行
 # api_key_env  = "ANTHROPIC_API_KEY"   # 从宿主机环境变量读，优先于订阅登录
@@ -532,7 +709,147 @@ version      = "latest"       # 写死版本会让 sbx upgrade 拒绝执行
 
 **生效优先级**：命令行 flag（`--net`、`--proxy`）> 配置文件 > 内置默认值。这两个 flag 只改这一次执行，不落盘；`sbx net allow` 落盘。
 
-**改了配置什么时候生效**：`network.allow` 对运行中的 Task 可以用 `net allow` 热加载；`resources`、`deps.mask`、`profile`、`network.proxy` 是建容器时定的，要 `done` 后重建；`mode` 和 `upstream` 下次 `run` 时重新渲染 proxy 配置。
+**改了配置什么时候生效**：`network.allow` 对运行中的 Task 可以用 `net allow` 热加载；`resources`、`deps.mask`、`git.protect`、`env`、`forward` 的 `host`、`profile`、`network.proxy` 是建容器时定的，要 `done` 后重建；`mode` 和 `upstream` 下次 `run` 时重新渲染 proxy 配置；`services` 和 `forward` 的增减在下次 `run` 时生效（已经起着的伴生容器原样留着）。
+
+两者的用法、场景和约束见下文「伴生服务与内网目标」一节。
+
+---
+
+## 伴生服务与内网目标：`[[services]]` / `[[forward]]`（M4-10…M4-14、boundary.md §3）
+
+Task 的网络是 `--internal` 的：**容器没有默认路由**，能出 HTTP 只是因为 squid 就在这张网上。下面两样东西都是往这张网里加 peer，**没有一条给 Task 自己多插网卡**——不变量没动过，有自动化回归测试盯着（`go test -tags docker ./core/internal/cli/ -run NoDefaultRoute`）。
+
+### 先分清三个安全等级
+
+"连数据库"这句话盖住了三个完全不同的东西：
+
+| 形态 | agent 被完全控制时的最坏情况 | 级别 | 用什么 |
+|---|---|---|---|
+| 容器内伴生实例（空库 / 种子库） | 删掉一个本来就一次性的库 | 🟢 | `[[services]]` |
+| 宿主机上的实例 | 删你本机的开发数据 | 🟡 | `[[forward]]` |
+| 内网共享实例（staging / dev） | 删别人的数据、读真实用户数据、写操作不可逆 | 🔴 | `[[forward]]` + 只读账号 |
+
+redis、kafka、MinIO、内网微服务同构。**判据：共享的、有真实数据的、可写的 = 红。**
+
+**能用容器内实例就用容器内实例**（🟢 不需要任何洞）；够不着才用 `[[forward]]` 逐条开洞。
+
+### 场景 A：测试要一个 postgres（🟢）
+
+不解决会怎样：全红。agent 会去试 `apt-get install postgresql`（没 root）、试 `docker run`（没 docker.sock），然后**开始改测试代码绕过数据库**。无人值守下它不会停下来问你——这是最糟的失败模式：不是报错退出，是悄悄产出垃圾。
+
+```toml
+# <repo>/.sbx/sandbox.toml —— 可以进仓库：没有地址、没有凭据、不能挂宿主机路径
+[[services]]
+name  = "db"
+image = "postgres:16"
+port  = 5432
+env   = { POSTGRES_PASSWORD = "dev", POSTGRES_DB = "app" }
+```
+
+```console
+$ sbx run fix-login
+service db: postgres:16, reachable in the task as db:5432
+```
+
+**容器里按 `db:5432` 访问——服务名，不是 `localhost`。** 它是另一个容器，而 `localhost` 在 Task 里指的是 Task 自己。把测试里的连接地址指到 `db` 上（或者用 `DATABASE_URL` 之类的环境变量），这是落地时唯一要改的东西。
+
+### 场景 B：连你本机已经在跑的实例（🟡）
+
+```toml
+# ~/.sbx/config.toml 或 ~/.sbx/workspaces/<ws>.toml —— 不能写在项目层
+[[forward]]
+name = "db"
+port = 5432
+to   = 5432     # 只写端口号 = 宿主机
+```
+
+### 场景 C：连内网的 staging 库（🔴）
+
+```toml
+[[forward]]
+name = "staging-db"
+port = 5432
+to   = "db.corp.internal:5432"   # 或者直接写 "10.10.16.80:5432"
+```
+
+只要宿主机在公司网里（直连 LAN 或 VPN 已连），`sbx-egress` 网络就能到——forwarder 跑在那上面，所以容器也就能到。**不需要先 `ssh -L`**：中介点是 forwarder 本身，不是宿主机，强制走一道隧道不增加任何安全性。
+
+> 例外：数据库在跳板机后面、宿主机自己也到不了，那才需要你先建隧道，然后按场景 B 的写法指向本地端口。这是网络可达性的问题，不是 sbx 的规定。
+
+```console
+$ sbx run fix-login
+forward staging-db: staging-db:5432 in the task -> 10.10.16.80:5432 (internal network)
+note: these forwards reach real internal services: staging-db
+      whatever the agent does to them, it does for real:
+      use a read-only account or a separate schema; the network layer cannot undo a DROP TABLE.
+      network.mode is open, so this task has both real data and unrestricted egress.
+      consider network.mode = "allowlist" for this workspace (or sbx run --net allowlist).
+```
+
+### 场景 D：内网 HTTPS 服务，想保住域名和证书
+
+数据库用 `staging-db:5432` 就够了，但内网 HTTPS 服务改成别的主机名会让证书 CN 对不上，应用配置也得改。加一个 `host` 字段可以避免：
+
+```toml
+[[forward]]
+name = "gitlab"
+host = "gitlab.corp.internal"   # 容器里仍用真实域名访问
+port = 443
+to   = "10.10.16.50:443"
+```
+
+实现是给 Task 容器加 `--add-host gitlab.corp.internal:<forwarder 的 IP>`。socat 是纯 TCP 中继，SNI 和证书原样透传，TLS 握手不受影响。
+
+**但这条路绕过了 squid 的白名单和访问日志。** 内网 HTTP/HTTPS 的选择顺序是：先看能不能走 `network.allow` + squid（流量仍受审计），确实不行再用 `forward` + `host`。
+
+### `to` 必须解析到私有地址
+
+这是 forwarder 唯一的硬限制，理由很具体：**如果 `to` 能写任意地址，forwarder 就成了绕过 squid 的通用出网隧道**——这条流量不再受白名单约束、不进访问日志、`sbx net denied` 也看不见。
+
+```console
+$ sbx run fix-login
+sbx: opening the declared forwards: forward tunnel: example.com resolves to 104.20.23.154,
+which is a public address. Public hosts go through network.allow + squid, where they are
+filtered and logged.
+If your company really uses public address ranges internally, set allow_public = true on this one forward
+```
+
+放行的范围是 `10.0.0.0/8`、`172.16.0.0/12`、`192.168.0.0/16`、`127.0.0.0/8` 和宿主机网关。少数公司在内部使用公网 IP 段，那就写 `allow_public = true` 单条解除，`sbx run` 会醒目警告。
+
+**解析只在 Task 启动时发生一次，IP 固化进 socat 的目标**：行为确定、能把实际地址打出来、也避免 DNS 重绑定在运行中把目标换掉。
+
+> `to = "127.0.0.1:5432"` 会被改指宿主机并说明原因——在 forwarder 容器里 `127.0.0.1` 指的是 forwarder 自己，照字面转发会得到一个连不上的洞。想指宿主机就用 `to = 5432` 的简写。
+
+### 两者的对照
+
+| | `[[services]]` | `[[forward]]` |
+|---|---|---|
+| 是什么 | 跟着 Task 起的一次性实例 | 到一个声明好的 `地址:端口` 的 TCP 中继 |
+| 可写层 | 任意层，**包括项目层** | **仅全局 / 工作区层** |
+| 为什么 | 只有 image/env/port，没有地址，是"本项目要什么"的事实 | 它决定你这台机器往哪儿连，跟着仓库走的配置不该有这个决定权 |
+| 目标 | 没有目标，就是一个镜像 | 必须解析到私有地址（`allow_public` 可单条解除） |
+| 容器里怎么访问 | `<name>:<port>` | `<name>:<port>`，配了 `host` 时也可用真实域名 |
+| 一条一个容器 | 是 | 是——监听端口不会打架，回收能逐条来 |
+| 审计 | 不需要（流量不出网） | **无**，所以必须逐条显式声明 |
+| 生命周期 | `sbx run` 起、`sbx stop` 一起停、`sbx done` / `drop` 一起收 | 同左 |
+| 可见性 | `sbx run` 打印、`sbx ls` 的 `LINKS` 列 | 同左，另记进 `meta.json` |
+| 默认 | 不配就不存在 | 不配就不存在 |
+
+### 回收与可见性
+
+```console
+$ sbx ls
+TASK       STATUS  BRANCH         AHEAD  DIFF      DENIED  LINKS        LAST-ACTIVE  PATH
+fix-login  idle    sbx/fix-login  3      5f +84 -12  0     svc:1 fwd:1  2m ago       ~/.sbx/worktrees/...
+```
+
+`fwd` 非 0 的分支是接过真实内部服务跑出来的，事后 review 时该用不一样的尺度看——这就是"预期管理"的可操作形态，记在 `meta.json` 里，不只存在于当时那一屏输出。
+
+`sbx done` / `sbx drop` 会把伴生容器和 forwarder 一并删掉（它们接在 Task 网络上，不先删就删不动网络）；`sbx stop` 把它们一起停掉——Task 停了还留着一个 postgres 跑在那儿，占的是同一台 Docker VM 的内存，而没有任何地方会提醒你。
+
+> **改了配置什么时候生效**：增减 `[[services]]` / `[[forward]]` 在下次 `sbx run` 时生效，已经起着的伴生容器原样留着。`host` 字段是建 Task 容器时写进 `/etc/hosts` 的，改它要 `sbx done` 后重建。
+
+---
 
 ## 用 API key 代替订阅登录（M2-13、design §7.1）
 
@@ -609,30 +926,48 @@ notify_throttle = 600   # 两次同类通知的最小间隔（秒），默认 60
 
 ---
 
-## 体检：`sbx doctor`（M3-13）
+## 体检：`sbx doctor`（M3-13、M4-5）
 
 ```console
 $ sbx doctor
-  ✓ docker      Docker 27.4.0，VM 内存 9.7g
-  ✓ vm-memory   max_running(3) × 3g = 9.0g ≤ VM 内存 9.7g 的 95%
-  ✓ upstream    http://host.docker.internal:7890 可用
-  ✗ sbx-proxy   已停止，但有 1 个 shared Task 在跑（它们现在出不了网）
-      → docker rm -f sbx-proxy 之后重新 sbx run
-  ✓ login       已登录：you@example.com · team · claude.ai
-  ! trust       .sbx/ 自上次确认后有变化
+  ✓ docker      Docker 27.4.0, VM memory 9.7g
+  ✓ vm-memory   max_running(3) × 3g = 9.0g ≤ VM memory 9.7g × 95%
+  ✓ disk        images 768m + volumes 1.3g + build cache 1.5g = 3.6g
+  ✓ upstream    http://host.docker.internal:7890 is reachable
+  ✗ sbx-proxy   stopped, but 1 shared task(s) are running (they cannot reach the network)
+      → docker rm -f sbx-proxy, then sbx run will rebuild it
+  ✓ login       logged in: you@example.com · team · claude.ai
+  ! trust       .sbx/ changed since you last confirmed it
       → sbx trust
-  ✓ notify      open.feishu.cn 已自动加入白名单
-  ✓ smoke       运行中的 sbx-shop-e76272-fix 画面正常，没有卡在对话框上
+  ✓ notify      open.feishu.cn is allowed automatically
+  ✓ smoke       the screen of running sbx-shop-e76272-fix looks normal
 
-1 项警告，1 项失败
+1 warning(s), 1 failure(s)
 ```
 
-八项检查：docker 可用性、VM 内存够不够（R10）、上游代理连通性、`sbx-proxy` 健康（R8）、登录态、信任状态、通知配置、首次启动冒烟（R9：claude 的内部状态字段随版本变化，卡在对话框上会让无人值守直接失效）。
+九项检查：docker 可用性、VM 内存够不够（R10）、**磁盘占用**、上游代理连通性、`sbx-proxy` 健康（R8）、登录态、信任状态、通知配置、首次启动冒烟（R9：claude 的内部状态字段随版本变化，卡在对话框上会让无人值守直接失效）。
 
 - **只有 `✗` 才让 `sbx doctor` 非 0 退出**。`!` 的意思是"能用，但该改"——要是它也让命令失败，写进脚本的人就只能加 `|| true`，那警告就白给了。`--strict` 下警告也算失败。
 - `--quick` 跳过慢的那项（冒烟检查）。
 - 冒烟优先用现成的：有 Task 在跑就抓它的 tmux 画面，没有就跳过（`sbx run` 每次启动本来就会做这项检查）。
 - **不要求你在 git 仓库里**。信任状态这类和仓库有关的项，不在仓库里时标成跳过。
+
+### disk 这一项为什么只报告不自动删（M4-5）
+
+sbx 的 volume、镜像和构建缓存都没有配额，而 `sbx done` 只回收 Task 自己的依赖 volume——`sbx-cache` / `sbx-home` / `sbx-mise` 是只涨不消的。Docker 的 local volume 驱动没有通用 quota，所以这一项**只列出占用，不替你删**：
+
+- 可回收的部分（没有任何容器挂着的镜像和 volume）超过 5g 时给 `!`，并告诉你哪些 volume 是空闲的。
+- **它不会自己动手**，因为"没有容器挂着"不等于"该删"：`sbx-home` 删掉要重新登录，`sbx-cache` 删掉下一个 Task 要重新下载一遍依赖。
+- 镜像按 **UniqueSize** 算：`Size` 会把共享的基础层重复计进每个镜像，加起来是个虚高的数。
+
+```bash
+sbx done <task>                  # 回收这个 Task 的依赖 volume
+docker image prune               # 清掉没人用的镜像
+sbx prep drop                    # 清掉这个 Workspace 的旧 prep 镜像（留着当前这个）
+docker builder prune             # 清构建缓存
+```
+
+---
 
 ---
 
@@ -676,6 +1011,10 @@ VM 内存取自 `docker info` 的 `MemTotal`，Docker Desktop 下就是那台 VM
 ## 当前的边界
 
 - **没有 `sbx merge`**，合并永远是你在主仓库手动做；分支有 commit 没合并时 `done` 不会提醒。
+- **伴生服务和 forward 按名字访问，不是 `localhost`**：它们是另外的容器，而 `localhost` 在 Task 里指的是 Task 自己。
+- **`[[services]]` 不计入内存预算**：服务容器不设内存上限（给 postgres 猜一个小数字的后果是启动即 OOM，比不限更糟），而 `doctor` 的 `vm-memory` 只算 `max_running × resources.memory`。起了重服务时自己留余量。
+- **`forward` 没有审计**：squid 管不了裸 TCP，所以 forwarder 的流量不进访问日志、`sbx net denied` 也看不见。补偿手段是"必须逐条显式声明 + 每次 `sbx run` 打印 + 记进 meta"。
+- **prep 的凭据只在 build 期存在**：Task 跑到一半才发现缺一个私有依赖时，它装不上——这是设计，不是缺陷。重跑 `sbx prep build` 再建 Task。
 - 上游代理只支持 http；只有 SOCKS 的宿主机代理需要你自己加一层转发（design §6.4）。
 - **Codex 还没接**（M3-6）：`--agent codex` 和 `default_agent = "codex"` 目前会明确报错。
 - 底层镜像必须是 Debian/Ubuntu 系（ADR 0007）。

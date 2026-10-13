@@ -91,13 +91,16 @@ func (d Dedicated) AttachTask(t TaskSpec) (string, error) {
 			labels[k] = v
 		}
 		spec := docker.RunSpec{
-			Name:       d.Name,
-			Image:      Image,
-			Labels:     labels,
-			Network:    t.Network,
-			Aliases:    []string{"proxy"},
-			Mounts:     []docker.Mount{{Source: d.Dir, Target: "/etc/sbx", ReadOnly: true}},
-			Resources:  docker.Resources{Memory: "128m"},
+			Name:    d.Name,
+			Image:   Image,
+			Labels:  labels,
+			Network: t.Network,
+			Aliases: []string{"proxy"},
+			Mounts:  []docker.Mount{{Source: d.Dir, Target: "/etc/sbx", ReadOnly: true}},
+			// 256m 不是放宽，是把原来的真实值写出来：M4-4 之前没传 --memory-swap，
+			// Docker 默认给 2×，squid 实际能用的一直是 128m 内存 + 128m swap。
+			// 禁掉 swap 之后 128m 会让它启动即 OOM（默认 cache_mem 就要 ~110MB）。
+			Resources:  docker.Resources{Memory: "256m"},
 			LogMaxSize: "10m",
 			// 和 shared 一样：被 SIGKILL 过的话 PID 文件会残留，start 时 squid 拒绝启动
 			Entrypoint: "sh",

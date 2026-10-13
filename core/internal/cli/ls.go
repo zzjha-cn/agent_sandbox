@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -22,13 +23,13 @@ const deniedTimeout = 3 * time.Second
 
 // TaskRow 是 sbx ls 的一行。
 type TaskRow struct {
-	Task, Status, Branch, Ahead, Diff, Denied, LastActive, Path string
+	Task, Status, Branch, Ahead, Diff, Denied, Links, LastActive, Path string
 }
 
 func (a *App) row(t task.Task, denied map[string]int) TaskRow {
 	home, _ := os.UserHomeDir()
 	r := TaskRow{Task: t.Name, Branch: t.Branch(), Ahead: "-", Diff: "-", Denied: "-",
-		LastActive: "-", Path: tildePath(t.Worktree(), home)}
+		Links: "-", LastActive: "-", Path: tildePath(t.Worktree(), home)}
 	st, exists, err := a.Docker.Inspect(t.Container())
 	s, _ := t.ReadStatus()
 	if err != nil {
@@ -40,6 +41,7 @@ func (a *App) row(t task.Task, denied map[string]int) TaskRow {
 		r.LastActive = humanAgo(time.Since(time.Unix(s.TS, 0)))
 	}
 	meta, hasMeta, _ := t.ReadMeta()
+	r.Links = linksCell(a.countSidecars(t))
 	if denied != nil {
 		id := t.ID()
 		if hasMeta && meta.TaskID != "" {
@@ -61,6 +63,23 @@ func (a *App) row(t task.Task, denied map[string]int) TaskRow {
 		}
 	}
 	return r
+}
+
+// linksCell 是 LINKS 列：这个 Task 挂了几个伴生服务、开了几条 forward。
+// 它的用处是事后 review：fwd 非 0 的分支是接过真实内部服务跑出来的，
+// 该用什么尺度看它的改动，和一个纯沙箱里的 Task 不一样（boundary.md §3.4）。
+func linksCell(svc, fwd int) string {
+	var parts []string
+	if svc > 0 {
+		parts = append(parts, fmt.Sprintf("svc:%d", svc))
+	}
+	if fwd > 0 {
+		parts = append(parts, fmt.Sprintf("fwd:%d", fwd))
+	}
+	if len(parts) == 0 {
+		return "-"
+	}
+	return strings.Join(parts, " ")
 }
 
 // deniedCounts 汇总各 Task「不在白名单」的被拒次数。
@@ -233,7 +252,7 @@ func (a *App) lsRefs(all bool) ([]taskRef, error) {
 }
 
 func (a *App) printTasks(refs []taskRef, denied map[string]int, all bool) error {
-	header := []string{"TASK", "STATUS", "BRANCH", "AHEAD", "DIFF", "DENIED", "LAST-ACTIVE", "PATH"}
+	header := []string{"TASK", "STATUS", "BRANCH", "AHEAD", "DIFF", "DENIED", "LINKS", "LAST-ACTIVE", "PATH"}
 	if all {
 		header = append([]string{"WORKSPACE"}, header...)
 	} else {
@@ -246,7 +265,7 @@ func (a *App) printTasks(refs []taskRef, denied map[string]int, all bool) error 
 			continue
 		}
 		r := a.row(t, denied)
-		row := []string{r.Task, r.Status, r.Branch, r.Ahead, r.Diff, r.Denied, r.LastActive, r.Path}
+		row := []string{r.Task, r.Status, r.Branch, r.Ahead, r.Diff, r.Denied, r.Links, r.LastActive, r.Path}
 		if all {
 			row = append([]string{ref.WS.ID}, row...)
 		}

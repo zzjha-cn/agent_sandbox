@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -207,6 +208,10 @@ type MountInput struct {
 	StateDir  string
 	GenDir    string
 	Host      HostClaude
+	// GitCommon 是主仓库 .git 的绝对路径。和 GitDir 不同，main Task 也要给——
+	// 那时 .git 已经包含在 worktree 的 bind 里，但照样需要被保护。
+	GitCommon  string
+	GitProtect bool
 }
 
 // Mounts 生成 agent 容器的挂载表（design §4.2）。依赖 volume 排在 worktree 之后才能遮盖。
@@ -233,6 +238,54 @@ func Mounts(in MountInput) []docker.Mount {
 		}
 		m = append(m, docker.Mount{Source: src, Target: "/sbx/host-claude/" + d, ReadOnly: true})
 	}
+	// 放在最后：这几条要盖在 worktree / GitDir 的可写 bind 之上才有意义。
+	if in.GitProtect {
+		m = append(m, GitProtectMounts(in.GitCommon)...)
+	}
+	return m
+}
+
+// GitProtectMounts 把 .git 里那些「写进去就能在宿主机上执行代码」的位置改成只读
+// （M4-1、ADR 0019）。只有两处：
+//
+//	hooks/   —— 宿主机上下一次 git commit / checkout 就会执行里面的脚本
+//	config   —— core.hooksPath、core.pager、core.sshCommand 都能指向任意命令
+//
+// 其余的 .git 仍然可写：Task 要能 commit。config 只读不影响提交，身份走
+// GIT_AUTHOR_NAME / GIT_COMMITTER_NAME 环境变量（见 Env）。
+//
+// 顺带堵掉 worktree 级的 config.worktree：它只有在公共 config 里打开
+// extensions.worktreeConfig 才生效，而 config 已经只读了。
+func GitProtectMounts(common string) []docker.Mount {
+	if common == "" {
+		return nil
+	}
+	var m []docker.Mount
+	add := func(dir string) {
+		for _, name := range []string{"hooks", "config"} {
+			p := filepath.Join(dir, name)
+			// 不存在就不挂：bind 一个不存在的源会让 Docker 在宿主机上
+			// 凭空建出 root 所有的目录来。git 自己会在需要时创建。
+			if _, err := os.Stat(p); err != nil {
+				continue
+			}
+			m = append(m, docker.Mount{Source: p, Target: p, ReadOnly: true})
+		}
+	}
+	add(common)
+	// submodule 各有自己的 .git/modules/<name>/，hooks 和 config 一样会被执行，
+	// 而且可以嵌套（modules/a/modules/b）。按「含 config 文件」认 git 目录。
+	root := filepath.Join(common, "modules")
+	filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || !d.IsDir() || path == root {
+			return nil
+		}
+		if st, err := os.Stat(filepath.Join(path, "config")); err == nil && st.Mode().IsRegular() {
+			add(path)
+			// 还要继续往下走：嵌套 submodule 在它自己的 modules/ 里。
+		}
+		return nil
+	})
 	return m
 }
 
@@ -244,6 +297,10 @@ type EnvInput struct {
 	TZ               string // 宿主机时区名，空则留给容器默认（UTC）
 	APIKeyEnv        string // 注入 API key 的环境变量名，空表示走订阅登录（M2-13）
 	APIKey           string
+	// Extra 是配置里的 [env] 和 prep 声明并进来的环境变量（M4-15）。
+	// 排在最后注入，但挡不住上面那些：代理和 git 身份是沙箱的骨架，
+	// 一个镜像里的 JSON 不该能把它们改掉。
+	Extra map[string]string
 }
 
 // Env 生成 agent 容器的环境变量。
@@ -269,6 +326,23 @@ func Env(in EnvInput) []string {
 	// 注意它会留在容器的 Config 里，docker inspect 看得到——这是环境变量注入的固有代价。
 	if in.APIKeyEnv != "" && in.APIKey != "" {
 		env = append(env, in.APIKeyEnv+"="+in.APIKey)
+	}
+	reserved := map[string]bool{}
+	for _, e := range env {
+		if k, _, ok := strings.Cut(e, "="); ok {
+			reserved[k] = true
+		}
+	}
+	keys := make([]string, 0, len(in.Extra))
+	for k := range in.Extra {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if reserved[k] {
+			continue
+		}
+		env = append(env, k+"="+in.Extra[k])
 	}
 	return env
 }

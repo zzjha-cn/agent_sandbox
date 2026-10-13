@@ -69,7 +69,9 @@ func (s RunSpec) Args() []string {
 		args = append(args, "--cpus", strconv.FormatFloat(s.Resources.CPUs, 'f', -1, 64))
 	}
 	if s.Resources.Memory != "" {
-		args = append(args, "--memory", s.Resources.Memory)
+		// --memory-swap 跟 --memory 取同值＝禁用 swap。不传的话 Docker 默认给 2×，
+		// 实际可用内存是配置值的两倍，doctor 的内存预算会差一倍（M4-4）。
+		args = append(args, "--memory", s.Resources.Memory, "--memory-swap", s.Resources.Memory)
 	}
 	if s.Resources.Pids > 0 {
 		args = append(args, "--pids-limit", strconv.Itoa(s.Resources.Pids))

@@ -88,16 +88,39 @@ func (t Task) Labels() map[string]string {
 
 // Meta 是创建 Task 时的参数，存在 state/meta.json。
 type Meta struct {
-	Task      string    `json:"task"`
-	WS        string    `json:"ws"`
-	Root      string    `json:"root"`
-	Base      string    `json:"base"`
-	Profile   string    `json:"profile"`
-	Image     string    `json:"image"`
-	Proxy     string    `json:"proxy"`
-	TaskID    string    `json:"task_id"`
-	DepMasks  []string  `json:"dep_masks"`
+	Task     string   `json:"task"`
+	WS       string   `json:"ws"`
+	Root     string   `json:"root"`
+	Base     string   `json:"base"`
+	Profile  string   `json:"profile"`
+	Image    string   `json:"image"`
+	Proxy    string   `json:"proxy"`
+	TaskID   string   `json:"task_id"`
+	DepMasks []string `json:"dep_masks"`
+	// Services 是跟这个 Task 一起起来的伴生容器名（M4-11）。
+	Services []string `json:"services,omitempty"`
+	// Forwards 记下这个 Task 接过哪些内部服务（M4-14、boundary.md §3.4）。
+	// 事后 review 这条分支时，这就是"该用什么尺度看"的依据——预期管理要落成
+	// 可查的记录，不能只存在于当时那一屏输出里。
+	Forwards []Link `json:"forwards,omitempty"`
+	// PrepTag 是播种这个 Task 的依赖 volume 时用的 prep 镜像（M4-8）。
+	// 空表示没有 prep，或者 volume 是在 prep 之前建的。
+	PrepTag string `json:"prep_tag,omitempty"`
+	// PrepAllow 是 prep 镜像声明过的放行域名（M4-15）。记在这里，resume 就不必
+	// 再起一个容器把镜像读一遍，镜像被删掉也不会让白名单悄悄少几条。
+	PrepAllow []string  `json:"prep_allow,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+// Link 是一条生效过的 forward。
+type Link struct {
+	Name string `json:"name"`
+	Port int    `json:"port"`
+	To   string `json:"to"`             // 解析之后的实际地址
+	Host string `json:"host,omitempty"` // --add-host 给的域名
+	// Internal 为 true 表示目标是内网共享资源（boundary.md §3.1 的 🔴），
+	// false 是宿主机自己（🟡）。
+	Internal bool `json:"internal"`
 }
 
 func (t Task) WriteMeta(m Meta) error {

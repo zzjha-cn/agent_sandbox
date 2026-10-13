@@ -106,6 +106,7 @@ func (a *App) stopCmd() *cobra.Command {
 					return err
 				}
 			}
+			a.stopSidecars(t)
 			fmt.Fprintf(a.Out, "stopped %s\n", t.Name)
 			// dedicated 下停的是这个 Task 自己的 sidecar，shared 下只有最后一个 Task 停了才停
 			if stopped, err := a.egress(t).StopIfIdle(); err != nil {
@@ -285,6 +286,10 @@ func (a *App) done(t task.Task, force, dropping bool) error {
 	}
 	// 端口转发容器接在 Task 网络上，不先删掉网络就删不动（M3-11）
 	if err := a.removePorts(t, 0); err != nil {
+		return err
+	}
+	// services 和 forwarder 同理（M4-11）
+	if err := a.removeSidecars(t); err != nil {
 		return err
 	}
 

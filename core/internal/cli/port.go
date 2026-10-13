@@ -12,7 +12,8 @@ import (
 )
 
 // socatImage 是转发容器用的镜像。它只做一件事：把宿主机上的端口转给 Task 容器。
-const socatImage = "alpine/socat:latest"
+// 和 forwarder 用同一个按 digest 固定的引用（M4-13）。
+const socatImage = socatRef
 
 func (a *App) portCmd() *cobra.Command {
 	var rm bool

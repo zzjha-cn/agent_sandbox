@@ -28,6 +28,8 @@ HTTPS_PROXY=http://u:p@proxy:3128
 2
 --memory
 3g
+--memory-swap
+3g
 --pids-limit
 1024
 sbx/web-go:0123456789ab

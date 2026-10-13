@@ -99,7 +99,7 @@ func (a *App) loginCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := a.ensureSharedVolumes(tag); err != nil {
+			if err := a.ensureSharedVolumes(tag, map[string]bool{}); err != nil {
 				return err
 			}
 			st, err := a.authStatus(tag, cli)

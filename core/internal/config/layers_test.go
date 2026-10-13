@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -280,5 +281,63 @@ func TestProfileDefaultMasks(t *testing.T) {
 	// 不认识的 profile 退回通用的一条
 	if got := ProfileMasks("whatever"); len(got) != 1 || got[0] != "node_modules" {
 		t.Fatalf("%v", got)
+	}
+}
+
+// services / forward 按 name 合并：同名的后面层整条覆盖，新名字追加。
+func TestMergeSidecarsByName(t *testing.T) {
+	dir := t.TempDir()
+	put := func(name, body string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	g := put("config.toml", "[[services]]\nname = \"db\"\nimage = \"postgres:15\"\nport = 5432\n\n[[forward]]\nname = \"corp\"\nport = 443\nto = \"10.1.2.3:443\"\n")
+	w := put("ws.toml", "[[services]]\nname = \"db\"\nimage = \"postgres:16\"\nport = 5432\n\n[[services]]\nname = \"cache\"\nimage = \"redis:7\"\nport = 6379\n")
+	ld, err := LoadLayers([]Layer{{Name: LayerGlobal, Path: g}, {Name: LayerWorkspace, Path: w}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(ld.Config.Services); n != 2 {
+		t.Fatalf("want 2 services, got %d: %+v", n, ld.Config.Services)
+	}
+	if ld.Config.Services[0].Image != "postgres:16" {
+		t.Fatalf("the later layer should replace the same name, got %q", ld.Config.Services[0].Image)
+	}
+	if ld.Config.Services[1].Name != "cache" {
+		t.Fatalf("a new name should be appended, got %q", ld.Config.Services[1].Name)
+	}
+	if len(ld.Config.Forward) != 1 || ld.Config.Forward[0].To.String() != "10.1.2.3:443" {
+		t.Fatalf("forward did not survive the merge: %+v", ld.Config.Forward)
+	}
+}
+
+// prep 的声明排在最后合并，但不覆盖文件层已经写过的键。
+func TestMergePrepDoesNotOverrideFiles(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(p, []byte("[env]\nGOFLAGS = \"-mod=vendor\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ld, err := LoadLayers([]Layer{{Name: LayerGlobal, Path: p}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ld.MergePrep([]string{"gitlab.corp.com"}, map[string]string{"GOFLAGS": "-mod=mod", "CGO_ENABLED": "0"}); err != nil {
+		t.Fatal(err)
+	}
+	if ld.Config.Env["GOFLAGS"] != "-mod=vendor" {
+		t.Fatalf("an image must not override what you wrote yourself, got %q", ld.Config.Env["GOFLAGS"])
+	}
+	if ld.Config.Env["CGO_ENABLED"] != "0" {
+		t.Fatal("a key nobody set should come from prep")
+	}
+	if got := ld.Sources["env.CGO_ENABLED"].String(); got != LayerPrep {
+		t.Fatalf("source should be %s, got %s", LayerPrep, got)
+	}
+	if !slices.Contains(ld.Config.Network.Allow, "gitlab.corp.com") {
+		t.Fatalf("allow did not merge: %v", ld.Config.Network.Allow)
 	}
 }

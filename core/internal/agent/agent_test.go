@@ -358,3 +358,48 @@ func TestHeadlessOwnsExitNotify(t *testing.T) {
 		t.Errorf("交互模式下 SessionEnd 要发通知：%+v", got)
 	}
 }
+
+// M4-1：.git/hooks 和 .git/config 以只读盖在可写的 .git bind 之上，
+// 否则容器里写个 pre-commit，下次在宿主机上 git commit 就执行它（ADR 0019）。
+func TestGitProtectMounts(t *testing.T) {
+	common := filepath.Join(t.TempDir(), ".git")
+	sub := filepath.Join(common, "modules", "vendor", "lib")
+	for _, d := range []string{filepath.Join(common, "hooks"), filepath.Join(sub, "hooks")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, f := range []string{filepath.Join(common, "config"), filepath.Join(sub, "config")} {
+		if err := os.WriteFile(f, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m := GitProtectMounts(common)
+	var got []string
+	for _, x := range m {
+		if !x.ReadOnly || x.Volume {
+			t.Errorf("必须是只读 bind：%+v", x)
+		}
+		rel, _ := filepath.Rel(common, x.Source)
+		got = append(got, rel)
+	}
+	want := []string{"hooks", "config", "modules/vendor/lib/hooks", "modules/vendor/lib/config"}
+	for i := range want {
+		want[i] = filepath.FromSlash(want[i])
+	}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("got %v want %v", got, want)
+	}
+
+	// 不存在的位置不挂：bind 一个不存在的源会让 Docker 在宿主机上建出 root 所有的目录。
+	if n := len(GitProtectMounts(filepath.Join(t.TempDir(), ".git"))); n != 0 {
+		t.Fatalf("空仓库不该挂任何东西，got %d", n)
+	}
+	// 开关关掉时一条都不加
+	in := MountInput{Worktree: "/r/demo", GitCommon: common, DepVolume: func(int) string { return "v" }}
+	if a, b := len(Mounts(in)), len(Mounts(withProtect(in))); b != a+4 {
+		t.Fatalf("protect 开关没生效：%d -> %d", a, b)
+	}
+}
+
+func withProtect(in MountInput) MountInput { in.GitProtect = true; return in }

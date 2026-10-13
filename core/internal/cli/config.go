@@ -38,6 +38,18 @@ func (a *App) configCmd() *cobra.Command {
 			if err := a.applyLayers(layers); err != nil {
 				return err
 			}
+			// prep 镜像里的声明也是一层（M4-15）。读不到就说一句，别让 config show
+			// 因为一个可选的镜像而失败——但也不能静悄悄地少显示一层。
+			if wsErr == nil {
+				if m, err := a.prepDeclared(); err != nil {
+					fmt.Fprintln(a.Err, "note: cannot read the prep image's declarations:", err)
+				} else if m != nil {
+					if err := a.Loaded.MergePrep(m.Allow, m.Env); err != nil {
+						return err
+					}
+					a.Cfg = a.Loaded.Config
+				}
+			}
 			// 路径里可能有 CJK，tabwriter 按字节算宽度会错位，这张表自己对齐。
 			fmt.Fprintf(a.Out, "%s  (built-in)\n", padCJK(config.LayerDefault, 9))
 			for _, l := range a.Loaded.Layers {

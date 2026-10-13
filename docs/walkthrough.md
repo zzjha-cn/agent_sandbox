@@ -12,7 +12,7 @@
 | 网络 | 本机开着代理 `127.0.0.1:7890`，在容器里访问它的地址是 `host.docker.internal:7890` |
 | 由此算出的名字 | Workspace id = `shop-e76272`（目录名 + 仓库根路径 sha1 的前 6 位）<br>记忆 key = `-Users-apple-code-shop` |
 
-全文按时间顺序分 11 幕。每一幕先给命令，再按顺序说明发生了什么。
+全文按时间顺序分 15 幕：前 12 幕是日常回路，后 3 幕是「项目跑起来还缺点什么」——连数据库、装私有依赖、够内网。每一幕先给命令，再按顺序说明发生了什么。
 
 ---
 
@@ -433,6 +433,195 @@ sbx 看到会话还在、claude 已退出，就用 `tmux respawn-window -k` 在�
 
 ---
 
+## 第 13 幕：后端测试要连数据库
+
+第二天接了个后端的活。`sbx run api-rate-limit` 之后 agent 跑 `go test ./...`，一片红：
+
+```
+dial tcp 127.0.0.1:5432: connect: connection refused
+```
+
+**这一幕最该注意的不是报错，是不报错的那条路。** 无人值守下 agent 不会停下来问你，它会先去试 `apt-get install postgresql`（没 root，失败），再试 `docker run`（没 docker.sock，失败），然后**开始改测试代码绕过数据库**——最后给你一个「测试通过」的分支。不是报错退出，是悄悄产出垃圾。
+
+所以得让它有东西可连。测试要的是一个空库，不是你那份真实数据：
+
+```toml
+# shop/.sbx/sandbox.toml —— 这一段可以进仓库
+[[services]]
+name  = "db"
+image = "postgres:16"
+port  = 5432
+env   = { POSTGRES_PASSWORD = "dev", POSTGRES_DB = "shop_test" }
+```
+
+`.sbx/` 变了，所以下一次 `sbx run` 会先把 diff 摊给你看，`sbx trust` 确认过再继续（第 0 幕那套信任模型，这里照样生效）。
+
+```console
+$ sbx run api-rate-limit
+service db: postgres:16, reachable in the task as db:5432
+waiting for claude to be ready ...
+```
+
+发生了什么：
+
+1. sbx 在 Task 网络（`sbx-shop-e76272-api-rate-limit-net`，`--internal`）上起了一个容器 `sbx-shop-e76272-api-rate-limit-svc-db`，网络别名是 `db`。
+2. **它和 Task 的通信根本不需要出网路由**——两个容器在同一张 internal 网络上，谁都没有默认路由。这正是这一类最安全的原因：功能加上了，不变量一点没动。
+3. 镜像在宿主机上拉，和容器的网络无关。
+
+**要改一处代码**：连接地址从 `localhost:5432` 改成 `db:5432`。服务是另一个容器，而 `localhost` 在 Task 里指的是 Task 自己——这是落地时唯一的摩擦，`sbx run` 每次都会把实际地址打出来提醒你。
+
+收尾时不用管它：
+
+```console
+$ sbx done api-rate-limit
+finished api-rate-limit; branch sbx/api-rate-limit is kept. ...
+```
+
+服务容器和 Task 网络一起没了。中途 `sbx stop` 也会把它停掉——不然 Task 停了还留着一个 postgres 在那儿吃内存，而没有任何地方会提醒你。
+
+---
+
+## 第 14 幕：依赖在公司私有源上
+
+新接的仓库 `go.mod` 里有 `git.corp.example/platform/sdk`。Task 里 `go mod download` 卡住：
+
+```
+dial tcp: lookup git.corp.example: no such host
+```
+
+容器只有一条经 squid 的 HTTP 出口，到不了内网，这是设计。**给沙箱开内网权限是最贵的解法**——凭据要进容器，接触面一下子铺开。
+
+换个方向：**把「取」挪到宿主机上做，Task 只负责用。**
+
+```console
+$ sbx prep init
+wrote /Users/apple/code/shop/.sbx/prep.Dockerfile
+the contract is in the comments; edit it (or let the agent fill it in), then:
+  sbx prep build --check   # report what would be seeded, without touching any volume
+  sbx prep build
+```
+
+模板里的契约写成注释，既是给你看的，也是给 agent 看的 ground truth。填完大致是这样：
+
+```dockerfile
+FROM golang:1.23
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN --mount=type=secret,id=netrc,target=/root/.netrc \
+    GOFLAGS=-mod=mod GOMODCACHE=/sbx/cache/go-mod go mod download
+```
+
+```toml
+# shop/.sbx/sandbox.toml —— 只有 secret 的 id，没有值，可以进仓库
+[prep]
+watch   = ["go.mod", "go.sum"]
+secrets = ["netrc"]
+
+# ~/.sbx/config.toml —— 值在这里。项目层整段 [prep.secret] 被红线挡住
+[prep.secret]
+netrc = "~/.sbx/secrets/corp.netrc"
+```
+
+先看一眼会发生什么，不碰任何 volume：
+
+```console
+$ sbx prep build --check
+building the prep image sbx/prep-shop-e76272:a1b2c3d4e5f6 ...
+seeded:   cache/go-mod 184MB
+declared: (nothing)
+(--check: nothing was seeded)
+```
+
+然后真构建：
+
+```console
+$ sbx prep build
+built sbx/prep-shop-e76272:a1b2c3d4e5f6
+new tasks will seed their dependency volumes from it; existing tasks are untouched
+to reseed one anyway: sbx prep reseed <task>
+```
+
+发生了什么：
+
+1. 构建跑在**宿主机的 Docker 上**，走默认 bridge：有完整的内网可达性，`~/.sbx/secrets/corp.netrc` 通过 BuildKit secret 挂进那一条 `RUN`。
+2. **它不落进任何镜像层**——`docker history` 里看不到，镜像里也不存在。凭据只在 build 期活着，agent 永远碰不到。
+3. sbx 显式把代理甩掉了。Docker Desktop 会把它设置里的代理注入 `docker build`，不管掉的话这次构建会原样重演「全走代理、到不了内网」。**两条注入路都要堵**：`~/.docker/config.json` 里的 `proxies`（CLI 自己转成 `--build-arg`，要用同名空值盖住）和进程环境里的 `HTTP_PROXY`。
+4. tag 是 `hash(prep.Dockerfile + watch 列出的文件内容)`。所以**「这个 tag 的镜像不存在」就等于「漂移了或者从没构建过」**，不需要另记一份状态。
+
+下一个 Task 起来就自带依赖：
+
+```console
+$ sbx run add-sdk
+seeding cache/go-mod from sbx/prep-shop-e76272:a1b2c3d4e5f6 (184MB) ...
+```
+
+容器里 `go build ./...` 直接过，**整个过程 Task 一次内网都没连过**。
+
+过两周有人改了 `go.sum`：
+
+```console
+$ sbx run fix-timeout
+warning: the prep image sbx/prep-shop-e76272:9f8e7d6c5b4a does not exist (.sbx/prep.Dockerfile
+or a watched file changed); run sbx prep build to refresh the seed. This task starts with
+empty dependency volumes.
+```
+
+**默认只提醒不自动构建**：自动构建意味着每次 `sbx run` 都可能悄悄连一次内网，边界就糊了。想要别的行为就配 `on_drift = "build"` 或 `"fail"`——它是安全开关，只能写在全局层或工作区层。
+
+---
+
+## 第 15 幕：要连内网的 staging 库
+
+有个活必须对着 staging 的只读副本跑。这回不是一次性的空库了，是**别人也在用的、有真实数据的实例**——级别从 🟢 跳到 🔴。
+
+```toml
+# ~/.sbx/workspaces/shop-e76272.toml —— 注意不是 .sbx/sandbox.toml
+[[forward]]
+name = "staging-db"
+port = 5432
+to   = "db.corp.internal:5432"
+```
+
+**项目层写不了这一段**，写了直接报错：
+
+```
+sbx: /Users/apple/code/shop/.sbx/sandbox.toml: the project layer contains settings that are not allowed:
+  - forward.* (this whole section can only be set in the global or workspace layer)
+```
+
+理由很直接：跟着仓库走的配置不该决定你这台机器往哪儿连。`git pull` 一下就能多一条洞，这事不能成立。真正的中介点是**配置层**——每一条 forward 都是你在自己机器上做的显式决定。
+
+```console
+$ sbx run migrate-check
+forward staging-db: staging-db:5432 in the task -> 10.10.16.80:5432 (internal network)
+note: these forwards reach real internal services: staging-db
+      whatever the agent does to them, it does for real:
+      use a read-only account or a separate schema; the network layer cannot undo a DROP TABLE.
+      network.mode is open, so this task has both real data and unrestricted egress.
+      consider network.mode = "allowlist" for this workspace (or sbx run --net allowlist).
+```
+
+发生了什么：
+
+1. sbx 起了一个 socat 容器 `sbx-shop-e76272-migrate-check-fwd-staging-db`，**同时接 Task 网络和 `sbx-egress`**：Task 从前者连它，它从后者出去。
+2. `db.corp.internal` **在启动时解析一次，IP 固化进 socat 的目标**。好处有三：行为确定、能把实际地址打出来、避免 DNS 在 Task 跑着的时候把目标换掉。
+3. **Task 容器自己还是只有一张 internal 网卡**。forwarder 是 Task 网络里的一个普通 peer，不是 Task 的网关——容器仍然没有默认路由，HTTP 的通用出网仍然只能经 squid。
+4. 解析结果如果落在公网，这条 forward 会**拒绝启动**：否则它就成了绕过 squid 的通用隧道，不受白名单约束、不进访问日志、`sbx net denied` 也看不见。
+
+那段 note 不是客套。网络层到这里已经不是护着你的那一层了——**「连上去之后能毁掉什么」只能在服务侧解决**：只读账号、独立 schema、权限模型。sbx 能做的是让这件事显式、可见、可追溯：
+
+```console
+$ sbx ls
+TASK            STATUS  BRANCH                 AHEAD  DIFF       DENIED  LINKS   LAST-ACTIVE  PATH
+migrate-check   idle    sbx/migrate-check      2      3f +41 -8  0       fwd:1   4m ago       ~/.sbx/worktrees/...
+```
+
+`LINKS` 里有 `fwd` 的分支，是接过真实内部服务跑出来的。**事后 review 它的改动时，你该用不一样的尺度看**——这就是「预期管理」的可操作形态，它还同时记在 `state/<ws>/<task>/meta.json` 里，不只存在于当时那一屏输出。
+
+> 内网 HTTPS 服务可以再加一个 `host = "gitlab.corp.internal"`：sbx 给 Task 容器加一条 `--add-host` 指向 forwarder，容器里仍用真实域名访问，SNI 和证书原样透传。代价是这条流量绕过了 squid 的白名单和访问日志，所以能走 `network.allow` + squid 的就别走它。
+
+---
+
 ## 附：资源在整个过程中的变化
 
 | 时刻 | 容器 | 网络 | volume | 宿主机文件 |
@@ -453,3 +642,33 @@ sbx 看到会话还在、claude 已退出，就用 `tmux respawn-window -k` 在�
 | `~/.sbx/proxy` | squid 主配置 |
 
 这些都是有意保留的，下一个 Task 启动时直接复用。
+
+---
+
+## 附二：这一幕里没出现、而且不打算出现的东西
+
+走完一遍之后，最容易冒出来的下一个念头是"那我怎么连数据库"、"怎么跑 testcontainers"。先看能用的：
+
+| 要什么 | 用什么 | 容器里怎么访问 |
+|---|---|---|
+| 测试要一个 postgres / redis | `[[services]]`（可以进仓库） | `db:5432`——服务名，不是 `localhost` |
+| 连你本机已经在跑的实例 | `[[forward]]`，`to = 5432` | `db:5432` |
+| 连内网的 staging 库 | `[[forward]]`，`to = "10.10.16.80:5432"` | `staging-db:5432` |
+| 装私有源的依赖 | `sbx prep build`（宿主机侧构建，有网有凭据） | 依赖已经在 volume 里 |
+
+`[[forward]]` 只能写在全局层或工作区层，`to` 必须解析到私有地址——这两条的理由见 [boundary.md](boundary.md) §3.3。
+
+下面这些是**决定不做**，不是还没做。它们每一条都能让上面那套隔离直接失效：
+
+| | 为什么不 | 替代做法 |
+|---|---|---|
+| `/var/run/docker.sock` | 等于把宿主机 Docker 的完全控制权交给 Agent：它能起特权容器挂你的根目录。比 R1 严重一个量级——R1 要等你执行 git 命令才触发，这个是立即、直接、完全的 | `[[services]]` 声明测试依赖，替代 testcontainers 自起容器 |
+| 云厂商凭据、kubeconfig | 爆炸半径最大的一项：花钱、删资源、拖数据；kubeconfig 等于生产集群的操作权 | 需要云资源的操作在宿主机做 |
+| SSH key 进容器 | Agent 获得任意仓库的推送权，与 R1 同级 | 分支本来就在宿主机（worktree + `.git` 是 bind mount），`git push` 在宿主机做 |
+| `host.docker.internal` 直通 | 一旦可达，容器能连宿主机**每一个**监听端口：你其他项目的 dev server、所有本机数据库。没有"只开 5432"这回事 | `[[forward]]`，一条一个端口 |
+| `forward` 指向公网地址 | forwarder 会变成绕过 squid 的通用出网隧道：不受白名单约束、不进访问日志、`sbx net denied` 看不见 | 公网访问走 `network.allow` + squid；内部用公网 IP 段的环境可用 `allow_public` 单条解除 |
+| 给 Task 容器加非 internal 网卡 | 那一刻它就有了默认路由，HTTP 流量可以绕开 squid，白名单 / 策略拦截 / 访问日志全部失效 | forwarder sidecar |
+| 运行期凭据注入 | 暂不提供（不是永不）。最常见的 `git push` 场景已被架构绕过，剩余需求面小 | 中途需要新私有依赖时，明确失败并提示重跑 `sbx prep build` |
+| 设备 / `--gpus` / `--cap-add` | 暂不提供。GPU 本身风险低，但需要先有一套统一的能力声明机制 | — |
+
+**Task 容器始终没有默认路由**，是这一切的支点：`[[services]]` 和 `[[forward]]` 都是往 Task 网络里加 peer，没有一条给 Task 自己多插一张网卡。这条不变量有自动化回归测试盯着（`go test -tags docker ./internal/cli/ -run NoDefaultRoute`）。

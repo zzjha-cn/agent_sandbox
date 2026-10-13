@@ -73,8 +73,16 @@ func (c *Client) RunBytes(stdin io.Reader, args ...string) ([]byte, error) {
 
 // Stream 执行命令并把 stdout/stderr 透传给用户（用于 build）。
 func (c *Client) Stream(stdout, stderr io.Writer, args ...string) error {
+	return c.StreamEnv(nil, stdout, stderr, args...)
+}
+
+// StreamEnv 和 Stream 一样，另外把 extraEnv 追加到继承来的环境上（后者覆盖前者）。
+func (c *Client) StreamEnv(extraEnv []string, stdout, stderr io.Writer, args ...string) error {
 	c.trace(args)
 	cmd := exec.Command(c.Bin, args...)
+	if len(extraEnv) > 0 {
+		cmd.Env = append(os.Environ(), extraEnv...)
+	}
 	var errb bytes.Buffer
 	cmd.Stdout = stdout
 	cmd.Stderr = io.MultiWriter(stderr, &tailBuffer{buf: &errb, max: 4096})
@@ -177,6 +185,35 @@ func (c *Client) Inspect(name string) (st State, exists bool, err error) {
 	return st, true, nil
 }
 
+// ContainerIP 返回容器在某张网络上的 IP。forwarder 要把这个地址给 Task 容器当
+// --add-host，所以必须等容器起来之后再问。
+func (c *Client) ContainerIP(name, network string) (string, error) {
+	out, err := c.Run("inspect", "-f", "{{(index .NetworkSettings.Networks \""+network+"\").IPAddress}}", name)
+	if err != nil {
+		return "", err
+	}
+	ip := strings.TrimSpace(out)
+	if ip == "" {
+		return "", fmt.Errorf("%s has no address on network %s", name, network)
+	}
+	return ip, nil
+}
+
+// ExtraHosts 返回容器创建时 --add-host 给的那些条目（host:ip）。
+func (c *Client) ExtraHosts(name string) ([]string, error) {
+	out, err := c.Run("inspect", "-f", "{{range .HostConfig.ExtraHosts}}{{println .}}{{end}}", name)
+	if err != nil {
+		return nil, err
+	}
+	var hosts []string
+	for _, l := range strings.Split(out, "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			hosts = append(hosts, l)
+		}
+	}
+	return hosts, nil
+}
+
 // ---- 网络 ----
 
 func (c *Client) NetworkCreate(name string, internal bool, labels map[string]string) error {
@@ -267,6 +304,17 @@ type BuildSpec struct {
 	Tag        string
 	BuildArgs  map[string]string
 	Labels     map[string]string
+	// Secrets 是 BuildKit 的 --secret id=<id>,src=<宿主机路径>。
+	// 它只在那一条 RUN 的挂载期间可见，不落进任何镜像层——prep 的凭据靠它（M4-7）。
+	Secrets map[string]string
+	// NoProxy 为 true 时从两条路上都把代理甩掉。Docker Desktop 会把它设置里的代理
+	// 注入 docker build，不甩掉的话构建会原样踩一次"全走代理、到不了内网"
+	// （boundary.md §2.8）。两条路都要堵：
+	//
+	//	~/.docker/config.json 的 proxies —— CLI 据此自动加 --build-arg，
+	//	                                     显式传空的同名 build-arg 才盖得住
+	//	进程环境里的 HTTP_PROXY 等     —— 影响 CLI 自己的出站连接
+	NoProxy bool
 }
 
 func (b BuildSpec) Args() []string {
@@ -277,12 +325,40 @@ func (b BuildSpec) Args() []string {
 	for _, k := range sortedKeys(b.BuildArgs) {
 		args = append(args, "--build-arg", k+"="+b.BuildArgs[k])
 	}
+	if b.NoProxy {
+		for _, k := range proxyVars {
+			args = append(args, "--build-arg", k+"=")
+		}
+	}
+	for _, id := range sortedKeys(b.Secrets) {
+		args = append(args, "--secret", "id="+id+",src="+b.Secrets[id])
+	}
 	args = append(args, labelArgs(b.Labels)...)
 	return append(args, b.ContextDir)
 }
 
 func (c *Client) Build(b BuildSpec, stdout, stderr io.Writer) error {
-	return c.Stream(stdout, stderr, b.Args()...)
+	var env []string
+	if len(b.Secrets) > 0 {
+		env = append(env, "DOCKER_BUILDKIT=1")
+	}
+	if b.NoProxy {
+		env = append(env, clearProxyEnv()...)
+	}
+	return c.StreamEnv(env, stdout, stderr, b.Args()...)
+}
+
+// proxyVars 是 Docker Desktop 可能注入、而 prep 构建必须甩掉的那几个。
+var proxyVars = []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"}
+
+// clearProxyEnv 返回把代理变量置空的 KEY= 列表。置空而不是删除：
+// exec.Cmd 的 Env 是整份替换，用后出现的同名项覆盖前面的即可，不必重建环境。
+func clearProxyEnv() []string {
+	out := make([]string, 0, len(proxyVars))
+	for _, k := range proxyVars {
+		out = append(out, k+"=")
+	}
+	return out
 }
 
 // ---- 查询 ----

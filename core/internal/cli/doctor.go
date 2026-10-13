@@ -66,6 +66,7 @@ type docEnv struct {
 var checks = []checker{
 	{Name: "docker", Run: checkDocker},
 	{Name: "vm-memory", NeedDocker: true, Run: checkVMMemory},
+	{Name: "disk", NeedDocker: true, Run: checkDisk},
 	{Name: "upstream", NeedDocker: true, Run: checkUpstream},
 	{Name: "sbx-proxy", NeedDocker: true, Run: checkProxy},
 	{Name: "login", NeedDocker: true, Run: checkLogin},
@@ -162,6 +163,29 @@ func checkVMMemory(a *App, env docEnv) Check {
 	return ok("vm-memory", fmt.Sprintf("max_running(%d) × %s = %s ≤ VM memory %s × %.0f%%",
 		a.Cfg.MaxRunning, a.Cfg.Resources.Memory, humanBytes(int64(a.Cfg.MaxRunning)*per),
 		humanBytes(int64(total)), vmBudget*100))
+}
+
+// checkDisk 报告 sbx 占了多少磁盘、其中多少是没容器挂着的（M4-5）。
+// 只报告，不删任何东西：Docker 的 local volume 没有 quota，而 sbx-home 里是登录态，
+// 自动回收一旦判断错，代价是重新登录一遍。
+func checkDisk(a *App, _ docEnv) Check {
+	out, err := a.Docker.Run("system", "df", "-v", "--format", "{{json .}}")
+	if err != nil {
+		return skip("disk", "docker system df failed: "+err.Error())
+	}
+	d, err := parseDF([]byte(out))
+	if err != nil {
+		return skip("disk", "cannot parse docker system df: "+err.Error())
+	}
+	reclaim := d.ReclaimImages + d.ReclaimVolumes
+	if reclaim < diskReclaimWarn {
+		return ok("disk", d.detail())
+	}
+	fix := "sbx done <task> frees that task's dep volumes; docker image prune frees unused images"
+	if len(d.IdleVolumes) > 0 {
+		fix += "; idle volumes: " + strings.Join(d.IdleVolumes, ", ")
+	}
+	return warn("disk", fmt.Sprintf("%s; %s of it has no container attached", d.detail(), humanBytes(reclaim)), fix)
 }
 
 func checkUpstream(a *App, env docEnv) Check {

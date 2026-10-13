@@ -127,7 +127,9 @@ Want the changes to land in your repo directory, visible to `git status` on the 
 
 All a container can see is: its worktree, your repository's `.git` directory, the shared `sbx-home` (login state and Claude config), `sbx-cache` (package-manager caches) and a read-only `/sbx/gen` (hooks, settings, status line). **Nothing else from your host is mounted.**
 
-> **Known gap — `.git` is mounted writable, and that is an escape hatch.** It has to be: writing to your real `.git` is what lets a commit made inside the sandbox show up in `git log sbx/<task>` on your host with no syncing step. The cost is that an agent can also write `.git/hooks/*` or `.git/config`, and git hooks run **as you, on your host**, the next time you touch that repo. sbx does not guard against this today — it is risk R1 in [design.md](docs/design.md), accepted knowingly and still open. Isolation holds against everything else (network, filesystem, credentials), but if you are running a genuinely untrusted agent or codebase, do it in a throwaway clone rather than your working repo.
+> **`.git` is mounted writable, and `.git/hooks` + `.git/config` are mounted read-only on top of it.** The repository has to be writable: that is what makes a commit from inside the sandbox show up in `git log sbx/<task>` on your host with no syncing step. But the two places that turn a write into *host code execution* — a planted `pre-commit` hook, or a `core.hooksPath` pointing somewhere the agent controls — are closed off (submodules included). Set `git.protect = false` to go back to the unguarded behaviour; it is a safety switch, so the project layer cannot set it either way.
+>
+> What remains: the agent can still rewrite history on `sbx/<task>`, and anything your own tooling reads out of `.git` other than hooks and config. This is risk R1 in [design.md](docs/design.md) — now mitigated, not eliminated. For a genuinely untrusted agent or codebase, use a throwaway clone rather than your working repo.
 
 ## Networking
 
@@ -143,6 +145,52 @@ sbx run t1 --proxy dedicated       # give this task its own proxy sidecar
 Allowlist mode (`network.mode = "allowlist"`) permits only the built-in list plus whatever you configure — the right choice when running untrusted code. Both modes go through Squid, so the logs are always there, and the cloud-MCP policy block applies either way ([ADR 0015](docs/CONTEXT.md)).
 
 > Flipping the default from allowlist to open was a deliberate call on 2026-10-08. When the allowlist blocked web search or a dependency download, the agent would quietly substitute something else and report a passing test — an outcome worse than the block itself. The trade-off is recorded in the ADR 0005 revision.
+
+## Services, and reaching things that are not public
+
+A task's network is `--internal`: the container has **no default route**, and HTTP egress exists only because Squid is reachable on it. Two mechanisms add to that without touching the invariant — both are sidecars on the task's network, never a second interface on the task itself.
+
+```toml
+# <repo>/.sbx/sandbox.toml — safe to commit: no address, no credential, no host path
+[[services]]
+name  = "db"
+image = "postgres:16"
+port  = 5432
+env   = { POSTGRES_PASSWORD = "dev", POSTGRES_DB = "app" }
+```
+
+A throwaway instance started with the task and reclaimed by `sbx done`. Reach it from the container at **`db:5432`** — its name, not `localhost`: it is a separate container, and `localhost` inside the task is the task. The worst case if the agent runs wild is losing a database that was disposable to begin with, which is why this is the one to reach for first.
+
+```toml
+# ~/.sbx/config.toml or ~/.sbx/workspaces/<ws>.toml — NOT the project layer
+[[forward]]
+name = "staging-db"
+port = 5432
+to   = "db.corp.internal:5432"   # or just `to = 5432` for a port on your own machine
+# host = "gitlab.corp.internal"  # optional: keep the real name, so TLS still validates
+```
+
+One `socat` sidecar per entry, reachable at `staging-db:5432`. It is a peer on the task network, not a gateway, so the task still has no route of its own. Three constraints make it a hole you opened rather than one you inherited:
+
+- **`to` must resolve into private address space.** A public target would turn the forwarder into a general tunnel around Squid — unfiltered, unlogged, invisible to `sbx net denied`. Use `network.allow` for public hosts. (`allow_public = true` releases a single entry, loudly, for companies that use public ranges internally.)
+- **The project layer cannot declare one.** A config that travels with a repository should not decide where your machine connects.
+- **It is resolved once, at start, and the IP is frozen into the sidecar.** `sbx run` prints every forward and the address it actually reached, `sbx ls` marks which tasks have them, and the task's `meta.json` keeps the record for when you review the branch later.
+
+Reaching a real shared database means the network layer has stopped being the thing protecting you: whatever the agent does there, it does for real. Use a read-only account or a separate schema, and consider `network.mode = "allowlist"` for that workspace — once the task holds real data, controlling egress is worth what it costs.
+
+### Deliberately not provided
+
+These are decided, not pending. Writing them down is the point: without it, the first person who needs testcontainers mounts the Docker socket and never learns what it cost.
+
+| | Why not | Instead |
+|---|---|---|
+| `/var/run/docker.sock` | Full control of your host's Docker: privileged containers, your root filesystem. An order of magnitude worse than R1, and immediate | `[[services]]` |
+| Cloud credentials, kubeconfig | Largest blast radius there is — spend money, delete resources, exfiltrate data | Run those from the host |
+| SSH keys in the container | Push access to every repo you have. Your branches are already on the host, so `git push` belongs there | `git push` on the host |
+| `host.docker.internal` passthrough | Reaches *every* port your machine listens on — other projects' dev servers, every local database. There is no "just 5432" version of it | `[[forward]]`, one port at a time |
+| A non-internal interface on the task | That is the moment it gets a default route, and the allowlist, policy blocks and access log all stop meaning anything | The sidecars above |
+| Runtime credential injection, devices / `--gpus` / `--cap-add` | Not yet, rather than never: the common cases are already covered another way, and capabilities need a declaration model first | — |
+
 
 ## Configuration
 
@@ -234,9 +282,9 @@ What *cannot* be in that file, by design: anything that looks like a credential,
 
 ## Status
 
-**M1, M2 and nearly all of M3 are done** — only Codex support (M3-6) is left. Available commands: `run / attach / shell / stop / ls / path / done / drop / logs / port / net / memory / login / config / trust / doctor / upgrade`.
+**M1, M2, M3 (except Codex, M3-6) and most of M4 are done.** Available commands: `run / attach / shell / stop / ls / path / done / drop / logs / port / net / memory / login / config / trust / prep / doctor / upgrade`.
 
-Known limits: a writable `.git` means a sandboxed agent can plant a git hook that later runs on your host (R1, see [The model](#the-model)); there is no `sbx merge` and no Codex support yet (M3-6); a host proxy has to speak HTTP (SOCKS-only needs a shim of your own); base images have to be Debian or Ubuntu.
+Known limits: there is no `sbx merge` and no Codex support yet (M3-6); a host proxy has to speak HTTP (SOCKS-only needs a shim of your own); base images have to be Debian or Ubuntu; a service or a forward is reached by its name, not `localhost`. See also [Deliberately not provided](#deliberately-not-provided).
 
 Roadmap: [implementation-checklist.md](docs/implementation-checklist.md).
 

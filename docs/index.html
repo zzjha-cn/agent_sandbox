@@ -324,6 +324,38 @@ Hot-reloaded into 3 running tasks; no restart needed</pre></div>
     </div>
 
     <div class="beat">
+      <div class="clock">15:30</div>
+      <div>
+        <h3>The backend tests want a database</h3>
+        <div class="term"><pre><span class="c">#</span> shop/.sbx/sandbox.toml — safe to commit: no address, no credential, no host path
+[[services]]
+name  = "db"
+image = "postgres:16"
+port  = 5432
+env   = { POSTGRES_PASSWORD = "dev" }
+
+<span class="c">$</span> sbx run api-rate-limit
+service db: postgres:16, reachable in the task as <span class="w">db:5432</span></pre></div>
+        <p><strong>The failure you are avoiding is not the error message.</strong> Unattended, the agent does not stop to ask: it tries <code>apt-get install postgresql</code> (no root), tries <code>docker run</code> (no socket), and then starts <b>editing the tests to work around the database</b> — and hands you a branch where everything passes.</p>
+        <p>The service container sits on the task's <code>--internal</code> network, so this costs no egress route at all. It is reached by its name, not <code>localhost</code>: it is a different container.</p>
+      </div>
+    </div>
+
+    <div class="beat">
+      <div class="clock">16:20</div>
+      <div>
+        <h3>…and half the dependencies live on an internal registry</h3>
+        <div class="term"><pre><span class="c">$</span> sbx prep build
+built sbx/prep-shop-e76272:a1b2c3d4e5f6
+
+<span class="c">$</span> sbx run add-sdk
+seeding cache/go-mod from sbx/prep-shop-e76272:a1b2c3d4e5f6 (184MB) ...</pre></div>
+        <p>The obvious move — give the sandbox intranet access — is the expensive one: the credentials go in with it. <strong>So the fetching moves to the host instead.</strong> One <code>docker build</code> where you still have the network and the credentials; the result is seeded into each new task's volumes.</p>
+        <p>The credential is a BuildKit secret: alive for one <code>RUN</code>, absent from every layer. <strong>The task itself never connects to the intranet once.</strong></p>
+      </div>
+    </div>
+
+    <div class="beat">
       <div class="clock">18:00</div>
       <div>
         <h3>End of day</h3>
@@ -724,6 +756,51 @@ mask = ["node_modules"]    <span class="c"># add .venv, target, vendor, …</spa
     </div>
 
     <div class="qa">
+      <p class="q">The project needs a database, or something that only exists on the intranet. Now what?</p>
+      <div class="a">
+        <p>Two mechanisms, and the order between them matters. Both are <strong>sidecars on the task's network</strong> — neither gives the task a second interface, so the container still has no default route.</p>
+      </div>
+      <div class="tw">
+        <table>
+          <thead><tr><th>Shape</th><th>Worst case if the agent runs wild</th><th>Mechanism</th></tr></thead>
+          <tbody>
+            <tr><td class="k">a throwaway instance in a container</td><td>you lose a database that was disposable anyway</td><td><code>[[services]]</code></td></tr>
+            <tr><td class="k">an instance on your own machine</td><td>you lose your local dev data</td><td><code>[[forward]]</code></td></tr>
+            <tr><td class="k">a shared staging instance</td><td><b>other people's data, real user records, irreversible writes</b></td><td><code>[[forward]]</code> + a read-only account</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="a">
+        <p><code>[[services]]</code> can live in the repo: it declares only name, image, env and port — no address, no credential, no host path. <code>[[forward]]</code> cannot: it decides where <em>your machine</em> connects, so it is yours to write, in your global or workspace config.</p>
+        <p>A forward resolves its target <strong>once, at start</strong>, and freezes the IP into the sidecar. <code>sbx run</code> prints every one of them with the address it actually reached, <code>sbx ls</code> marks the tasks that have them, and the task's <code>meta.json</code> keeps the record — so when you review that branch next week, you know it was produced against something real.</p>
+      </div>
+      <div class="note">
+        <span class="t">Why a forward cannot point at a public address</span>
+        <p>Because then it stops being a hole and becomes a <b>general tunnel around squid</b>: that traffic would obey no allowlist, land in no access log, and never show up in <code>sbx net denied</code>. Public hosts go through <code>network.allow</code>, where they stay visible.</p>
+        <p>And once a task holds real data, the thing protecting you is no longer the network. Use a read-only account or a separate schema — no network setting undoes a <code>DROP TABLE</code>.</p>
+      </div>
+    </div>
+
+    <div class="qa">
+      <p class="q">What will you never hand to the container?</p>
+      <div class="a">
+        <p>These are decided, not pending. The point of writing them down is that otherwise the first person who needs testcontainers mounts the Docker socket and never learns what it cost.</p>
+      </div>
+      <div class="tw">
+        <table>
+          <thead><tr><th>Not provided</th><th>Why</th><th>Instead</th></tr></thead>
+          <tbody>
+            <tr><td class="k"><code>/var/run/docker.sock</code></td><td>full control of your host's Docker — privileged containers, your root filesystem. Immediate, and an order of magnitude worse than a planted git hook</td><td><code>[[services]]</code></td></tr>
+            <tr><td class="k">cloud credentials, kubeconfig</td><td>the largest blast radius available: spend money, delete resources, exfiltrate data</td><td>run those from the host</td></tr>
+            <tr><td class="k">SSH keys</td><td>push access to every repo you have</td><td>your branches are already on the host; <code>git push</code> there</td></tr>
+            <tr><td class="k"><code>host.docker.internal</code> passthrough</td><td>reaches <b>every</b> port your machine listens on. There is no "just 5432" version of it</td><td><code>[[forward]]</code>, one port at a time</td></tr>
+            <tr><td class="k">a non-internal interface on the task</td><td>that is the moment it gets a default route, and the allowlist, policy blocks and access log all stop meaning anything</td><td>the sidecars above</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="qa">
       <p class="q">Can two tasks reach each other?</p>
       <div class="a">
         <p>No. Each task gets its own <code>--internal</code> network and they share none. Squid tells them apart with basic auth — the username is <code>&lt;ws&gt;.&lt;task&gt;</code> and the password is a random token (<code>proxy.cred</code>, mode 0600). <strong>Borrowing another task's identity gets a 407.</strong></p>
@@ -834,6 +911,13 @@ core/assets/agent-layer/Dockerfile       <span class="c"># tmux, git, jq, claude
         <tr><td>wrap up and merge</td><td><code>sbx done</code> → <code>git merge sbx/&lt;task&gt;</code></td><td class="k">act 10</td></tr>
         <tr><td>upgrade Claude inside the sandbox</td><td><code>sbx upgrade</code></td><td class="k">act 11</td></tr>
         <tr><td>recover after hitting Ctrl-D</td><td><code>sbx run &lt;task&gt;</code> again</td><td class="k">act 12</td></tr>
+        <tr><td>give the tests a throwaway database</td><td><code>[[services]]</code> in <code>.sbx/sandbox.toml</code></td><td class="k">act 13</td></tr>
+        <tr><td>install dependencies from a private registry</td><td><code>sbx prep init</code> → <code>sbx prep build</code></td><td class="k">act 14</td></tr>
+        <tr><td>check what a prep image would seed, without touching anything</td><td><code>sbx prep build --check</code></td><td class="k">commands.md</td></tr>
+        <tr><td>reach a database on your own machine</td><td><code>[[forward]]</code> with <code>to = 5432</code></td><td class="k">act 15</td></tr>
+        <tr><td>reach a service on the intranet</td><td><code>[[forward]]</code> with <code>to = "host:port"</code></td><td class="k">act 15</td></tr>
+        <tr><td>see which tasks are wired to something real</td><td><code>sbx ls</code> (the <code>LINKS</code> column)</td><td class="k">act 15</td></tr>
+        <tr><td>find out what sbx is using on disk</td><td><code>sbx doctor</code></td><td class="k">commands.md</td></tr>
         <tr><td>see what the proxy blocked</td><td><code>sbx net denied [task] [--all] [--since 2h]</code></td><td class="k">commands.md</td></tr>
         <tr><td>allow a host</td><td><code>sbx net allow &lt;host&gt;</code></td><td class="k">commands.md</td></tr>
         <tr><td>review a repo's <code>.sbx/</code> after it changed</td><td><code>sbx trust</code></td><td class="k">commands.md</td></tr>
@@ -849,18 +933,21 @@ core/assets/agent-layer/Dockerfile       <span class="c"># tmux, git, jq, claude
     <div class="num">07</div>
     <div>
       <h2>Where it stands today</h2>
-      <p>M1, M2 and nearly all of M3 are done; only Codex support (M3-6) is left.</p>
+      <p>M1, M2, M3 (except Codex, M3-6) and most of M4 are done.</p>
     </div>
   </div>
 
   <div class="body">
-    <p>Available commands: <code>run / attach / shell / stop / ls / path / done / drop / logs / port / net / memory / login / config / trust / doctor / upgrade</code>.</p>
+    <p>Available commands: <code>run / attach / shell / stop / ls / path / done / drop / logs / port / net / memory / login / config / trust / prep / doctor / upgrade</code>.</p>
     <h3>Limits worth knowing up front</h3>
     <ul class="limits">
       <li>two built-in profiles (<code>web-go</code>, <code>py-rust</code>); a project can bring its own image with <code>.sbx/Dockerfile</code>, as long as it is Debian or Ubuntu based</li>
       <li>a host proxy has to speak HTTP; a SOCKS-only proxy needs a shim of your own</li>
       <li>there is no <code>sbx merge</code>; merging is always done by a person in the main repo</li>
       <li>there is no Codex support yet (M3-6)</li>
+      <li>a service or a forward is reached by its name, not <code>localhost</code> — it is a different container</li>
+      <li>a forward carries no audit trail: squid cannot see raw TCP, which is why each one has to be declared by hand and is printed on every run</li>
+      <li><code>[[services]]</code> containers are not counted in the memory budget <code>sbx doctor</code> checks</li>
     </ul>
   </div>
 </section>

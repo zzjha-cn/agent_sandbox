@@ -13,7 +13,9 @@ import (
 	"github.com/spf13/cobra"
 
 	"sandx/internal/agent"
+	"sandx/internal/config"
 	"sandx/internal/docker"
+	"sandx/internal/prep"
 	"sandx/internal/proxy"
 	"sandx/internal/task"
 	"sandx/internal/workspace"
@@ -166,6 +168,14 @@ func (a *App) resume(t task.Task, st docker.State, o runOpts) error {
 	if !ok {
 		return fmt.Errorf("container %s exists but %s/meta.json is missing; run sbx done %s first, then run again", t.Container(), t.StateDir(), t.Name)
 	}
+	// prep 声明过的放行域名在建 Task 时记进了 meta：这里直接用，不再去读镜像。
+	// 漏掉的话 resume 一次就会把那几条白名单悄悄撤掉（M4-15）。
+	if len(meta.PrepAllow) > 0 {
+		if err := a.Loaded.MergePrep(meta.PrepAllow, nil); err != nil {
+			return err
+		}
+		a.Cfg = a.Loaded.Config
+	}
 	p := a.egress(t)
 	if err := p.Ensure(); err != nil {
 		return err
@@ -174,6 +184,15 @@ func (a *App) resume(t task.Task, st docker.State, o runOpts) error {
 	if _, err := p.AttachTask(a.proxySpec(t, meta.TaskID)); err != nil {
 		return err
 	}
+	if err := a.ensureServices(t, nil); err != nil {
+		return err
+	}
+	if _, _, err := a.ensureForwards(t, nil, false); err != nil {
+		return err
+	}
+	// 接着内网资源这件事每次回到 Task 都要提一句，不是只在建的时候提一次——
+	// 真正危险的恰恰是第二天接着跑、已经忘了这条洞存在的那次（boundary.md §3.5）。
+	a.warnForwardExposure(meta.Forwards)
 	if err := agent.RenderGen(t.GenDir(), a.genInput(a.hostClaude(), o)); err != nil {
 		return err
 	}
@@ -231,7 +250,7 @@ func (a *App) create(t task.Task, o runOpts) (err error) {
 		if err != nil {
 			a.logf("failed at step [%s]; cleaning up what this run created (the worktree is kept) ...", step)
 			u.run()
-			err = fmt.Errorf("%s：%w", step, err)
+			err = fmt.Errorf("%s: %w", step, err)
 		}
 	}()
 
@@ -244,6 +263,13 @@ func (a *App) create(t task.Task, o runOpts) (err error) {
 	// 2. 镜像
 	step = "preparing the image"
 	tag, err := a.agentImage()
+	if err != nil {
+		return err
+	}
+
+	// 2.5 prep：先读镜像里的声明。它要并进配置，而 allow 必须赶在配 squid 之前（M4-15）
+	step = "reading the prep image"
+	prepTag, prepPlan, err := a.prepLoad(t)
 	if err != nil {
 		return err
 	}
@@ -282,20 +308,38 @@ func (a *App) create(t task.Task, o runOpts) (err error) {
 		return err
 	}
 
-	// 5. volume
-	step = "preparing volumes"
-	if err := a.ensureVolumes(t, tag, &u); err != nil {
+	// 5. 伴生容器：services 和 forward。都接在刚建好的 internal 网络上，
+	//    Task 容器自己仍然只有那一张没有默认路由的网卡（boundary.md §3.3.4）。
+	step = "starting the declared services"
+	u.add(func() { a.removeSidecars(t) })
+	if err := a.ensureServices(t, &u); err != nil {
+		return err
+	}
+	step = "opening the declared forwards"
+	addHosts, links, err := a.ensureForwards(t, &u, true)
+	if err != nil {
 		return err
 	}
 
-	// 6. gen 目录
+	// 6. volume
+	step = "preparing volumes"
+	fresh, err := a.ensureVolumes(t, tag, &u)
+	if err != nil {
+		return err
+	}
+	step = "seeding dependencies from the prep image"
+	if err := a.prepSeed(t, prepTag, prepPlan, fresh); err != nil {
+		return err
+	}
+
+	// 7. gen 目录
 	step = "rendering generated files"
 	host := a.hostClaude()
 	if err := agent.RenderGen(t.GenDir(), a.genInput(host, o)); err != nil {
 		return err
 	}
 
-	// 7. 容器
+	// 8. 容器
 	step = "creating the container"
 	gitDir := t.WS.GitDir
 	if t.IsMain() {
@@ -324,31 +368,61 @@ func (a *App) create(t task.Task, o runOpts) (err error) {
 			Worktree: t.Worktree(), GitDir: gitDir,
 			DepMasks: a.Cfg.Deps.Mask, DepVolume: t.DepVolume,
 			StateDir: t.StateDir(), GenDir: t.GenDir(), Host: host,
+			GitCommon: t.WS.GitDir, GitProtect: a.Cfg.Git.Protect,
 		}),
-		Env:     agent.Env(agent.EnvInput{ProxyURL: proxyURL, GitName: name, GitMail: mail, WS: t.WS.ID, Task: t.Name, TZ: agent.HostTZ(), APIKeyEnv: key.Env, APIKey: key.Value}),
+		Env:     agent.Env(agent.EnvInput{ProxyURL: proxyURL, GitName: name, GitMail: mail, WS: t.WS.ID, Task: t.Name, TZ: agent.HostTZ(), APIKeyEnv: key.Env, APIKey: key.Value, Extra: a.Cfg.Env}),
 		Workdir: t.Worktree(),
 		Resources: docker.Resources{
 			CPUs: a.Cfg.Resources.CPUs, Memory: a.Cfg.Resources.Memory, Pids: a.Cfg.Resources.Pids,
 		},
+		// agent 是跑最久、输出最多的容器，没有上限的话 json-file 日志会一直涨（M4-3）。
+		LogMaxSize: "10m",
+		// 配了 host 的 forward：容器里仍用真实域名访问，SNI 和证书照旧（M4-13）
+		AddHosts: addHosts,
 	}
 	if _, err := a.Docker.RunContainer(spec); err != nil {
 		return err
 	}
 	u.add(func() { a.Docker.Rm(t.Container()) })
+	if prepPlan != nil && prepPlan.Manifest != nil {
+		step = "installing the CA certificates declared by prep"
+		if err := a.installCAs(t, prepTag, prepPlan.Manifest.CA); err != nil {
+			return err
+		}
+	}
 
-	// 8. meta（先写，startAgent 失败时 resume 还能用）
+	// 9. meta（先写，startAgent 失败时 resume 还能用）
 	step = "writing meta"
 	if err := t.WriteMeta(task.Meta{
 		Task: t.Name, WS: t.WS.ID, Root: t.WS.Root, Base: baseSHA, Profile: a.Cfg.Profile, Image: tag,
-		Proxy: a.Cfg.Network.Proxy, TaskID: t.ID(), DepMasks: a.Cfg.Deps.Mask, CreatedAt: time.Now().UTC(),
+		Proxy: a.Cfg.Network.Proxy, TaskID: t.ID(), DepMasks: a.Cfg.Deps.Mask, PrepTag: prepTag, PrepAllow: prepAllow(prepPlan), Services: serviceNames(a.Cfg.Services), Forwards: links,
+		CreatedAt: time.Now().UTC(),
 	}); err != nil {
 		return err
 	}
 	u.add(func() { os.Remove(filepath.Join(t.StateDir(), "meta.json")) })
 
-	// 9. 预置、登录检查、starting the agent
+	// 10. 预置、登录检查、starting the agent
 	step = "starting the agent"
 	return a.startAgent(t, o)
+}
+
+// prepAllow 取镜像声明里的放行域名，记进 meta：resume 时就不必再起一个探测容器
+// 去把镜像读一遍，也不会因为镜像被删掉而悄悄少了几条放行。
+func prepAllow(p *prep.Plan) []string {
+	if p == nil || p.Manifest == nil {
+		return nil
+	}
+	return p.Manifest.Allow
+}
+
+// serviceNames 取声明里的服务名，记进 meta。
+func serviceNames(svcs []config.Service) []string {
+	var out []string
+	for _, s := range svcs {
+		out = append(out, s.Name)
+	}
+	return out
 }
 
 func (a *App) prepareWorktree(t task.Task, base string) (string, error) {
@@ -394,7 +468,7 @@ func (a *App) initVol(tag, vol, script string) error {
 
 // ensureSharedVolumes 创建全局共享的 sbx-home 和 sbx-cache，新建时按宿主机的 UID/GID 设属主。
 // sbx run 和 sbx login 都要先过这一步。
-func (a *App) ensureSharedVolumes(tag string) error {
+func (a *App) ensureSharedVolumes(tag string, fresh map[string]bool) error {
 	uid, gid := strconv.Itoa(os.Getuid()), strconv.Itoa(os.Getgid())
 	scripts := map[string]string{
 		sharedHome:  "chown " + uid + ":" + gid + " /v",
@@ -407,6 +481,7 @@ func (a *App) ensureSharedVolumes(tag string) error {
 			return err
 		}
 		if created {
+			fresh[vol] = true
 			if err := a.initVol(tag, vol, scripts[vol]); err != nil {
 				return err
 			}
@@ -415,10 +490,12 @@ func (a *App) ensureSharedVolumes(tag string) error {
 	return nil
 }
 
-// ensureVolumes 准备共享 volume 和这个 Task 的依赖 volume。
-func (a *App) ensureVolumes(t task.Task, tag string, u *undo) error {
-	if err := a.ensureSharedVolumes(tag); err != nil {
-		return err
+// ensureVolumes 准备共享 volume 和这个 Task 的依赖 volume，
+// 返回本次**新建**的 volume 名集合——prep 只播种它们，不覆盖已有内容（M4-8）。
+func (a *App) ensureVolumes(t task.Task, tag string, u *undo) (map[string]bool, error) {
+	fresh := map[string]bool{}
+	if err := a.ensureSharedVolumes(tag, fresh); err != nil {
+		return nil, err
 	}
 	own := "chown " + strconv.Itoa(os.Getuid()) + ":" + strconv.Itoa(os.Getgid()) + " /v"
 	for i := range a.Cfg.Deps.Mask {
@@ -427,16 +504,17 @@ func (a *App) ensureVolumes(t task.Task, tag string, u *undo) error {
 		labels["sbx.kind"] = "dep"
 		created, err := a.Docker.VolumeCreate(vol, labels)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if created {
+			fresh[vol] = true
 			u.add(func() { a.Docker.VolumeRm(vol) })
 			if err := a.initVol(tag, vol, own); err != nil {
-				return err
+				return nil, err
 			}
 		}
 	}
-	return nil
+	return fresh, nil
 }
 
 // startAgent 预置首次启动状态、检查登录、在 tmux 里拉起 claude 并做冒烟检查。

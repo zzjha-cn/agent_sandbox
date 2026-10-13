@@ -120,7 +120,9 @@ git merge sbx/fix-login        # 合并（sbx 不会自动合并）
 
 容器里能看到的只有：这棵 worktree、你仓库的 `.git` 目录、共享的 `sbx-home`（登录态 + Claude 配置）、`sbx-cache`（包管理器缓存）、只读的 `/sbx/gen`（hooks、settings、状态栏）。**宿主机其余目录一概没挂。**
 
-> **已知缺口——`.git` 是可写挂载的，这是一条逃逸路径。** 它必须可写：沙箱里的提交能直接出现在你宿主机的 `git log sbx/<task>` 里、不需要任何同步，靠的就是这个。代价是 Agent 同样能写 `.git/hooks/*` 和 `.git/config`，而 git hook 会在你下次碰这个仓库时**以你的身份、在你的宿主机上**执行。sbx 目前不防这个——它是 [design.md](docs/design.md) 里的风险 R1，是明知而接受的，至今没有缓解。除此之外的隔离都是实的（网络、文件系统、凭据），但如果你要跑的是真正不可信的 Agent 或代码库，请用一个用完就扔的 clone，别用你的工作仓库。
+> **`.git` 是可写挂载的，而 `.git/hooks` 和 `.git/config` 以只读盖在它上面。** 仓库必须可写：沙箱里的提交能直接出现在你宿主机的 `git log sbx/<task>` 里、不需要任何同步，靠的就是这个。但"写一下就能在宿主机上执行代码"的那两个口子——埋一个 `pre-commit`，或者把 `core.hooksPath` 指到 Agent 控得住的地方——已经堵上了（submodule 一并处理）。想退回没有防护的行为就写 `git.protect = false`；它是安全开关，项目层开关都不许设。
+>
+> 剩下的风险：Agent 仍然能改写 `sbx/<task>` 的历史，以及你自己的工具从 `.git` 里读的、hooks 和 config 以外的东西。这是 [design.md](docs/design.md) 里的 R1——现在是**已缓解**，不是已消除。真正不可信的 Agent 或代码库，还是请用一个用完就扔的 clone。
 
 ## 网络
 
@@ -136,6 +138,52 @@ sbx run t1 --proxy dedicated   # 这一次用独占的代理 sidecar
 白名单模式（`network.mode = "allowlist"`）只放行内置名单加你配的域名，适合跑不信任的代码。两种模式都经过 Squid，所以日志一直有；云端 MCP 的策略拦截两种模式下都生效（[ADR 0015](docs/CONTEXT.md)）。
 
 > 默认从 allowlist 翻成 open 是 2026-10-08 的决定：白名单挡住 web search 和依赖下载时，Agent 会悄悄找替代方案并报告"测试通过"，这种结果比拦截本身更危险。取舍记在 ADR 0005 的修订里。
+
+## 伴生服务，和够不着的东西
+
+Task 的网络是 `--internal` 的：容器**没有默认路由**，能出 HTTP 只是因为 Squid 就在这张网上。有两样东西能在不动这条不变量的前提下往里加东西——它们都是 Task 网络上的 sidecar，而不是给 Task 自己再插一张网卡。
+
+```toml
+# <repo>/.sbx/sandbox.toml —— 可以进仓库：没有地址、没有凭据、没有宿主机路径
+[[services]]
+name  = "db"
+image = "postgres:16"
+port  = 5432
+env   = { POSTGRES_PASSWORD = "dev", POSTGRES_DB = "app" }
+```
+
+跟着 Task 起、被 `sbx done` 一并回收的一次性实例。容器里按 **`db:5432`** 访问——用它的名字，不是 `localhost`：它是另一个容器，而 `localhost` 在 Task 里指的是 Task 自己。Agent 真失控时最坏的后果是毁掉一个本来就一次性的库，所以这一类是首选。
+
+```toml
+# ~/.sbx/config.toml 或 ~/.sbx/workspaces/<ws>.toml —— 不能写在项目层
+[[forward]]
+name = "staging-db"
+port = 5432
+to   = "db.corp.internal:5432"   # 只写 `to = 5432` 表示你本机的端口
+# host = "gitlab.corp.internal"  # 可选：容器里仍用真实域名，证书照样能校验
+```
+
+一条一个 `socat` sidecar，容器里按 `staging-db:5432` 访问。它是 Task 网络上的一个普通 peer，不是 Task 的网关，所以 Task 仍然没有自己的出口。三条约束让它是"你开的洞"而不是"你继承来的洞"：
+
+- **`to` 必须解析到私有地址。** 指向公网的话，forwarder 就成了绕过 Squid 的通用隧道——不过滤、不记日志、`sbx net denied` 也看不见。公网访问走 `network.allow`。（内部真的在用公网段的公司可以写 `allow_public = true` 单条解除，会有醒目警告。）
+- **项目层不能声明。** 跟着仓库走的配置不该决定你这台机器往哪儿连。
+- **启动时解析一次，IP 固化进 sidecar。** `sbx run` 逐条打印实际连到的地址，`sbx ls` 标出哪些 Task 接过，Task 的 `meta.json` 把这件事记下来——事后 review 分支时你知道该用什么尺度看。
+
+接上真实的共享数据库，就意味着网络层不再是护着你的那一层了：Agent 在那头做的事都是真的。请用只读账号或独立 schema，并考虑给这个 Workspace 切 `network.mode = "allowlist"`——沙箱里一旦有了真实数据，守住出口就重新值钱了。
+
+### 明确不提供
+
+这些是决定不做，不是还没做。写下来本身就是目的：不写的话，第一个需要 testcontainers 的人会自己挂上 docker.sock，而且不会知道代价是什么。
+
+| | 为什么不 | 替代做法 |
+|---|---|---|
+| `/var/run/docker.sock` | 等于宿主机 Docker 的完全控制权：特权容器、你的根文件系统。比 R1 严重一个量级，而且是立即生效的 | `[[services]]` |
+| 云厂商凭据、kubeconfig | 爆炸半径最大的一项——花钱、删资源、拖数据 | 这类操作在宿主机做 |
+| SSH key 进容器 | 等于你所有仓库的推送权。分支本来就在宿主机上，`git push` 就该在那儿做 | 在宿主机 `git push` |
+| `host.docker.internal` 直通 | 一旦可达，容器能连你本机**每一个**监听端口：别的项目的 dev server、所有本地数据库。没有"只开 5432"这回事 | `[[forward]]`，一条一个端口 |
+| 给 Task 容器加非 internal 网卡 | 那一刻它就有了默认路由，白名单、策略拦截、访问日志同时失效 | 上面那两种 sidecar |
+| 运行期凭据注入、设备 / `--gpus` / `--cap-add` | 是暂不提供而不是永不：常见场景已经被别的方式覆盖，而能力透传需要先有一套声明机制 | — |
+
 
 ## 配置
 
@@ -225,9 +273,9 @@ profile = "web-go"                    # 3. 内置 Profile（默认）
 
 ## 项目状态
 
-**M1、M2 和 M3 的绝大部分都已完成**，只剩 Codex（M3-6）。可用命令：`run / attach / shell / stop / ls / path / done / drop / logs / port / net / memory / login / config / trust / doctor / upgrade`。
+**M1、M2、M3（Codex 除外，M3-6）和 M4 的大部分都已完成。** 可用命令：`run / attach / shell / stop / ls / path / done / drop / logs / port / net / memory / login / config / trust / prep / doctor / upgrade`。
 
-已知边界：`.git` 可写意味着沙箱里的 Agent 能埋一个 git hook、之后在你宿主机上执行（R1，见[核心模型](#核心模型)）；没有 `sbx merge`；Codex 还没接（M3-6）；上游代理只支持 http（只有 SOCKS 的话要自己加一层转发）；底层镜像必须是 Debian/Ubuntu 系。
+已知边界：没有 `sbx merge`；Codex 还没接（M3-6）；上游代理只支持 http（只有 SOCKS 的话要自己加一层转发）；底层镜像必须是 Debian/Ubuntu 系；伴生服务和 forward 都按名字访问，不是 `localhost`。另见[明确不提供](#明确不提供)。
 
 路线图见 [implementation-checklist.md](docs/implementation-checklist.md)。
 

@@ -1,0 +1,54 @@
+# sbx prep —— 把私有依赖固化成不变的字节（sbx prep build）
+#
+# 这份 Dockerfile 在**宿主机**的 Docker 上构建：有完整的内网可达性和凭据。
+# 构建产物会被播种进每个新 Task 的依赖 volume，Task 容器自己不需要任何私有网络
+# 配置，也永远看不到这里用到的凭据。
+#
+# 契约（sbx 只认这两条，不要发明别的目录）：
+#
+#   1. WORKDIR 下凡是命中 deps.mask 的目录（node_modules / .venv / target ……）
+#      会被播种到该 Task 对应的依赖 volume。
+#   2. /sbx/cache/* 下的一级目录会被播种到所有 Task 共享的 sbx-cache。
+#      镜像里的 GOMODCACHE / npm_config_cache 等本来就指向这里，照常跑包管理器即可。
+#
+# 凭据用 BuildKit secret，不要 COPY 进来——secret 只在那一条 RUN 期间可见，
+# 不落进任何镜像层。在 <repo>/.sbx/sandbox.toml 里声明 id（可以进仓库）：
+#
+#   [prep]
+#   watch   = ["go.mod", "go.sum"]   # 这些文件变了，种子就算陈旧
+#   secrets = ["netrc"]              # 只有 id，没有值
+#
+# 值写在你自己机器上的 ~/.sbx/config.toml（项目层写不了）：
+#
+#   [prep.secret]
+#   netrc = "~/.sbx/secrets/corp.netrc"
+
+FROM golang:1.23
+
+# 私有 CA：就是普通的一行 COPY，sbx 不提供专门机制
+# COPY .sbx/ca/corp.crt /usr/local/share/ca-certificates/
+# RUN update-ca-certificates
+
+WORKDIR /src
+
+# 只 COPY 清单文件，不要 COPY 整个仓库：
+# 源码改一行就让整个种子失效的话，prep 就白做了。
+COPY go.mod go.sum ./
+
+ENV GOPRIVATE=gitlab.corp.example
+RUN --mount=type=secret,id=netrc,target=/root/.netrc \
+    go mod download
+
+# npm 的话大致是：
+# COPY package.json package-lock.json ./
+# RUN --mount=type=secret,id=npmrc,target=/root/.npmrc \
+#     npm ci --ignore-scripts
+
+# 可选：往配置里补充声明（M4-15）。按**项目层权限**并入，字段只有 allow / env / ca：
+#   allow  追加到 network.allow（只是放行，不等于可达）
+#   env    注入 Task 容器；盖不住代理和 git 身份那几个变量
+#   ca     镜像里的 CA 证书路径，装进 Task 容器的信任库（update-ca-certificates，追加语义）
+# 和 .sbx/sandbox.toml 走同一套红线：凭据形状的键、执行类的键一律被拒，
+# 在 sbx prep build 这一步就会报错。sbx config show 里来源显示为 prep。
+# RUN mkdir -p /sbx && printf '%s' \
+#     '{"allow":["gitlab.corp.example"],"env":{"GOFLAGS":"-mod=mod"}}' > /sbx/prep.json
