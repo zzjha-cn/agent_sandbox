@@ -1,0 +1,79 @@
+# ~/.sbx/workspaces/<ws>.toml -- the workspace layer, on your machine only.
+#
+# [[forward]] punches one single-target TCP hole from the task to one address
+# you name. It can only be written here or in ~/.sbx/config.toml: the project
+# layer rejects the whole subtree, because a repo you cloned should not get to
+# decide what your machine dials out to.
+#
+# How it works: one socat sidecar per entry, dual-attached to the task's
+# internal network and to the egress network. The task container still has no
+# default route and still cannot reach the internet except through the proxy --
+# the hole is exactly one address and one port, resolved once when the task
+# starts and then frozen to that IP.
+#
+# Before you uncomment anything, the honest ordering of the three options:
+#
+#   safe       a throwaway instance inside the sandbox -- [[services]] in
+#              <repo>/.sbx/sandbox.toml (`sbx config init`). Nothing real in it.
+#   careful    an instance on your own machine. Your dev data, your machine,
+#              and the agent can write to it.
+#   deliberate an instance on an internal network, shared with other people.
+#              The agent gets whatever that instance lets your account do.
+#              The sandbox cannot make this one safe. That is not its job:
+#              the service itself has to carry the permission model, and you
+#              need to know what you just handed over.
+#
+# Everything below is commented out. Uncomment one entry at a time.
+
+# --- A database running on your own machine ---------------------------------
+#
+# A bare port number means "the host machine" -- no address to look up, no
+# chance of pointing at the wrong box.
+#
+# [[forward]]
+# name = "hostdb"
+# port = 5432                   # reach it at hostdb:5432 from inside the task
+# to   = 5432                   # port 5432 on your machine
+#
+# Note that 127.0.0.1 / localhost in `to` means the same thing: it is rewritten
+# to the host machine, because inside a sidecar loopback would mean the sidecar.
+
+# --- A database on an internal network ---------------------------------------
+#
+# [[forward]]
+# name = "staging-db"
+# port = 5432                   # reach it at staging-db:5432 from inside the task
+# to   = "10.10.16.80:5432"
+#
+# `to` must resolve into private address space (10/8, 172.16/12, 192.168/16,
+# link-local). A public address is refused: if that is really what you want,
+# it is an egress question -- put the hostname in network.allow and let it go
+# through the proxy, where it is logged and filtered like everything else.
+#
+# Some companies do use public ranges internally. allow_public = true lifts the
+# restriction, and every start prints a loud note about it:
+#
+# [[forward]]
+# name = "corp-db"
+# port = 5432
+# to   = "203.0.113.40:5432"
+# allow_public = true
+
+# --- An internal HTTPS service, keeping the domain name and the certificate ---
+#
+# socat is a plain TCP relay, so SNI and the certificate pass through untouched.
+# `host` adds one --add-host entry to the task container, so code inside keeps
+# using the real hostname and certificate validation keeps working.
+#
+# [[forward]]
+# name = "artifacts"
+# port = 443
+# to   = "10.10.16.90:443"
+# host = "artifacts.corp.example"   # reach it at that name from inside the task
+#
+# `host` can only be applied when the task container is created. If you add it
+# to a task that is already running, sbx warns instead of silently doing
+# nothing -- stop the task and run it again.
+
+# `sbx ls` shows a LINKS column counting the services and forwards attached to
+# each task, and `sbx stop` / `sbx done` take the sidecars down with the task.

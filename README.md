@@ -255,7 +255,7 @@ The project layer travels with the repo, so onboarding a teammate is three steps
 2. Your teammate clones, runs `sbx trust` and reads what the diff shows them.
 3. `sbx run`.
 
-What *cannot* be in that file, by design: anything that looks like a credential, any absolute path, and any command that would run in the container (`on_idle` and friends). Those three red lines are enforced, not advisory — a repo cannot decide where your credentials come from or what runs inside your sandbox.
+What *cannot* be in that file, by design: anything that looks like a credential, any absolute path, any command that would run in the container (`on_idle` and friends), and a short registry of safety switches and whole sections (`git.protect`, `prep.on_drift`, `[prep.secret]`, `[[forward]]`). These red lines are enforced, not advisory — a repo cannot decide where your credentials come from, what runs inside your sandbox, or what your machine dials out to.
 
 ## Troubleshooting
 

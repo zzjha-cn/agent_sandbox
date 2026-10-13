@@ -912,6 +912,7 @@ core/assets/agent-layer/Dockerfile       <span class="c"># tmux, git, jq, claude
         <tr><td>upgrade Claude inside the sandbox</td><td><code>sbx upgrade</code></td><td class="k">act 11</td></tr>
         <tr><td>recover after hitting Ctrl-D</td><td><code>sbx run &lt;task&gt;</code> again</td><td class="k">act 12</td></tr>
         <tr><td>give the tests a throwaway database</td><td><code>[[services]]</code> in <code>.sbx/sandbox.toml</code></td><td class="k">act 13</td></tr>
+        <tr><td>get a commented config template (English, or <code>--lang zh</code>)</td><td><code>sbx config init</code> / <code>sbx forward init</code></td><td class="k">commands.md</td></tr>
         <tr><td>install dependencies from a private registry</td><td><code>sbx prep init</code> → <code>sbx prep build</code></td><td class="k">act 14</td></tr>
         <tr><td>check what a prep image would seed, without touching anything</td><td><code>sbx prep build --check</code></td><td class="k">commands.md</td></tr>
         <tr><td>reach a database on your own machine</td><td><code>[[forward]]</code> with <code>to = 5432</code></td><td class="k">act 15</td></tr>

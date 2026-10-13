@@ -3,7 +3,7 @@ package assets
 
 import "embed"
 
-//go:embed profiles agent-layer allowlist proxy prep
+//go:embed profiles agent-layer allowlist proxy prep templates
 var FS embed.FS
 
 // Read 读取一个内嵌文件，不存在时 panic（内嵌文件缺失属于构建错误）。

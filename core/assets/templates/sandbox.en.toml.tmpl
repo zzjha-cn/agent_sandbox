@@ -1,0 +1,67 @@
+# <repo>/.sbx/sandbox.toml -- the project layer.
+#
+# This file travels with the repo, so everything in it is a statement about the
+# project ("this project needs a postgres"), never a decision about the machine
+# it runs on. Keys shaped like credentials, absolute host paths, executed
+# commands and safety switches are rejected here by design -- put those in
+# ~/.sbx/config.toml instead. Changing this file makes the next `sbx run` stop
+# and show you the diff until you run `sbx trust`.
+#
+# Everything below is commented out. Uncomment only what this repo actually
+# needs; anything you leave alone keeps coming from the global layer.
+# `sbx config show` tells you which layer every effective value came from.
+
+# profile       = "web-go"      # built-in profiles: web-go | py-rust
+# image         = "..."         # use a ready-made image instead, overriding profile
+# default_agent = "claude"
+
+# [network]
+# mode  = "allowlist"           # open (default, nothing blocked) | allowlist
+# allow = ["registry.example.com"]   # appended to the built-in allowlist
+
+# [resources]
+# cpus   = 2
+# memory = "3g"
+# pids   = 1024
+
+# [deps]
+# mask = ["node_modules"]       # each entry gets its own volume inside the
+#                               # container, so installs never touch your checkout
+
+# [env]                         # extra environment for the task container.
+# GOFLAGS = "-mod=mod"          # the proxy and git identity variables cannot be
+#                               # overridden -- they are the sandbox's skeleton
+
+# --- A database for this project -------------------------------------------
+#
+# A companion container: it comes up with the task and goes away with it, and
+# lives on the same internal network. Reach it by service name, not localhost.
+# Four fields and no more -- no address, no host path, no capabilities -- which
+# is exactly why this is allowed to travel with the repo.
+#
+# This is the safe level: a throwaway instance with nothing real in it. If your
+# tests can run against one of these, stop here and do not read forward.toml.
+#
+# [[services]]
+# name  = "db"
+# image = "postgres:16"
+# port  = 5432                  # reach it at db:5432 from inside the task
+# env   = { POSTGRES_PASSWORD = "dev" }
+
+# Connecting to a database that already exists -- on your machine or on an
+# internal network -- is a different thing, and [[forward]] cannot be written
+# in this file: the red lines reject the whole subtree. A repo you cloned
+# should not get to decide what your machine dials out to.
+# Run `sbx forward init` to get that template in the right place.
+
+# --- Freezing private dependencies ------------------------------------------
+#
+# Only takes effect when .sbx/prep.Dockerfile exists (`sbx prep init`).
+#
+# [prep]
+# watch   = ["go.mod", "go.sum"]  # change these and the seed counts as stale
+#                                 # (tag = hash of the Dockerfile + these files)
+# secrets = ["netrc"]             # BuildKit secret ids only, never values
+#
+# on_drift and [prep.secret] are safety-relevant and can only be set in
+# ~/.sbx/config.toml or the workspace layer.

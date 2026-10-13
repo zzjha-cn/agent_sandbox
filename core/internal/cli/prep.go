@@ -12,7 +12,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"sandx/assets"
 	"sandx/internal/config"
 	"sandx/internal/docker"
 	"sandx/internal/prep"
@@ -47,6 +46,7 @@ func (a *App) builder() prep.Builder { return prep.Builder{Docker: a.Docker, Out
 
 func (a *App) prepInitCmd() *cobra.Command {
 	var force bool
+	var lang string
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Write a commented " + "prep.Dockerfile" + " template",
@@ -56,13 +56,7 @@ func (a *App) prepInitCmd() *cobra.Command {
 				return err
 			}
 			p := filepath.Join(a.WS.Root, filepath.FromSlash(a.Cfg.Prep.File))
-			if _, err := os.Stat(p); err == nil && !force {
-				return fmt.Errorf("%s already exists; pass --force to overwrite it", p)
-			}
-			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-				return err
-			}
-			if err := os.WriteFile(p, assets.Read("prep/prep.Dockerfile.tmpl"), 0o644); err != nil {
+			if err := writeTemplate(p, "prep/prep.Dockerfile.%s.tmpl", lang, force); err != nil {
 				return err
 			}
 			fmt.Fprintf(a.Out, "wrote %s\n", p)
@@ -73,6 +67,7 @@ func (a *App) prepInitCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "overwrite an existing file")
+	langFlag(cmd, &lang)
 	return cmd
 }
 

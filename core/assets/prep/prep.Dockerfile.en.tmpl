@@ -1,0 +1,62 @@
+# sbx prep -- freeze private dependencies into immutable bytes (sbx prep build)
+#
+# This Dockerfile is built on the **host**, where you still have intranet
+# reachability and credentials. The result is seeded into every new task's
+# dependency volumes; the task container needs no private network configuration
+# of its own, and never sees the credentials used here.
+#
+# The contract (sbx only honours these two -- do not invent other directories):
+#
+#   1. Under WORKDIR, every directory matching deps.mask (node_modules / .venv /
+#      target ...) is seeded into that task's dependency volume.
+#   2. Top-level directories under /sbx/cache/* are seeded into sbx-cache, which
+#      all tasks share. GOMODCACHE / npm_config_cache and friends already point
+#      there inside the image -- just run your package manager normally.
+#
+# Use BuildKit secrets for credentials; do not COPY them in. A secret is visible
+# only during that one RUN and lands in no image layer. Declare the id in
+# <repo>/.sbx/sandbox.toml (safe to commit):
+#
+#   [prep]
+#   watch   = ["go.mod", "go.sum"]   # change these and the seed counts as stale
+#   secrets = ["netrc"]              # ids only, never values
+#
+# The values live on your own machine, in ~/.sbx/config.toml (the project layer
+# cannot write them):
+#
+#   [prep.secret]
+#   netrc = "~/.sbx/secrets/corp.netrc"
+
+FROM golang:1.23
+
+# A private CA is just an ordinary COPY; sbx provides no special mechanism.
+# COPY .sbx/ca/corp.crt /usr/local/share/ca-certificates/
+# RUN update-ca-certificates
+
+WORKDIR /src
+
+# COPY the manifest files only, never the whole repo: if one source edit
+# invalidates the whole seed, prep bought you nothing.
+COPY go.mod go.sum ./
+
+ENV GOPRIVATE=gitlab.corp.example
+RUN --mount=type=secret,id=netrc,target=/root/.netrc \
+    go mod download
+
+# For npm it looks roughly like:
+# COPY package.json package-lock.json ./
+# RUN --mount=type=secret,id=npmrc,target=/root/.npmrc \
+#     npm ci --ignore-scripts
+
+# Optional: declare extra configuration from here (M4-15). It is merged with
+# **project-layer permissions**, and the only fields are allow / env / ca:
+#   allow  appended to network.allow (permission to reach, not reachability)
+#   env    injected into the task container; cannot override the proxy or the
+#          git identity variables
+#   ca     CA certificate paths inside this image, installed into the task's
+#          trust store (update-ca-certificates, append semantics)
+# The same red lines as .sbx/sandbox.toml apply: credential-shaped keys and
+# execution-shaped keys are rejected, and the error comes out at sbx prep build
+# time. sbx config show reports the source as "prep".
+# RUN mkdir -p /sbx && printf '%s' \
+#     '{"allow":["gitlab.corp.example"],"env":{"GOFLAGS":"-mod=mod"}}' > /sbx/prep.json

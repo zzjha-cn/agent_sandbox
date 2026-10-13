@@ -443,7 +443,7 @@ dial tcp 127.0.0.1:5432: connect: connection refused
 
 **这一幕最该注意的不是报错，是不报错的那条路。** 无人值守下 agent 不会停下来问你，它会先去试 `apt-get install postgresql`（没 root，失败），再试 `docker run`（没 docker.sock，失败），然后**开始改测试代码绕过数据库**——最后给你一个「测试通过」的分支。不是报错退出，是悄悄产出垃圾。
 
-所以得让它有东西可连。测试要的是一个空库，不是你那份真实数据：
+所以得让它有东西可连。测试要的是一个空库，不是你那份真实数据。`sbx config init` 会写一份全是注释的项目层模板，这一段就在里面（`--lang zh` 给中文注释）：
 
 ```toml
 # shop/.sbx/sandbox.toml —— 这一段可以进仓库
@@ -574,6 +574,8 @@ empty dependency volumes.
 
 有个活必须对着 staging 的只读副本跑。这回不是一次性的空库了，是**别人也在用的、有真实数据的实例**——级别从 🟢 跳到 🔴。
 
+`sbx forward init` 会把模板直接写到这一层——不是写到项目层再提醒你搬走，命令分开本身就是那条规矩：
+
 ```toml
 # ~/.sbx/workspaces/shop-e76272.toml —— 注意不是 .sbx/sandbox.toml
 [[forward]]
@@ -655,6 +657,8 @@ migrate-check   idle    sbx/migrate-check      2      3f +41 -8  0       fwd:1  
 | 连你本机已经在跑的实例 | `[[forward]]`，`to = 5432` | `db:5432` |
 | 连内网的 staging 库 | `[[forward]]`，`to = "10.10.16.80:5432"` | `staging-db:5432` |
 | 装私有源的依赖 | `sbx prep build`（宿主机侧构建，有网有凭据） | 依赖已经在 volume 里 |
+
+模板分别由 `sbx config init`（项目层，含 `[[services]]`）和 `sbx forward init`（工作区层，含 `[[forward]]`）生成；两者都是全注释，`--lang zh` 给中文注释，`--print` 只看不写。
 
 `[[forward]]` 只能写在全局层或工作区层，`to` 必须解析到私有地址——这两条的理由见 [boundary.md](boundary.md) §3.3。
 

@@ -1,0 +1,60 @@
+# <repo>/.sbx/sandbox.toml —— 项目层。
+#
+# 这个文件跟着仓库走，所以里面的每一条都该是对**项目**的陈述（"本项目需要一个
+# postgres"），而不是对**你这台机器**的决定。凭据形状的键、宿主机绝对路径、会被
+# 执行的命令、安全开关，在这里一律被红线挡掉——那些写到 ~/.sbx/config.toml 去。
+# 这个文件一变，下次 sbx run 会先停下来把 diff 摊给你看，直到你跑 sbx trust。
+#
+# 下面全部是注释。只打开这个仓库真正需要的那几条；没动的键继续从全局层来。
+# `sbx config show` 会告诉你每个生效值到底是哪一层给的。
+
+# profile       = "web-go"      # 内置 Profile：web-go | py-rust
+# image         = "..."         # 直接用现成镜像，覆盖 profile
+# default_agent = "claude"
+
+# [network]
+# mode  = "allowlist"           # open（默认，全放行）| allowlist
+# allow = ["registry.example.com"]   # 追加到内置白名单
+
+# [resources]
+# cpus   = 2
+# memory = "3g"
+# pids   = 1024
+
+# [deps]
+# mask = ["node_modules"]       # 每一项在容器里挂一个独立 volume 遮住，
+#                               # 装依赖不会污染你的工作区
+
+# [env]                         # 注入 Task 容器的环境变量。
+# GOFLAGS = "-mod=mod"          # 代理和 git 身份那几个变量盖不住——它们是沙箱的骨架
+
+# --- 本项目需要一个数据库 ---------------------------------------------------
+#
+# 伴生容器：跟 Task 一起起、一起走，挂在同一个内部网络上。容器里按**服务名**访问，
+# 不是 localhost。字段只有四个——没有地址、没有宿主机路径、不能提权——这正是它
+# 可以跟着仓库走的原因。
+#
+# 这是安全的那一档：一个随起随扔、里面没有真实数据的实例。如果你的测试能跑在这种
+# 实例上，到此为止，不用去看 forward.toml。
+#
+# [[services]]
+# name  = "db"
+# image = "postgres:16"
+# port  = 5432                  # 容器里按 db:5432 访问
+# env   = { POSTGRES_PASSWORD = "dev" }
+
+# 连一个**已经存在**的数据库——你机器上的，或者内网里的——是另一回事，而且
+# [[forward]] 写不进这个文件：整棵子树会被红线拒掉。一个你 clone 下来的仓库，
+# 不该有资格决定你这台机器往哪儿连。
+# 跑 `sbx forward init`，模板会落在它该在的地方。
+
+# --- 私有依赖固化 -----------------------------------------------------------
+#
+# 只有存在 .sbx/prep.Dockerfile 时才起作用（`sbx prep init`）。
+#
+# [prep]
+# watch   = ["go.mod", "go.sum"]  # 这些文件变了就算种子陈旧
+#                                 # （tag = Dockerfile + 这些文件内容的哈希）
+# secrets = ["netrc"]             # 只有 BuildKit secret 的 id，没有值
+#
+# on_drift 和 [prep.secret] 事关安全，只能写在 ~/.sbx/config.toml 或工作区层。

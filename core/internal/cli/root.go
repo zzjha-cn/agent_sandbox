@@ -59,7 +59,7 @@ func Execute() int {
 		},
 	}
 	root.PersistentFlags().BoolVarP(&app.Verbose, "verbose", "v", false, "print every docker and git command sbx runs")
-	root.AddCommand(app.runCmd(), app.attachCmd(), app.shellCmd(), app.stopCmd(), app.lsCmd(), app.pathCmd(), app.doneCmd(), app.dropCmd(), app.portCmd(), app.logsCmd(), app.memoryCmd(), app.loginCmd(), app.configCmd(), app.trustCmd(), app.upgradeCmd(), app.netCmd(), app.prepCmd(), app.doctorCmd())
+	root.AddCommand(app.runCmd(), app.attachCmd(), app.shellCmd(), app.stopCmd(), app.lsCmd(), app.pathCmd(), app.doneCmd(), app.dropCmd(), app.portCmd(), app.logsCmd(), app.memoryCmd(), app.loginCmd(), app.configCmd(), app.trustCmd(), app.upgradeCmd(), app.netCmd(), app.prepCmd(), app.forwardCmd(), app.doctorCmd())
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(app.Err, "sbx:", err)
 		return 1
@@ -81,6 +81,21 @@ func (a *App) load() error {
 		return err
 	}
 	return a.applyLayers(config.Paths(a.Home, a.WS.Root, a.WS.ID))
+}
+
+// locate 只找出 ~/.sbx 和当前 Workspace，不读也不校验任何配置文件。
+// 写模板的命令用它：配置坏掉的时候，最该还能用的恰恰是「再给我一份模板」——
+// 用 load() 的话，一个手滑写坏的 sandbox.toml 会把修它的工具一起锁在门外。
+func (a *App) locate() error {
+	if err := a.setHome(); err != nil {
+		return err
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	a.WS, err = workspace.Resolve(cwd)
+	return err
 }
 
 // loadConfig 只合并默认值和全局层，不要求在 git 仓库里（login、upgrade 用）。

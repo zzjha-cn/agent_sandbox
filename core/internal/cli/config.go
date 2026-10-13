@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
@@ -12,7 +13,8 @@ import (
 )
 
 func (a *App) configCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "config", Short: "Inspect the effective configuration"}
+	cmd := &cobra.Command{Use: "config", Short: "Inspect the effective configuration, or write a template for it"}
+	cmd.AddCommand(a.configInitCmd())
 	cmd.AddCommand(&cobra.Command{
 		Use:   "show",
 		Short: "Print every effective value and which layer it came from",
@@ -69,5 +71,48 @@ func (a *App) configCmd() *cobra.Command {
 			return w.Flush()
 		},
 	})
+	return cmd
+}
+
+// configInitCmd 写一份全是注释的项目层模板。全是注释是刻意的：写一个模板文件不该
+// 改变任何行为，每一条都得是你自己打开的。
+func (a *App) configInitCmd() *cobra.Command {
+	var force, print bool
+	var lang string
+	cmd := &cobra.Command{
+		Use:   "init",
+		Short: "Write a commented <repo>/.sbx/sandbox.toml template (the project layer)",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if print {
+				b, err := templateAsset(projectTemplate, lang)
+				if err != nil {
+					return err
+				}
+				_, err = a.Out.Write(b)
+				return err
+			}
+			if err := a.locate(); err != nil {
+				return err
+			}
+			p := filepath.Join(a.WS.Root, ".sbx", "sandbox.toml")
+			// 信任记录要在改之前问：这次改动是用户让 sbx 做的，不该反过来拦住他
+			// 下一次 run——但只在本来就已信任时才顺手更新（见 retrust）。
+			trustedBefore := a.trusted()
+			if err := writeTemplate(p, projectTemplate, lang, force); err != nil {
+				return err
+			}
+			a.retrust(trustedBefore)
+			fmt.Fprintf(a.Out, "wrote %s\n", p)
+			fmt.Fprintln(a.Out, "every line is commented out; uncomment only what this repo needs, then:")
+			fmt.Fprintln(a.Out, "  sbx config show          # which layer each effective value came from")
+			fmt.Fprintln(a.Out, "this is project-layer config; commit it and your teammates get it when they clone.")
+			fmt.Fprintln(a.Out, "[[forward]] cannot live here -- run sbx forward init for that one.")
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&force, "force", false, "overwrite an existing file")
+	cmd.Flags().BoolVar(&print, "print", false, "print the template instead of writing it")
+	langFlag(cmd, &lang)
 	return cmd
 }

