@@ -581,7 +581,7 @@ empty dependency volumes.
 [[forward]]
 name = "staging-db"
 port = 5432
-to   = "db.corp.internal:5432"
+to   = "db.corp.example:5432"
 ```
 
 **项目层写不了这一段**，写了直接报错：
@@ -595,7 +595,7 @@ sbx: /Users/apple/code/shop/.sbx/sandbox.toml: the project layer contains settin
 
 ```console
 $ sbx run migrate-check
-forward staging-db: staging-db:5432 in the task -> 10.10.16.80:5432 (internal network)
+forward staging-db: staging-db:5432 in the task -> 10.42.0.80:5432 (internal network)
 note: these forwards reach real internal services: staging-db
       whatever the agent does to them, it does for real:
       use a read-only account or a separate schema; the network layer cannot undo a DROP TABLE.
@@ -606,7 +606,7 @@ note: these forwards reach real internal services: staging-db
 发生了什么：
 
 1. sbx 起了一个 socat 容器 `sbx-shop-e76272-migrate-check-fwd-staging-db`，**同时接 Task 网络和 `sbx-egress`**：Task 从前者连它，它从后者出去。
-2. `db.corp.internal` **在启动时解析一次，IP 固化进 socat 的目标**。好处有三：行为确定、能把实际地址打出来、避免 DNS 在 Task 跑着的时候把目标换掉。
+2. `db.corp.example` **在启动时解析一次，IP 固化进 socat 的目标**。好处有三：行为确定、能把实际地址打出来、避免 DNS 在 Task 跑着的时候把目标换掉。
 3. **Task 容器自己还是只有一张 internal 网卡**。forwarder 是 Task 网络里的一个普通 peer，不是 Task 的网关——容器仍然没有默认路由，HTTP 的通用出网仍然只能经 squid。
 4. 解析结果如果落在公网，这条 forward 会**拒绝启动**：否则它就成了绕过 squid 的通用隧道，不受白名单约束、不进访问日志、`sbx net denied` 也看不见。
 
@@ -620,7 +620,7 @@ migrate-check   idle    sbx/migrate-check      2      3f +41 -8  0       fwd:1  
 
 `LINKS` 里有 `fwd` 的分支，是接过真实内部服务跑出来的。**事后 review 它的改动时，你该用不一样的尺度看**——这就是「预期管理」的可操作形态，它还同时记在 `state/<ws>/<task>/meta.json` 里，不只存在于当时那一屏输出。
 
-> 内网 HTTPS 服务可以再加一个 `host = "gitlab.corp.internal"`：sbx 给 Task 容器加一条 `--add-host` 指向 forwarder，容器里仍用真实域名访问，SNI 和证书原样透传。代价是这条流量绕过了 squid 的白名单和访问日志，所以能走 `network.allow` + squid 的就别走它。
+> 内网 HTTPS 服务可以再加一个 `host = "gitlab.corp.example"`：sbx 给 Task 容器加一条 `--add-host` 指向 forwarder，容器里仍用真实域名访问，SNI 和证书原样透传。代价是这条流量绕过了 squid 的白名单和访问日志，所以能走 `network.allow` + squid 的就别走它。
 
 ---
 
@@ -655,8 +655,9 @@ migrate-check   idle    sbx/migrate-check      2      3f +41 -8  0       fwd:1  
 |---|---|---|
 | 测试要一个 postgres / redis | `[[services]]`（可以进仓库） | `db:5432`——服务名，不是 `localhost` |
 | 连你本机已经在跑的实例 | `[[forward]]`，`to = 5432` | `db:5432` |
-| 连内网的 staging 库 | `[[forward]]`，`to = "10.10.16.80:5432"` | `staging-db:5432` |
+| 连内网的 staging 库 | `[[forward]]`，`to = "10.42.0.80:5432"` | `staging-db:5432` |
 | 装私有源的依赖 | `sbx prep build`（宿主机侧构建，有网有凭据） | 依赖已经在 volume 里 |
+| 宿主机要访问 Task 里起的服务 | `sbx port <task> 8080` | 反方向，独立的转发容器，不碰 Task |
 
 模板分别由 `sbx config init`（项目层，含 `[[services]]`）和 `sbx forward init`（工作区层，含 `[[forward]]`）生成；两者都是全注释，`--lang zh` 给中文注释，`--print` 只看不写。
 
@@ -676,3 +677,32 @@ migrate-check   idle    sbx/migrate-check      2      3f +41 -8  0       fwd:1  
 | 设备 / `--gpus` / `--cap-add` | 暂不提供。GPU 本身风险低，但需要先有一套统一的能力声明机制 | — |
 
 **Task 容器始终没有默认路由**，是这一切的支点：`[[services]]` 和 `[[forward]]` 都是往 Task 网络里加 peer，没有一条给 Task 自己多插一张网卡。这条不变量有自动化回归测试盯着（`go test -tags docker ./internal/cli/ -run NoDefaultRoute`）。
+
+---
+
+## 附三：一个后端服务要在沙箱里编译并跑起来，配什么
+
+前面十五幕是按时间讲的。如果你手上正好有这么一个仓库——私有依赖、连数据库、还要连内网——这里是同一件事按**顺序**排一遍：
+
+| 步 | 做什么 | 落点 | 详见 |
+|---|---|---|---|
+| 1 | `sbx config init`，填 `[prep] watch` | 项目层 | 第 14 幕 |
+| 2 | `sbx prep init` 写 Dockerfile，`sbx prep build` | 项目层 + 全局层放 secret 值 | 第 14 幕 |
+| 3 | `[[services]]` 声明测试要的 DB | 项目层 | 第 13 幕 |
+| 4 | `sbx forward init`，点名内网依赖 | **工作区层** | 第 15 幕 |
+| 5 | `sbx port <task> 8080` 把服务拿出来看 | 不进配置 | [commands.md](commands.md) |
+
+**配置文件怎么接上**，是落地时真正花时间的一处。判据还是那条——这是在陈述项目的事实，还是在决定我这台机器的行为：
+
+| | 写哪儿 |
+|---|---|
+| 连接地址从 `localhost` 改成 `db` / `staging-db` | 仓库里（多一份 `config.sbx.yaml` 也行），是项目的事实 |
+| 内网主机的真实地址 | 工作区层的 `[[forward]]` |
+| 任何带密码的那一半 | 全局层或工作区层——密钥类键名在项目层会被红线直接拦下 |
+
+**三件事先知道比撞上再知道便宜：**
+
+- **沙箱里 `go get` 新依赖一定失败。** 这是设计不是缺陷：凭据只在 prep 的 build 期存在。加依赖的动作在宿主机做——改 `go.mod` → `sbx prep build` → 新建 Task。`watch` 里有 `go.mod`，漂移了 `sbx run` 会提醒你。
+- **`go.mod` 里的 `toolchain` 行会让编译在沙箱里停住**，如果镜像自带的 go 比它低——go 会去下载工具链，而 Task 容器下不到。对齐基础镜像版本，或者让 prep 把工具链一起烤进缓存。
+- **服务容器和 Task 同生命周期**，`sbx stop` / `sbx done` 一起收。但 `[[forward]]` 开的洞在 Task 活着的整段时间里都是通的——它值不值得开，看的是那个内网服务自己有没有权限模型，沙箱替它兜不了底。
+

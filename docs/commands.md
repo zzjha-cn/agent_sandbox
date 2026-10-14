@@ -509,16 +509,82 @@ main       no seed  -
 
 `tag` 后面跟着 `<- not built yet (sbx prep build)` 就说明漂移了。
 
-### 构建期的网络：两条代理注入路都要堵
+### 走一遍：Go 服务 + 私有模块
 
-Docker Desktop 会把它设置里的代理注入 `docker build`——不管掉的话构建会原样重演"全走代理、到不了内网"。sbx 在 `prep build` 里把两条路都堵上：
+假设 `svc-ranking` 依赖 `gitlab.corp.example/backend/pkg`，公共依赖走公网。两种姿势，差别只在**谁去取**：
+
+| | 姿势一：构建期直连私有源 | 姿势二：宿主机预抓成离线 proxy |
+|---|---|---|
+| 前提 | 构建容器够得着私有源 | 够不着，或者不想让凭据进 build |
+| 凭据 | ssh key / netrc，BuildKit secret 挂一次 | **一份都不要** |
+| 仓库外的东西 | 无 | 多一个 fetch 脚本 |
+
+**姿势一**，常态：
+
+```dockerfile
+FROM golang:1.25
+ENV GOMODCACHE=/sbx/cache/go-mod GOCACHE=/sbx/cache/go-build \
+    GOPRIVATE=gitlab.corp.example GOFLAGS=-mod=mod
+RUN git config --global url."ssh://git@gitlab.corp.example/".insteadOf "https://gitlab.corp.example/" \
+ && mkdir -p -m 0700 /root/.ssh \
+ && echo "gitlab.corp.example ssh-ed25519 AAAA..." > /root/.ssh/known_hosts
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN --mount=type=secret,id=gitlab_ssh,target=/root/.ssh/id_rsa,mode=0400 go mod download
+```
+
+```toml
+# <repo>/.sbx/sandbox.toml —— 跟着仓库走，只有 id 没有值
+[prep]
+watch   = ["go.mod", "go.sum"]
+secrets = ["gitlab_ssh"]
+
+# ~/.sbx/config.toml —— 值在你自己机器上
+[prep.secret]
+gitlab_ssh = "~/.ssh/id_rsa"
+```
+
+`known_hosts` 要**预置**而不是 `ssh-keyscan`：构建期没人回答那句 yes/no，而且首次连接盲信任等于把中间人风险塞进一个你不会去看的地方。
+
+**姿势二**，构建容器连不上私有源时——把「取」再往外挪一层，宿主机抓，prep 只负责 COPY：
+
+```sh
+# scripts/prep-fetch.sh：go 的 cache/download 布局本身就是合法的 GOPROXY
+go mod download
+rsync -a --exclude='*.lock' \
+  "$(go env GOMODCACHE)/cache/download/gitlab.corp.example/" .sbx/modproxy/gitlab.corp.example/
+```
+
+```dockerfile
+ENV GOPRIVATE=gitlab.corp.example GONOPROXY=none
+COPY .sbx/modproxy /modproxy
+ENV GOPROXY=file:///modproxy,https://proxy.golang.org,direct
+RUN go mod download        # 不需要任何 secret
+```
+
+`.sbx/modproxy` 要进 `.gitignore`——它是一份本地产物，不是对项目的陈述。
+
+**两个会绊人的点**，都不在报错信息里：
+
+- **`GOPRIVATE` 同时是 `GONOPROXY` 的默认值。** 只写 `GOPRIVATE` 的话 go 会绕开**所有** proxy 去直连，`file://` 的也一起绕开，于是姿势二白写。要的是「不查 sumdb（go.sum 本来有哈希），但照常走 proxy」——补一行 `GONOPROXY=none`。
+- **`go.mod` 里的 `toolchain` 行。** 基础镜像的 go 比它低，go 会去下载工具链，而 Task 容器下不到，编译在沙箱里直接停。对齐基础镜像版本，或者让 prep 顺手把工具链也烤进 `GOMODCACHE`——它本身就是以模块形式分发的，跟着一起播种。
+
+
+### 构建期的网络：代理有三条注入路，sbx 只堵得住两条
+
+Docker Desktop 会把它设置里的代理注入 `docker build`——不管掉的话构建会原样重演"全走代理、到不了内网"。sbx 在 `prep build` 里把够得着的两条堵上：
 
 | 注入路径 | 怎么堵 |
 |---|---|
 | `~/.docker/config.json` 的 `proxies`（**CLI 自己转成 `--build-arg`**） | 显式传同名的空 `--build-arg` 盖住 |
 | 进程环境里的 `HTTP_PROXY` 等（影响 CLI 自己的出站连接） | 置空后再执行 |
+| **Docker Desktop 的 VM 级透明代理**（`ProxyHTTPMode=system` + `VpnKitTransparentProxy`） | **堵不住**——见下 |
 
 **只清环境变量是没用的**，Docker Desktop 用的是第一条。
+
+第三条是 CLI 够不着的：Docker Desktop 在虚拟机里把容器的 `:80/:443` 整个劫持到宿主机的系统代理，`--build-arg`、环境变量、`--network=host` 一概无效。它只抄了系统代理的**地址**，没抄**例外表**——macOS 那份 `10.*,192.168.*` 的例外在容器里不存在，于是内网地址也被送进一个到不了内网的代理，表现是 TCP 连得上、TLS 却收到 EOF。
+
+修它只有一个地方：**Docker Desktop → Settings → Resources → Proxies → Bypass**，把内网网段和域名填进去。判断是不是撞上了这条，在宿主机和容器里各做一次同样的 TLS 握手，分裂了就是它。实在不想碰宿主机设置，就走上面的**姿势二**——离线 proxy 根本不需要构建期联网。
 
 ### 子命令
 
@@ -591,7 +657,7 @@ sbx drop spike -y   # 脚本里用
 **判据只有一句：这是在陈述项目的事实，还是在决定我这台机器的行为？**
 
 - 「本项目需要一个 postgres 16」——事实，项目层。`[[services]]` 只有 name/image/env/port，没有地址、没有凭据、不能挂宿主机路径，所以它可以跟着仓库走。
-- 「往 `10.10.16.80:5432` 开个洞」——对你机器的决定，工作区层。`[[forward]]` 整棵子树在项目层被挡死。
+- 「往 `10.42.0.80:5432` 开个洞」——对你机器的决定，工作区层。`[[forward]]` 整棵子树在项目层被挡死。
 
 全局层（`~/.sbx/config.toml`）和工作区层的权限完全相同，区别只是作用范围：前者管你所有仓库，后者只管这一个。凡是说「只能写在全局层或工作区层」的，两者随便挑。
 
@@ -759,8 +825,8 @@ protect = true                # 把 .git/hooks 和 .git/config 只读挂载（M4
 # [[forward]]
 # name = "staging-db"
 # port = 5432                     # 容器里按 staging-db:5432 访问
-# to   = "10.10.16.80:5432"       # 裸端口号（to = 5432）表示宿主机
-# host = "gitlab.corp.internal"   # 可选：容器里仍用真实域名访问，保住 SNI 和证书
+# to   = "10.42.0.80:5432"       # 裸端口号（to = 5432）表示宿主机
+# host = "gitlab.corp.example"   # 可选：容器里仍用真实域名访问，保住 SNI 和证书
 # allow_public = false            # 解除"目标必须是私有地址"，会醒目警告
 
 [agents.claude]
@@ -835,7 +901,7 @@ to   = 5432     # 只写端口号 = 宿主机
 [[forward]]
 name = "staging-db"
 port = 5432
-to   = "db.corp.internal:5432"   # 或者直接写 "10.10.16.80:5432"
+to   = "db.corp.example:5432"   # 或者直接写 "10.42.0.80:5432"
 ```
 
 只要宿主机在公司网里（直连 LAN 或 VPN 已连），`sbx-egress` 网络就能到——forwarder 跑在那上面，所以容器也就能到。**不需要先 `ssh -L`**：中介点是 forwarder 本身，不是宿主机，强制走一道隧道不增加任何安全性。
@@ -844,7 +910,7 @@ to   = "db.corp.internal:5432"   # 或者直接写 "10.10.16.80:5432"
 
 ```console
 $ sbx run fix-login
-forward staging-db: staging-db:5432 in the task -> 10.10.16.80:5432 (internal network)
+forward staging-db: staging-db:5432 in the task -> 10.42.0.80:5432 (internal network)
 note: these forwards reach real internal services: staging-db
       whatever the agent does to them, it does for real:
       use a read-only account or a separate schema; the network layer cannot undo a DROP TABLE.
@@ -859,12 +925,12 @@ note: these forwards reach real internal services: staging-db
 ```toml
 [[forward]]
 name = "gitlab"
-host = "gitlab.corp.internal"   # 容器里仍用真实域名访问
+host = "gitlab.corp.example"   # 容器里仍用真实域名访问
 port = 443
-to   = "10.10.16.50:443"
+to   = "10.42.0.50:443"
 ```
 
-实现是给 Task 容器加 `--add-host gitlab.corp.internal:<forwarder 的 IP>`。socat 是纯 TCP 中继，SNI 和证书原样透传，TLS 握手不受影响。
+实现是给 Task 容器加 `--add-host gitlab.corp.example:<forwarder 的 IP>`。socat 是纯 TCP 中继，SNI 和证书原样透传，TLS 握手不受影响。
 
 **但这条路绕过了 squid 的白名单和访问日志。** 内网 HTTP/HTTPS 的选择顺序是：先看能不能走 `network.allow` + squid（流量仍受审计），确实不行再用 `forward` + `host`。
 

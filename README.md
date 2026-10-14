@@ -166,8 +166,8 @@ A throwaway instance started with the task and reclaimed by `sbx done`. Reach it
 [[forward]]
 name = "staging-db"
 port = 5432
-to   = "db.corp.internal:5432"   # or just `to = 5432` for a port on your own machine
-# host = "gitlab.corp.internal"  # optional: keep the real name, so TLS still validates
+to   = "db.corp.example:5432"   # or just `to = 5432` for a port on your own machine
+# host = "gitlab.corp.example"  # optional: keep the real name, so TLS still validates
 ```
 
 One `socat` sidecar per entry, reachable at `staging-db:5432`. It is a peer on the task network, not a gateway, so the task still has no route of its own. Three constraints make it a hole you opened rather than one you inherited:

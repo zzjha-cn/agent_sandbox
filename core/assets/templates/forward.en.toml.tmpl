@@ -43,7 +43,7 @@
 # [[forward]]
 # name = "staging-db"
 # port = 5432                   # reach it at staging-db:5432 from inside the task
-# to   = "10.10.16.80:5432"
+# to   = "10.42.0.80:5432"
 #
 # `to` must resolve into private address space (10/8, 172.16/12, 192.168/16,
 # link-local). A public address is refused: if that is really what you want,
@@ -68,7 +68,7 @@
 # [[forward]]
 # name = "artifacts"
 # port = 443
-# to   = "10.10.16.90:443"
+# to   = "10.42.0.90:443"
 # host = "artifacts.corp.example"   # reach it at that name from inside the task
 #
 # `host` can only be applied when the task container is created. If you add it

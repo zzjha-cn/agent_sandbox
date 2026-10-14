@@ -18,11 +18,11 @@ func TestResolveForwardHostShorthand(t *testing.T) {
 }
 
 func TestResolveForwardPrivateAddress(t *testing.T) {
-	r, err := resolveForward(config.Forward{Name: "pg", Port: 5432, To: config.Target{S: "10.10.16.80:5432"}})
+	r, err := resolveForward(config.Forward{Name: "pg", Port: 5432, To: config.Target{S: "10.42.0.80:5432"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Target != "10.10.16.80:5432" || r.ToHost {
+	if r.Target != "10.42.0.80:5432" || r.ToHost {
 		t.Fatalf("a private address is an internal target, got %+v", r)
 	}
 }

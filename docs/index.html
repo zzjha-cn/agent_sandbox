@@ -915,6 +915,7 @@ core/assets/agent-layer/Dockerfile       <span class="c"># tmux, git, jq, claude
         <tr><td>get a commented config template (English, or <code>--lang zh</code>)</td><td><code>sbx config init</code> / <code>sbx forward init</code></td><td class="k">commands.md</td></tr>
         <tr><td>install dependencies from a private registry</td><td><code>sbx prep init</code> → <code>sbx prep build</code></td><td class="k">act 14</td></tr>
         <tr><td>check what a prep image would seed, without touching anything</td><td><code>sbx prep build --check</code></td><td class="k">commands.md</td></tr>
+        <tr><td>the prep build itself cannot reach the private source</td><td>prefetch on the host into an offline <code>file://</code> proxy</td><td class="k">commands.md</td></tr>
         <tr><td>reach a database on your own machine</td><td><code>[[forward]]</code> with <code>to = 5432</code></td><td class="k">act 15</td></tr>
         <tr><td>reach a service on the intranet</td><td><code>[[forward]]</code> with <code>to = "host:port"</code></td><td class="k">act 15</td></tr>
         <tr><td>see which tasks are wired to something real</td><td><code>sbx ls</code> (the <code>LINKS</code> column)</td><td class="k">act 15</td></tr>

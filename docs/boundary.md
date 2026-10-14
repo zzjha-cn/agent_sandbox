@@ -132,7 +132,7 @@ RUN --mount=type=secret,id=npmrc,target=/root/.npmrc \
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates
 RUN mkdir -p /sbx/cache/models \
-    && curl -fsSL http://models.corp.internal/bge-small.tar.gz | tar -xz -C /sbx/cache/models
+    && curl -fsSL http://models.corp.example/bge-small.tar.gz | tar -xz -C /sbx/cache/models
 ```
 
 任何能被固化成字节的东西都适用：权重、脱敏 DB dump、OpenAPI spec、内网 wiki 导出、编码规范。**这一整类的安全代价接近零**——它们是只读的不变字节，而 agent 本来就能看到同等敏感度的东西（你的源码）。
@@ -213,7 +213,7 @@ port  = 5432              # 容器内以 localhost:5432 访问
 一个只做一件事的 sidecar，同时接 `t.Network()`（internal）和 `sbx-egress`，把容器内的一个端口定向转发到一个声明好的目标：
 
 ```
-[task 容器] --localhost:5432--> [forwarder] --10.10.16.80:5432--> 内网数据库
+[task 容器] --localhost:5432--> [forwarder] --10.42.0.80:5432--> 内网数据库
 ```
 
 **每条 `forward` 一个独立容器**，各自在 task network 上有自己的 IP。这样多条规则不会在监听端口上打架，也便于逐条回收。
@@ -236,7 +236,7 @@ to   = 5432     # 只写端口号 = 宿主机
 [[forward]]
 name = "staging-db"
 port = 5432
-to   = "db.corp.internal:5432"   # 或 "10.10.16.80:5432"
+to   = "db.corp.example:5432"   # 或 "10.42.0.80:5432"
 ```
 
 只要宿主机在公司网里（直连 LAN 或 VPN 已连），sbx-egress 网络就能到——forwarder 跑在那上面，所以容器也就能到。**不需要先 `ssh -L`**：中介点是 forwarder 本身，不是宿主机，强制走一道隧道不增加任何安全性。
@@ -270,12 +270,12 @@ to   = "db.corp.internal:5432"   # 或 "10.10.16.80:5432"
 ```toml
 [[forward]]
 name = "gitlab"
-host = "gitlab.corp.internal"   # 容器内仍用真实域名访问
+host = "gitlab.corp.example"   # 容器内仍用真实域名访问
 port = 443
-to   = "10.10.16.50:443"
+to   = "10.42.0.50:443"
 ```
 
-实现是给 Task 容器加 `--add-host gitlab.corp.internal:<forwarder 在 task 网络上的 IP>`。socat 是纯 TCP 中继，SNI 和证书原样透传，TLS 握手不受影响。
+实现是给 Task 容器加 `--add-host gitlab.corp.example:<forwarder 在 task 网络上的 IP>`。socat 是纯 TCP 中继，SNI 和证书原样透传，TLS 握手不受影响。
 
 **但这条路绕过了 squid 的白名单和访问日志。** 所以对内网 HTTP/HTTPS 的选择顺序是：
 

@@ -159,8 +159,8 @@ env   = { POSTGRES_PASSWORD = "dev", POSTGRES_DB = "app" }
 [[forward]]
 name = "staging-db"
 port = 5432
-to   = "db.corp.internal:5432"   # 只写 `to = 5432` 表示你本机的端口
-# host = "gitlab.corp.internal"  # 可选：容器里仍用真实域名，证书照样能校验
+to   = "db.corp.example:5432"   # 只写 `to = 5432` 表示你本机的端口
+# host = "gitlab.corp.example"  # 可选：容器里仍用真实域名，证书照样能校验
 ```
 
 一条一个 `socat` sidecar，容器里按 `staging-db:5432` 访问。它是 Task 网络上的一个普通 peer，不是 Task 的网关，所以 Task 仍然没有自己的出口。三条约束让它是"你开的洞"而不是"你继承来的洞"：
