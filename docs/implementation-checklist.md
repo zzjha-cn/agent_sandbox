@@ -164,7 +164,7 @@
   - **退出码：有 fail 才非 0**；warn 的语义是"能用但该改"，让它挂掉会逼人写 `|| true`。`--strict` 下 warn 也算失败。
 
 ### 发布
-- [x] **M3-14** `make release`：darwin/linux × amd64/arm64 四个产物打包成 `dist/*.tar.gz` 外加 `SHA256SUMS`，版本号用 `git describe` 注入（`sbx --version`）。`dist/` 已进 .gitignore。**不做 GitHub Actions**（本轮明确不做）。
+- [x] **M3-14** `make release`：darwin/linux × amd64/arm64 四个产物打包成 `dist/*.tar.gz` 外加 `SHA256SUMS`，版本号用 `git describe` 注入（`sbx --version`）。`dist/` 已进 .gitignore。~~不做 GitHub Actions~~ —— M4 之后补上了 `.github/workflows/`：`ci.yml` 在 push/PR 上跑 lint + test；`release.yml` 手动触发（`workflow_dispatch` 收 tag 名），校验 checkout 确实落在该 tag 上，跑 `make release`，再用预装的 `gh` 建草稿 Release。不引第三方 action。
 - [x] **M3-15** README：快速上手（补了从发布包安装）、团队接入（提交 `.sbx/sandbox.toml` → 队友 `sbx trust` → `sbx run`，并说明这个文件里写不了什么）、常见问题表（OOM、被代理拦、登录过期、`.sbx/` 变动、说不清就 `sbx doctor`）。中英两份都有。
 
 ---

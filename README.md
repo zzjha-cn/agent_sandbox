@@ -51,26 +51,31 @@ fix-login   running  sbx/fix-login   1      3f +48 -6    8s ago       ~/.sbx/wor
 
 ## Quick start
 
-**Prerequisites**: Docker Desktop running (10GB of memory recommended), a Claude subscription. Building from source also needs Go 1.27.
+**Prerequisites**: Docker Desktop running (10GB of memory recommended), Go 1.27, a Claude subscription.
 
 ### 1. Install
 
-From a release archive (`sbx` is a single binary that only shells out to `docker` and `git`):
+**From source** — there are no published releases yet, so this is the way in today:
 
 ```bash
-tar -xzf sbx_<version>_<os>_<arch>.tar.gz
-sudo install -m 0755 sbx /usr/local/bin/sbx
+git clone https://github.com/zzjha-cn/agent_sandbox.git
+cd agent_sandbox/core
+make build
+ln -sf "$PWD/bin/sbx" /usr/local/bin/sbx   # optional
 sbx --version
 ```
 
-Or from source:
+`sbx` is a single binary that only shells out to `docker` and `git`, so a symlink is all the installation there is.
+
+To cut archives for other machines (`darwin`/`linux` × `amd64`/`arm64`, plus `SHA256SUMS`):
 
 ```bash
-cd core
-make build
-ln -sf "$PWD/bin/sbx" /usr/local/bin/sbx   # optional
-make release                               # cross-compile into dist/ for darwin+linux, amd64+arm64
+make release                 # version comes from `git describe`; untagged builds read like 4acd0a6-dirty
+tar -xzf dist/sbx_<version>_<os>_<arch>.tar.gz
+sudo install -m 0755 sbx /usr/local/bin/sbx
 ```
+
+> **On macOS, download with `curl -L`, not a browser.** The binaries are not signed or notarized. An archive saved by a browser carries `com.apple.quarantine`, and the extracted `sbx` refuses to run with *"cannot be opened because the developer cannot be verified"*. `curl` does not set that attribute. If you already hit it: `xattr -d com.apple.quarantine sbx`.
 
 ### 2. Configure (only if you need a host proxy)
 

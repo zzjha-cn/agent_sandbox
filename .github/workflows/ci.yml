@@ -1,0 +1,32 @@
+name: ci
+
+# 在每次 push 和 PR 上跑 lint 与单元测试。release.yml 里也有同样两步，
+# 那是冗余的——而这正是目的：不要在打算发布的那一刻才第一次发现它挂了。
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: core # go module 在子目录里，不是仓库根
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: core/go.mod # 跟着 go.mod 走，不写死版本号
+          cache-dependency-path: core/go.sum
+
+      # runner 上没有 golangci-lint，Makefile 会退回 go vet + gofmt。
+      # 退回路径里带 `go vet -tags docker`，所以集成测试的代码也会被编译检查到。
+      - run: make lint
+
+      # 不是 test-docker：那个要 Docker 环境、超时设的是 40 分钟，留在本地跑。
+      - run: make test

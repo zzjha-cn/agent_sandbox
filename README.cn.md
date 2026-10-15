@@ -50,22 +50,27 @@ fix-login   running  sbx/fix-login   1      3f +48 -6    8s ago       ~/.sbx/wor
 
 ### 1. 装
 
-从发布包装（`sbx` 是单个二进制，只调用 `docker` 和 `git`）：
+**从源码装**——目前还没有发布过 release，所以这是唯一的入口：
 
 ```bash
-tar -xzf sbx_<版本>_<os>_<arch>.tar.gz
-sudo install -m 0755 sbx /usr/local/bin/sbx
+git clone https://github.com/zzjha-cn/agent_sandbox.git
+cd agent_sandbox/core
+make build
+ln -sf "$PWD/bin/sbx" /usr/local/bin/sbx   # 可选
 sbx --version
 ```
 
-或者从源码：
+`sbx` 是单个二进制，只调用 `docker` 和 `git`，所以一个软链就是全部的安装过程。
+
+要给别的机器打包（`darwin`/`linux` × `amd64`/`arm64`，外加 `SHA256SUMS`）：
 
 ```bash
-cd core
-make build
-ln -sf "$PWD/bin/sbx" /usr/local/bin/sbx   # 可选
-make release                               # 交叉编译 darwin+linux × amd64+arm64 到 dist/
+make release                 # 版本号取自 git describe；没打过 tag 时长得像 4acd0a6-dirty
+tar -xzf dist/sbx_<版本>_<os>_<arch>.tar.gz
+sudo install -m 0755 sbx /usr/local/bin/sbx
 ```
+
+> **macOS 上请用 `curl -L` 下载，不要用浏览器。** 二进制没有签名也没有公证。浏览器存下来的压缩包会带上 `com.apple.quarantine`，解出来的 `sbx` 一跑就是「无法打开，因为无法验证开发者」。`curl` 不会打这个标记。已经撞上了就执行 `xattr -d com.apple.quarantine sbx`。
 
 ### 2. 配（需要宿主机代理时才要）
 

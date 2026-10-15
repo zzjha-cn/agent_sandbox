@@ -1,6 +1,8 @@
 # 沙箱边界与前置依赖
 
-> 状态：设计稿（2026-10-10），尚未实现。决策见 [ADR 0018](private/adr/0018-boundary-and-prep.md)，关联 [ADR 0017](private/adr/0017-private-access.md)（已被部分取代）。涉及 [design.md](design.md) §4、§6、§9。
+> 状态：**P0–P4 已实现**（M4，2026-10-15）。P5 文档表态进行中。决策见 [ADR 0018](private/adr/0018-boundary-and-prep.md)，关联 [ADR 0017](private/adr/0017-private-access.md)（已被部分取代）。涉及 [design.md](design.md) §2、§4、§6、§9。
+>
+> 命令用法见 [commands.md](commands.md)（`prep` / `forward` / `clean`），端到端的例子见 [walkthrough.md](walkthrough.md) 附三。
 
 沙箱越严，能用的东西越少。这份文档回答的是：**哪些外部东西沙箱确实需要、按什么机制给、以及哪些一律不给。**
 
@@ -360,11 +362,11 @@ forwarder 不给 Task 容器默认路由。它是 Task 网络里的一个**普�
 
 | 期 | 范围 | 主要改动 | 验收 |
 |---|---|---|---|
-| **P0** | R1 缓解（ADR 0019） | `agent.Mounts()` 叠 `hooks/` 与 `config` 只读挂载；`git.protect` 开关默认开；`checkProject` 新增"安全开关键"红线 | 容器内写 `.git/hooks/pre-commit` 和 `git config core.hooksPath` 均失败；commit 正常；项目层写 `git.protect = false` 被拒 |
-| **P1** | prep 内容播种 | `cli/prep.go` 新命令；`ensureVolumes` 的 `created` 分支改为从 prep 镜像 `docker cp`；`[prep]` 配置 + 红线 | 新 Task 启动即带依赖；`--check` 报告准确；构建不继承 Docker Desktop 代理 |
-| **P2** | `[[services]]` | 容器生命周期 + `undo` + `sbx done` 回收 + `sbx ls` 展示 | `go test` 能连 `localhost:5432`；`sbx done` 后无残留容器 |
-| **P3** | `[[forward]]` | 每条一个 socat sidecar（镜像 pin digest），双网络，`host-gateway`；启动时解析并校验私有地址；可选 `--add-host`；`sbx run` 逐条打印；记入 Task meta | 容器内 `localhost:5432` 分别通宿主机与内网目标；`to` 指向公网时拒绝启动；`sbx ls` 能标出接过内部服务的 Task；**同时验证 Task 仍无默认路由**（HTTP 仍必须经 squid） |
-| **P4** | prep 声明层 | `/sbx/prep.json` 解析 + 作为 prep 配置层 + `config show` 来源 | 越权字段被红线拒绝 |
-| **P5** | 文档表态 | §5 写进 README / walkthrough 的已知限制，与 R1 并列 | — |
+| **P0** ✅ | R1 缓解（ADR 0019） | `agent.Mounts()` 叠 `hooks/` 与 `config` 只读挂载；`git.protect` 开关默认开；`checkProject` 新增"安全开关键"红线 | 容器内写 `.git/hooks/pre-commit` 和 `git config core.hooksPath` 均失败；commit 正常；项目层写 `git.protect = false` 被拒 |
+| **P1** ✅ | prep 内容播种 | `cli/prep.go` 新命令；`ensureVolumes` 的 `created` 分支改为从 prep 镜像 `docker cp`；`[prep]` 配置 + 红线 | 新 Task 启动即带依赖；`--check` 报告准确；构建不继承 Docker Desktop 代理 |
+| **P2** ✅ | `[[services]]` | 容器生命周期 + `undo` + `sbx done` 回收 + `sbx ls` 展示 | `go test` 能连 `localhost:5432`；`sbx done` 后无残留容器 |
+| **P3** ✅ | `[[forward]]` | 每条一个 socat sidecar（镜像 pin digest），双网络，`host-gateway`；启动时解析并校验私有地址；可选 `--add-host`；`sbx run` 逐条打印；记入 Task meta | 容器内 `localhost:5432` 分别通宿主机与内网目标；`to` 指向公网时拒绝启动；`sbx ls` 能标出接过内部服务的 Task；**同时验证 Task 仍无默认路由**（HTTP 仍必须经 squid） |
+| **P4** ✅ | prep 声明层 | `/sbx/prep.json` 解析 + 作为 prep 配置层 + `config show` 来源 | 越权字段被红线拒绝 |
+| **P5** 🚧 | 文档表态 | §5 写进 README / walkthrough 的已知限制，与 R1 并列 | — |
 
 P0 独立于其余各期：它修的是今天就存在的 R1，不依赖任何新机制，应当先做。P3 的验收里"Task 仍无默认路由"这一条是整份设计的底线，必须有测试，不能只靠人工确认。

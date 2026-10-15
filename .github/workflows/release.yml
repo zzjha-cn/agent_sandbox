@@ -1,0 +1,81 @@
+name: release
+
+# 手动触发，不是推 tag 自动发：打 tag 和对外发布是两个决定，不该绑在一起。
+# 产物默认先进草稿，确认过再在 Releases 页面点发布。
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "要发布的 tag，必须已经推到 origin（例如 v0.4.0）"
+        required: true
+        type: string
+      draft:
+        description: "先建成草稿，确认后再手动发布"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write # 创建 Release 要写权限；默认是只读
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: core
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.tag }}
+          # 必须：默认的浅克隆不带 tag，Makefile 里的 git describe 会走到
+          # `|| echo dev` 分支，于是安静地发布一组叫 sbx_dev_* 的包。
+          # 这个错不会让构建失败，只会让产物名字是错的。
+          fetch-depth: 0
+
+      # checkout 的 ref 可以是分支名也可以是 commit，未必真落在 tag 上。
+      # 这一步确认它确实是那个 tag——否则下面算出来的版本号就是假的。
+      # 输入值统一经 env 传进来，不直接插进 shell。
+      - name: verify the checkout sits exactly on the tag
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          got=$(git describe --tags --exact-match 2>/dev/null || true)
+          if [ "$got" != "$TAG" ]; then
+            echo "::error::expected to be on $TAG, but git describe says '${got:-nothing}'"
+            exit 1
+          fi
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: core/go.mod
+          cache-dependency-path: core/go.sum
+
+      - run: make lint
+      - run: make test
+
+      # 四个平台的产物 + SHA256SUMS。CGO_ENABLED=0 的纯 Go 交叉编译，
+      # 一个 ubuntu runner 就够，不需要 matrix。
+      - run: make release
+
+      # 用预装的 gh，不引第三方 action：这个仓库把供应链写进了威胁模型，
+      # 少一个外部依赖就少一处要盯的地方。
+      - name: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          DRAFT: ${{ inputs.draft }}
+        run: |
+          # 标题取 annotated tag 的首行，正文取其余部分——不用 --generate-notes，
+          # 那个会无视 tag message 改用 commit 列表。tag 不是 annotated 时退回 commit message。
+          title=$(git tag -l --format='%(contents:subject)' "$TAG")
+          git tag -l --format='%(contents:body)' "$TAG" > /tmp/notes.md
+          if [ -z "$title" ]; then
+            title="$TAG"
+            git log -1 --pretty=%B "$TAG" > /tmp/notes.md
+          fi
+
+          args=""
+          [ "$DRAFT" = "true" ] && args="--draft"
+          # shellcheck disable=SC2086
+          gh release create "$TAG" dist/*.tar.gz dist/SHA256SUMS \
+            --title "$title" --notes-file /tmp/notes.md $args
