@@ -293,6 +293,7 @@ sbx run t1 --proxy dedicated   # 本次用独占的代理 sidecar
 
 ```bash
 sbx doctor            # 一次体检：docker、代理、登录、信任、通知、首次启动状态
+sbx clean             # 回收磁盘：旧镜像 + 派生缓存（见下）
 sbx port t1 3000      # 把容器里的端口拿到 127.0.0.1 上
 sbx drop t1           # 结束 Task 并删掉分支（要确认）
 sbx memory pull       # 把沙箱里新记的项目记忆导回宿主机
@@ -380,6 +381,8 @@ sbx trust             # 确认这个仓库的 .sbx/ 内容（见下）
 | `prep build` | `--check` | false（构建并播种；加上则只报告） |
 | `prep reseed <task>` | `--yes` | false（要输 Task 名确认） |
 | `prep drop` | `--all` | false（保留当前 tag 的镜像） |
+| `clean` | `--deep` | false（只收不要网络就能回来的） |
+| | `-y, --yes` | false（`--deep` 要确认一次） |
 | `attach/shell/stop/ls/path/upgrade/prep show` | 无 | |
 
 ---
@@ -597,6 +600,60 @@ Docker Desktop 会把它设置里的代理注入 `docker build`——不管掉�
 | `sbx prep drop [--all]` | 删这个 Workspace 的 prep 镜像；默认保留当前这个 |
 
 > 没有 `.sbx/prep.Dockerfile` 的仓库完全不受影响：prep 是特殊场景的补丁，不是必经之路。
+
+---
+
+## 回收磁盘：`sbx clean`（M4-5）
+
+`sbx done` 只回收 Task 自己的依赖 volume；`sbx-cache` 和历年的镜像是**只涨不消**的。`sbx clean` 是回收它们的那条路。
+
+一条命令两档，分档的判据不是"清哪一层"，是**回来要不要网**——你不必认识 `go-mod` 和 `go-build` 的区别，只需要知道自己现在等不等得起重下：
+
+```console
+$ sbx clean
+removed sbx/web-go:3aae9be32fb7  398m
+cleared cache/go-build  420m
+reclaimed 818m
+
+package + build caches still held: 2.5g (re-downloadable) — sbx clean --deep
+```
+
+| | `sbx clean` | `sbx clean --deep` |
+|---|---|---|
+| 旧镜像 | 删 | 删 |
+| 派生缓存（`go-build`） | 删，重编译就回来 | 删 |
+| 包缓存（`go-mod`/`npm`/`pip`/`uv`/`cargo`） | **不动** | 删，要重下 |
+| BuildKit 构建缓存（`prep build` 攒的） | **不动** | 删，下次构建重新拉基础层 |
+| 问不问 | 不问 | 确认一次（`-y` 跳过） |
+
+### 哪些镜像算"旧"
+
+两条规则，都不需要你参与：**任何 Task 还钉在上面的不删**（Task 的 `meta.json` 里记着 `prep_tag` 和 `image`），**每个 repository 保留最新的一个**。
+
+第二条顺带盖住了两种镜像：prep 的 repository 是 `sbx/prep-<ws>`，于是是"每个 Workspace 留最新的种子"；Agent 镜像的 repository 是 `sbx/<profile>`，于是是"每个 Profile 留最新的那个"。不读 label，也不解析构建时间——`docker images` 本来就按创建时间倒序。
+
+### `--deep` 的那道闸
+
+包缓存里混着 prep 播种的私有依赖。清掉它们**只在对应的 prep 镜像还在时**才是安全的——那时候下一次 `sbx run` 会自动重播，而且重播不需要网络。镜像不在，清掉的就是沙箱里再也拿不回来的东西：
+
+```console
+$ sbx clean --deep
+these workspaces could not get their private dependencies back:
+  shop             sbx/prep-shop:9f8e7d6c  MISSING
+run `sbx prep build` in them first, then sbx clean --deep
+```
+
+查的是 `sbx-cache` 里**所有** Workspace 的播种标记，不只是你当前所在的这个：缓存是全局的，你在 A 仓库里敲的这条命令，清掉的是 B、C 的私有依赖。
+
+**有 Task 在跑时，缓存整个不动**（镜像照清）。正在编译的 Task 拿着同一个 volume，清到一半它会以看不懂的方式失败。
+
+### 它和 `sbx prep drop` 的分工
+
+`clean` 收常规垃圾；`sbx prep drop --all` 是"连当前这个种子镜像也删掉"的手术刀。后者删的是**恢复能力**——没有它，缓存里的私有依赖就真的回不来了，得重新连内网、带凭据构建一次。所以这件事没有和日常清理共用一个动词。
+
+`--deep` 覆盖的正好是 `sbx doctor` 报的那三项——镜像、volume、构建缓存。默认档只碰前两项里"不要网络就能回来"的部分，所以它报完之后会告诉你剩下多少、用什么清。
+
+> 没有配置键，也没有后台清理。回收是人按的，工具只负责在你看得见的地方（`sbx doctor` 的 disk 一行）把数字和命令摆出来。
 
 ---
 
@@ -1088,15 +1145,15 @@ $ sbx doctor
 
 sbx 的 volume、镜像和构建缓存都没有配额，而 `sbx done` 只回收 Task 自己的依赖 volume——`sbx-cache` / `sbx-home` / `sbx-mise` 是只涨不消的。Docker 的 local volume 驱动没有通用 quota，所以这一项**只列出占用，不替你删**：
 
-- 可回收的部分（没有任何容器挂着的镜像和 volume）超过 5g 时给 `!`，并告诉你哪些 volume 是空闲的。
-- **它不会自己动手**，因为"没有容器挂着"不等于"该删"：`sbx-home` 删掉要重新登录，`sbx-cache` 删掉下一个 Task 要重新下载一遍依赖。
+- 可回收的部分超过 5g 时给 `!`，并指向 [`sbx clean`](#回收磁盘sbx-cleanm4-5)。
+- **它不会自己动手**，因为"没有容器挂着"不等于"该删"：`sbx-home` 删掉要重新登录，`sbx-cache` 删掉下一个 Task 要重新下载一遍依赖。空闲 volume 那一行**不列** `sbx-cache` / `sbx-home` / `sbx-mise`——没 Task 在跑时它们必然是 0 links，每次都上榜，而它们恰恰是最不该顺手删的。
 - 镜像按 **UniqueSize** 算：`Size` 会把共享的基础层重复计进每个镜像，加起来是个虚高的数。
 
 ```bash
+sbx clean                        # 旧镜像 + 派生缓存，不需要网络就能回来
+sbx clean --deep                 # 连包缓存和构建缓存一起（要重取，要确认）
 sbx done <task>                  # 回收这个 Task 的依赖 volume
-docker image prune               # 清掉没人用的镜像
-sbx prep drop                    # 清掉这个 Workspace 的旧 prep 镜像（留着当前这个）
-docker builder prune             # 清构建缓存
+sbx prep drop --all              # 连当前种子镜像一起删——删的是恢复能力，想清楚再用
 ```
 
 ---

@@ -181,9 +181,12 @@ func checkDisk(a *App, _ docEnv) Check {
 	if reclaim < diskReclaimWarn {
 		return ok("disk", d.detail())
 	}
-	fix := "sbx done <task> frees that task's dep volumes; docker image prune frees unused images"
-	if len(d.IdleVolumes) > 0 {
-		fix += "; idle volumes: " + strings.Join(d.IdleVolumes, ", ")
+	// 指向 sbx clean 而不是 docker image prune：后者分不清哪个镜像是还在用的种子。
+	// idle volumes 这一行故意不再列 sbx-cache——没有 Task 在跑时它必然是 0 links，
+	// 每次都出现在"可回收"名单上，而它恰恰是最不该顺手删的那个。
+	fix := "sbx clean reclaims old images and derived caches; --deep also clears package caches"
+	if idle := notShared(d.IdleVolumes); len(idle) > 0 {
+		fix += "; idle volumes: " + strings.Join(idle, ", ")
 	}
 	return warn("disk", fmt.Sprintf("%s; %s of it has no container attached", d.detail(), humanBytes(reclaim)), fix)
 }
@@ -324,4 +327,18 @@ func checkSmoke(a *App, env docEnv) Check {
 		}
 	}
 	return skip("smoke", "no task is running; start one to check (sbx run <task> runs this smoke check itself)")
+}
+
+// notShared 去掉三个全局共享 volume：它们没有容器挂着是常态，不是"可以删了"。
+// sbx-home 删掉要重新登录，sbx-cache 删掉要重下依赖——都该由 sbx clean 带着判断来做。
+func notShared(vols []string) []string {
+	var out []string
+	for _, v := range vols {
+		switch v {
+		case sharedHome, "sbx-cache", "sbx-mise":
+		default:
+			out = append(out, v)
+		}
+	}
+	return out
 }
