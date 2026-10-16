@@ -306,6 +306,7 @@ forwarder 不给 Task 容器默认路由。它是 Task 网络里的一个**普�
 - **`sbx run` 逐条打印**生效的 forward 和解析出的实际 IP，🔴 级的更显眼。
 - **记进 Task meta**，让 `sbx ls` 能标出哪些 Task 接过内部服务。事后 review 分支时你就知道该用什么尺度看——这是"预期管理"的可操作形态。
 - **有 🔴 级 forward 的 Workspace，建议同时切 `network.mode = "allowlist"`。** 理由见下。
+- **`sbx doctor` 的 `reach` 一项给出"这是谁的问题"。** 它把同一组 DNS / TCP / TLS 探测在容器和宿主机各跑一遍，按分裂点下结论。两边停在同一级时它会明说**不是沙箱**，让用户别再往这边调——上面那句"缓解只能在服务侧"，靠这一项才落到了工具里而不只是停在文档上。细节见 [commands.md](commands.md#reach-这一项回答到底是不是沙箱的问题m4-18)。
 
 ### 3.5 forward 与默认 `open` 的组合
 

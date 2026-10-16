@@ -587,7 +587,7 @@ Docker Desktop 会把它设置里的代理注入 `docker build`——不管掉�
 
 第三条是 CLI 够不着的：Docker Desktop 在虚拟机里把容器的 `:80/:443` 整个劫持到宿主机的系统代理，`--build-arg`、环境变量、`--network=host` 一概无效。它只抄了系统代理的**地址**，没抄**例外表**——macOS 那份 `10.*,192.168.*` 的例外在容器里不存在，于是内网地址也被送进一个到不了内网的代理，表现是 TCP 连得上、TLS 却收到 EOF。
 
-修它只有一个地方：**Docker Desktop → Settings → Resources → Proxies → Bypass**，把内网网段和域名填进去。判断是不是撞上了这条，在宿主机和容器里各做一次同样的 TLS 握手，分裂了就是它。实在不想碰宿主机设置，就走上面的**姿势二**——离线 proxy 根本不需要构建期联网。
+修它只有一个地方：**Docker Desktop → Settings → Resources → Proxies → Bypass**，把内网网段和域名填进去。判断是不是撞上了这条，用 [`sbx doctor` 的 reach 一项](#reach-这一项回答到底是不是沙箱的问题m4-18)——它就是在宿主机和容器里各跑一遍同样的 DNS / TCP / TLS 阶梯，分裂了就是它。实在不想碰宿主机设置，就走上面的**姿势二**——离线 proxy 根本不需要构建期联网。
 
 ### 子命令
 
@@ -1115,7 +1115,7 @@ notify_throttle = 600   # 两次同类通知的最小间隔（秒），默认 60
 
 ---
 
-## 体检：`sbx doctor`（M3-13、M4-5）
+## 体检：`sbx doctor`（M3-13、M4-5、M4-18）
 
 ```console
 $ sbx doctor
@@ -1129,15 +1129,19 @@ $ sbx doctor
   ! trust       .sbx/ changed since you last confirmed it
       → sbx trust
   ✓ notify      open.feishu.cn is allowed automatically
+  ! reach       gitlab: gitlab.corp.example:443 reachable at 10.42.0.50; TLS fails with SNI but succeeds without
+      → the peer drops the handshake once it sees the server name — that is the peer's policy, not
+        something sbx can change. For go module fetches, seed the dependency with sbx prep build
+        instead of reaching the source at run time.
   ✓ smoke       the screen of running sbx-shop-e76272-fix looks normal
 
 1 warning(s), 1 failure(s)
 ```
 
-九项检查：docker 可用性、VM 内存够不够（R10）、**磁盘占用**、上游代理连通性、`sbx-proxy` 健康（R8）、登录态、信任状态、通知配置、首次启动冒烟（R9：claude 的内部状态字段随版本变化，卡在对话框上会让无人值守直接失效）。
+十项检查：docker 可用性、VM 内存够不够（R10）、**磁盘占用**、上游代理连通性、`sbx-proxy` 健康（R8）、登录态、信任状态、通知配置、**内网可达性**、首次启动冒烟（R9：claude 的内部状态字段随版本变化，卡在对话框上会让无人值守直接失效）。
 
 - **只有 `✗` 才让 `sbx doctor` 非 0 退出**。`!` 的意思是"能用，但该改"——要是它也让命令失败，写进脚本的人就只能加 `|| true`，那警告就白给了。`--strict` 下警告也算失败。
-- `--quick` 跳过慢的那项（冒烟检查）。
+- `--quick` 跳过慢的那两项（内网探针、冒烟检查）。
 - 冒烟优先用现成的：有 Task 在跑就抓它的 tmux 画面，没有就跳过（`sbx run` 每次启动本来就会做这项检查）。
 - **不要求你在 git 仓库里**。信任状态这类和仓库有关的项，不在仓库里时标成跳过。
 
@@ -1155,6 +1159,36 @@ sbx clean --deep                 # 连包缓存和构建缓存一起（要重取
 sbx done <task>                  # 回收这个 Task 的依赖 volume
 sbx prep drop --all              # 连当前种子镜像一起删——删的是恢复能力，想清楚再用
 ```
+
+### reach 这一项：回答「到底是不是沙箱的问题」（M4-18）
+
+内网连不上有四种完全不同的原因，而症状都是"连不上"：**DNS、路由、TLS、对端策略**。沙箱只修得了前两种，后两种得去找服务方——但没有工具分辨时，所有人都会先怀疑沙箱，时间全花在调 sbx 上。
+
+办法是**同一组探测在两个位置各跑一遍**，看它们在哪一级分裂：
+
+```
+        dns ──► tcp ──► tls+sni ──► tls-nosni
+宿主机   ✓       ✓        ✗           ✓
+容器     ✓       ✓        ✗           ✓
+                         └── 两边停在同一级 = 不是沙箱的问题
+```
+
+| 分裂形状 | 级别 | 结论 |
+|---|---|---|
+| 容器通到 tcp | `✓` | 洞是好的。顺带报出对端证书的签发者，确认你连到的是那台机器 |
+| 宿主机通、容器卡在 **dns** | `✗` | 容器用的是 Docker VM 的解析器，不是你机器的 |
+| 宿主机通、容器卡在 **tcp** | `✗` | 你的机器有一条 VM 没有的路由——通常是代理例外表。改 Docker Desktop → Settings → Resources → **Proxies → Bypass** |
+| 两边都卡在 **dns** | `!` | 名字写错，或者要连的 VPN 没开。和沙箱无关 |
+| 两边都卡在 **tcp** | `!` | 对端或它前面的网络在拒绝。**sbx 绕不过去**，去找那个服务的负责人（[boundary.md §3.4](boundary.md)） |
+| tcp 通、带 SNI 断、裸 IP 通 | `!` | 对端看到服务器名之后主动断开。这是对端的策略；取 go 模块的话改用 `sbx prep build` 预抓 |
+
+几个实现上的决定：
+
+- **探针跑在 `sbx-egress` 上**（没有就退回默认 bridge）——那是 forwarder 和 squid 待的位置，也就是沙箱实际从哪里出去。**不是** Task 自己的 internal 网络：那张网按设计没有默认路由，在那儿探什么都不通，量到的是设计而不是故障。
+- **目标取自 `[[forward]]`**，不用你再敲一遍地址。配了 `host` 的那几条按真实域名探，否则测不到对端的 SNI 策略。`to` 写成裸端口号的（指向宿主机）不探：那条路由由 Docker 自己维护。
+- 没配 `[[forward]]` 就跳过，不猜地址。
+- 容器侧复用 forwarder 已经 pin 住的 `alpine/socat` 镜像，宿主机侧用 Go 自己的 `net` 和 `crypto/tls`——**刻意不调 curl**，macOS 自带的是 LibreSSL，它和系统代理的交互会给出和实际不符的结论。
+- TLS 两级只在 443 / 8443 / 9443 上跑。`forward` 是纯 TCP 中继，握不握得上手不归它管，所以 TLS 的结果**不会**把这一项打成 `✗`，它是诊断上下文。
 
 ---
 

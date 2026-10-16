@@ -72,6 +72,9 @@ var checks = []checker{
 	{Name: "login", NeedDocker: true, Run: checkLogin},
 	{Name: "trust", NeedRepo: true, Run: checkTrust},
 	{Name: "notify", Run: checkNotify},
+	// reach 要合并后的配置才知道探什么（[[forward]]），也要 docker 起容器。
+	// 归到 Slow：每个目标四级 × 两个位置，--quick 时跳过。
+	{Name: "reach", NeedDocker: true, NeedRepo: true, Slow: true, Run: checkReach},
 	{Name: "smoke", NeedDocker: true, Slow: true, Run: checkSmoke},
 }
 
@@ -121,7 +124,13 @@ func (a *App) runChecks(env docEnv, quick bool) []Check {
 func (a *App) printChecks(results []Check, strict bool) error {
 	var warns, fails int
 	for _, c := range results {
-		fmt.Fprintf(a.Out, "  %s %s  %s\n", c.Level.mark(), padCJK(c.Name, 10), c.Detail)
+		// Detail 可以是多行（reach 一个目标一行）。续行对齐到第一行的正文位置，
+		// 否则多目标的输出会散掉。
+		lines := strings.Split(c.Detail, "\n")
+		fmt.Fprintf(a.Out, "  %s %s  %s\n", c.Level.mark(), padCJK(c.Name, 10), lines[0])
+		for _, extra := range lines[1:] {
+			fmt.Fprintf(a.Out, "  %s %s  %s\n", " ", padCJK("", 10), extra)
+		}
 		if c.Fix != "" {
 			fmt.Fprintf(a.Out, "      → %s\n", c.Fix)
 		}
