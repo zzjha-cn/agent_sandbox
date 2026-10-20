@@ -170,9 +170,26 @@ on_drift = "warn"   # warn（默认）| build | fail
 
 没有私有依赖的人也用得上：每个新 Task 的依赖 volume 本来是空的，第一件事是重装依赖。有了种子，**`sbx run <新 task>` 从冷启动变热启动。**
 
-### 2.8 两个坑
+### 2.8 三个坑
 
-- **Docker Desktop 会把它设置里的代理注入 `docker build`。** `sbx prep build` 必须显式清掉 `HTTP_PROXY` / `HTTPS_PROXY`，否则构建会原样踩一次"全走代理、到不了内网"。
+- **Docker Desktop 会把它设置里的代理注入 `docker build`。** `sbx prep build` 必须显式清掉 `HTTP_PROXY` / `HTTPS_PROXY`，否则构建会原样踩一次"全走代理、到不了内网"。两条路都要堵：`~/.docker/config.json` 的 `proxies`（CLI 据此自动加 build-arg，只有显式传空的同名 build-arg 盖得住）和进程环境里的那几个变量。拉基础镜像不受影响——那是 daemon 干的，仍按 Docker Desktop 的设置走。
+
+  **真需要代理时，写进 Dockerfile，不要靠继承。**
+
+  ```dockerfile
+  # 只有这台机器必须经公司代理才能出公网时才加
+  ENV HTTPS_PROXY=http://proxy.corp.example:8080 \
+      NO_PROXY=gitlab.corp.example,.corp.example,10.0.0.0/8
+  ```
+
+  区别不在能不能用，在**同一份 Dockerfile 在不同人机器上会不会构建出不同结果**。继承宿主机环境时，构建结果取决于谁在构建；写进 Dockerfile 后它是仓库里的一条事实，`watch` 哈希也覆盖得到。记得同时给 `NO_PROXY`，否则内网那一半又被代理吃掉。
+- **清环境变量还不够：Docker Desktop 的透明代理不在环境变量里。** 上面那条堵的是“代理被*注入*构建”，但 `VpnKitTransparentProxy` 是另一回事——它在 VM 的网络层**直接拦截容器的出站连接**，嗅出 SNI，然后向宿主机代理发 `CONNECT <嗅到的域名>:443`。清 `HTTP_PROXY` 对它没有任何作用，因为构建进程压根没被问过。
+
+  后果很隐蔽：同一个内网 IP，**带 SNI 的连接被按域名交给代理节点而失败，不带 SNI 的按私有 IP 直连而成功**。症状落在 TLS 层，看起来像对端的 SNI 策略；而宿主机走的是“直接连 IP”那条路，所以完全正常。
+
+  还有一个容易误判的点：代理客户端里**按私有 IP 段的 DIRECT 规则救不了这个场景**，因为 Docker 是拿着*域名*去问代理的。只加网段不加域名，同样会再踩一次。
+
+  这一层 sbx 堵不住——它在 Docker Desktop 的设置里，不在 sbx 能控制的任何地方。所以缓解只能是**检测并说清楚**：[`sbx doctor` 的 `dd-proxy` 一项](commands.md#dd-proxy-这一项为什么必须单独存在m4-19)在“代理在用 + 透明拦截开着 + Bypass 没覆盖私有网段”三者同时成立时报警，而且因为它只读一个配置文件，`--quick` 也跑——它要在构建失败**之前**说话。`reach` 的 SNI 分裂判定也跟着改了：宿主机用同一个名字能握手时，责任归这条路，不再归对端。
 - **prep 镜像是信任放大器。** 它带着凭据、连着内网、还能往配置里塞声明。trust 覆盖的是 `.sbx/prep.Dockerfile` 的文本，不是它 `FROM` 的基础镜像。只能靠白名单字段 + 红线 + `sbx run` 时打印生效的 prep 声明来缓解，消除不掉。
 
 ## 3. services 与 forward：连「活的」东西
@@ -306,6 +323,7 @@ forwarder 不给 Task 容器默认路由。它是 Task 网络里的一个**普�
 - **`sbx run` 逐条打印**生效的 forward 和解析出的实际 IP，🔴 级的更显眼。
 - **记进 Task meta**，让 `sbx ls` 能标出哪些 Task 接过内部服务。事后 review 分支时你就知道该用什么尺度看——这是"预期管理"的可操作形态。
 - **有 🔴 级 forward 的 Workspace，建议同时切 `network.mode = "allowlist"`。** 理由见下。
+- **`sbx doctor` 的 `dd-proxy` 一项管构建期那一层。** `reach` 只探运行期的目标，而 prep 构建期被代理咬到时症状一模一样、根因也一样。细节见 §2.8 第三个坑。
 - **`sbx doctor` 的 `reach` 一项给出"这是谁的问题"。** 它把同一组 DNS / TCP / TLS 探测在容器和宿主机各跑一遍，按分裂点下结论。两边停在同一级时它会明说**不是沙箱**，让用户别再往这边调——上面那句"缓解只能在服务侧"，靠这一项才落到了工具里而不只是停在文档上。细节见 [commands.md](commands.md#reach-这一项回答到底是不是沙箱的问题m4-18)。
 
 ### 3.5 forward 与默认 `open` 的组合
@@ -351,6 +369,7 @@ forwarder 不给 Task 容器默认路由。它是 Task 网络里的一个**普�
 | # | 风险 | 缓解 |
 |---|---|---|
 | R-B1 | prep 镜像带凭据连内网，又能向配置塞声明 | 声明字段白名单 + 项目层红线；`.sbx/` 受信任确认；`sbx run` 打印生效声明 |
+| R-B9 | Docker Desktop 的透明代理按 SNI 改写容器连接的目的地，内网目标被交给到不了内网的代理节点 | sbx 控制不到这一层，只能检测：`doctor` 的 `dd-proxy` 一项在三条同时成立时报警（`--quick` 也跑）；`reach` 用“宿主机带同名 SNI 能否握手”把这个成因和对端策略分开 |
 | R-B2 | `SSL_CERT_FILE` 是替换语义，CA 处理不当会让公网全挂 | CA 由用户 Dockerfile 里 `update-ca-certificates` 处理，是追加语义；验收必须同时验私有源和公网 |
 | R-B3 | forwarder 让容器能连宿主机或内网的某个端口 | `to` 必须解析到私有地址，公网拒绝启动；只能写在全局/工作区层，项目层不可声明；一条一个目标；启动时解析一次并固化 IP；`sbx run` 逐条打印实际 IP |
 | R-B7 | `forward` + `host` 的内网 HTTPS 绕过了 squid 的白名单与访问日志 | 文档给出选择顺序：内网 HTTP/HTTPS 首选 `always_direct`（仍受审计），`forward` 仅用于裸 TCP 或明确接受失去审计 |

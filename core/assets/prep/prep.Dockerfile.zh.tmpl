@@ -25,9 +25,14 @@
 
 FROM golang:1.23
 
-# 私有 CA：就是普通的一行 COPY，sbx 不提供专门机制
+# 私有 CA：就是普通的一行 COPY，sbx 不提供专门机制。
+# 两个硬要求，少一个就**静默失效**（这一步照样 exit 0，构建要到拉依赖时才炸）：
+#   1. 必须是 PEM；拿到的是 DER（.cer / .der）要先转：
+#        openssl x509 -inform DER -in corp.cer -out corp.crt
+#   2. 文件名必须以 .crt 结尾——update-ca-certificates 只扫 *.crt
+# 加上那句 test -e，就能把静默失效变成响亮失败。
 # COPY .sbx/ca/corp.crt /usr/local/share/ca-certificates/
-# RUN update-ca-certificates
+# RUN update-ca-certificates && test -e /etc/ssl/certs/corp.pem
 
 WORKDIR /src
 
@@ -52,3 +57,10 @@ RUN --mount=type=secret,id=netrc,target=/root/.netrc \
 # 在 sbx prep build 这一步就会报错。sbx config show 里来源显示为 prep。
 # RUN mkdir -p /sbx && printf '%s' \
 #     '{"allow":["gitlab.corp.example"],"env":{"GOFLAGS":"-mod=mod"}}' > /sbx/prep.json
+
+# 代理：这次构建跑在**没有**宿主机代理的环境里——Docker Desktop 设置里的代理会被
+# 显式清掉，否则构建就会踩一次"全走代理、到不了内网"，而那正是 prep 要解决的问题。
+# （拉基础镜像不受影响，那是 daemon 干的。）
+# 只有这台机器必须经公司代理才能出公网时，才在这里显式写，并且一定要配 NO_PROXY：
+# ENV HTTPS_PROXY=http://proxy.corp.example:8080 \
+#     NO_PROXY=gitlab.corp.example,.corp.example,10.0.0.0/8

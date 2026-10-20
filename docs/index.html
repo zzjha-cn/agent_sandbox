@@ -922,6 +922,7 @@ core/assets/agent-layer/Dockerfile       <span class="c"># tmux, git, jq, claude
         <tr><td>see which tasks are wired to something real</td><td><code>sbx ls</code> (the <code>LINKS</code> column)</td><td class="k">act 15</td></tr>
         <tr><td>find out what sbx is using on disk</td><td><code>sbx doctor</code></td><td class="k">commands.md</td></tr>
         <tr><td>work out whether a connection failure is the sandbox or the peer</td><td><code>sbx doctor</code> (the <code>reach</code> check)</td><td class="k">commands.md</td></tr>
+        <tr><td>find out why a <code>prep</code> build cannot reach an internal host</td><td><code>sbx doctor</code> (the <code>dd-proxy</code> check)</td><td class="k">commands.md</td></tr>
         <tr><td>see what the proxy blocked</td><td><code>sbx net denied [task] [--all] [--since 2h]</code></td><td class="k">commands.md</td></tr>
         <tr><td>allow a host</td><td><code>sbx net allow &lt;host&gt;</code></td><td class="k">commands.md</td></tr>
         <tr><td>review a repo's <code>.sbx/</code> after it changed</td><td><code>sbx trust</code></td><td class="k">commands.md</td></tr>

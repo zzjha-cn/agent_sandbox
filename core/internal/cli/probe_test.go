@@ -2,6 +2,9 @@ package cli
 
 import (
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -23,7 +26,7 @@ func TestVerdictBothStopAtTheSameRungIsNotTheSandbox(t *testing.T) {
 	host := ladder{Where: "your machine", Steps: steps(stepDNS, true, stepTCP, false)}
 	ctr := ladder{Where: "the container", Steps: steps(stepDNS, true, stepTCP, false)}
 
-	lv, detail, fix := verdict(tgt, host, ctr)
+	lv, detail, fix := verdict(tgt, host, ctr, ddProxy{})
 	if lv != lvWarn {
 		t.Fatalf("level = %v, want warn (sbx cannot fix the peer)", lv)
 	}
@@ -41,7 +44,7 @@ func TestVerdictBothStopAtTheSameRungIsNotTheSandbox(t *testing.T) {
 func TestVerdictBothFailAtDNSBlamesTheNameNotThePeer(t *testing.T) {
 	tgt := probeTarget{Host: "gitlab.corp.example", Port: 443}
 	l := ladder{Steps: []step{{Name: stepDNS, Info: "no such host"}}}
-	lv, _, fix := verdict(tgt, l, l)
+	lv, _, fix := verdict(tgt, l, l, ddProxy{})
 	if lv != lvWarn {
 		t.Fatalf("level = %v, want warn", lv)
 	}
@@ -58,7 +61,7 @@ func TestVerdictHostReachesButContainerDoesNotIsAFailure(t *testing.T) {
 	host := ladder{Steps: steps(stepDNS, true, stepTCP, true)}
 	ctr := ladder{Steps: []step{{Name: stepDNS, OK: true}, {Name: stepTCP, Info: "unreachable"}}}
 
-	lv, detail, fix := verdict(tgt, host, ctr)
+	lv, detail, fix := verdict(tgt, host, ctr, ddProxy{})
 	if lv != lvFail {
 		t.Fatalf("level = %v, want fail", lv)
 	}
@@ -77,7 +80,7 @@ func TestVerdictContainerDNSSplitPointsAtTheResolver(t *testing.T) {
 	host := ladder{Steps: steps(stepDNS, true, stepTCP, true)}
 	ctr := ladder{Steps: []step{{Name: stepDNS, Info: "no such host"}}}
 
-	lv, _, fix := verdict(tgt, host, ctr)
+	lv, _, fix := verdict(tgt, host, ctr, ddProxy{})
 	if lv != lvFail {
 		t.Fatalf("level = %v, want fail", lv)
 	}
@@ -100,7 +103,7 @@ func TestVerdictSNISplitIsReportedAsThePeersPolicy(t *testing.T) {
 			{Name: stepNoSNI, OK: true, Info: "CN = Corp Private CA"},
 		},
 	}
-	lv, detail, fix := verdict(tgt, host, ctr)
+	lv, detail, fix := verdict(tgt, host, ctr, ddProxy{})
 	if lv != lvWarn {
 		t.Fatalf("level = %v, want warn: the TCP hole works, TLS is the peer's call", lv)
 	}
@@ -119,7 +122,7 @@ func TestVerdictReachableIsOKAndNamesTheIssuer(t *testing.T) {
 		Issuer: "CN = Corp Private CA",
 		Steps:  steps(stepDNS, true, stepTCP, true, stepSNI, true, stepNoSNI, true),
 	}
-	lv, detail, _ := verdict(tgt, ladder{Steps: steps(stepDNS, true, stepTCP, true)}, ctr)
+	lv, detail, _ := verdict(tgt, ladder{Steps: steps(stepDNS, true, stepTCP, true)}, ctr, ddProxy{})
 	if lv != lvOK {
 		t.Fatalf("level = %v, want ok", lv)
 	}
@@ -131,7 +134,7 @@ func TestVerdictReachableIsOKAndNamesTheIssuer(t *testing.T) {
 // 探针自己跑不起来，不该把它伪装成"目标不可达"——那是完全相反的结论。
 func TestVerdictProbeContainerFailureIsNotAReachabilityVerdict(t *testing.T) {
 	tgt := probeTarget{Host: "gitlab.corp.example", Port: 443}
-	lv, detail, _ := verdict(tgt, ladder{}, ladder{Err: errors.New("no such image")})
+	lv, detail, _ := verdict(tgt, ladder{}, ladder{Err: errors.New("no such image")}, ddProxy{})
 	if lv != lvFail && lv != lvWarn {
 		t.Fatalf("level = %v", lv)
 	}
@@ -235,5 +238,182 @@ func TestNetReasonCompressesGoErrors(t *testing.T) {
 	}
 	if netReason(nil) != "" {
 		t.Fatal("nil error has no reason")
+	}
+}
+
+// 这是真实故障留下的回归：带 SNI 断、裸 IP 通，但**宿主机用同一个名字握手是好的**。
+// 对端如果真的因为服务器名而断，宿主机会被一样对待；没有，就说明断的是容器
+// 出去的那条路。旧版本在这里一律报 "the peer's policy, use sbx prep build"，
+// 而 prep build 走的正是同一条路，照着做只会再撞一次墙。
+func TestVerdictSNISplitBlamesThePathWhenTheHostHandshakesFine(t *testing.T) {
+	tgt := probeTarget{Name: "prep:gitlab.corp.example", Host: "gitlab.corp.example", Port: 443}
+	host := ladder{Steps: steps(stepDNS, true, stepTCP, true, stepSNI, true, stepNoSNI, true)}
+	ctr := ladder{
+		IP: "10.42.0.50",
+		Steps: []step{
+			{Name: stepDNS, OK: true, Info: "10.42.0.50"},
+			{Name: stepTCP, OK: true},
+			{Name: stepSNI, Info: "unexpected eof while reading"},
+			{Name: stepNoSNI, OK: true, Info: "CN = Corp Private CA"},
+		},
+	}
+	lv, detail, fix := verdict(tgt, host, ctr, ddProxy{})
+	if lv != lvFail {
+		t.Fatalf("level = %v, want fail: this one is fixable on your machine", lv)
+	}
+	if !strings.Contains(detail, "your machine handshakes fine") {
+		t.Fatalf("detail should contrast the two positions: %s", detail)
+	}
+	if !strings.Contains(fix, "SNI") || !strings.Contains(fix, "Bypass") {
+		t.Fatalf("fix should name the SNI rewrite and where to fix it: %s", fix)
+	}
+	if strings.Contains(fix, "prep build") {
+		t.Fatalf("prep build uses the same path, so it is not the fix here: %s", fix)
+	}
+}
+
+// 反过来：宿主机带 SNI 也被断，那才是对端的策略。
+func TestVerdictSNISplitBlamesThePeerWhenTheHostIsRefusedToo(t *testing.T) {
+	tgt := probeTarget{Host: "gitlab.corp.example", Port: 443}
+	bad := []step{
+		{Name: stepDNS, OK: true, Info: "10.42.0.50"},
+		{Name: stepTCP, OK: true},
+		{Name: stepSNI, Info: "handshake failure"},
+		{Name: stepNoSNI, OK: true, Info: "CN = Corp Private CA"},
+	}
+	lv, _, fix := verdict(tgt, ladder{Steps: bad}, ladder{IP: "10.42.0.50", Steps: bad}, ddProxy{})
+	if lv != lvWarn {
+		t.Fatalf("level = %v, want warn: sbx cannot change the peer", lv)
+	}
+	if !strings.Contains(fix, "prep build") {
+		t.Fatalf("fix should route to prep, the only way through: %s", fix)
+	}
+}
+
+// 读到了 Docker Desktop 的设置、确认透明代理开着且没有例外时，提示要给出
+// 具体到"在哪个文件里确认过"的那一句，否则用户还得自己去找。
+func TestSNIRewriteFixNamesTheDockerSettingWhenConfirmed(t *testing.T) {
+	tgt := probeTarget{Host: "gitlab.corp.example", Port: 443}
+	ctr := ladder{IP: "10.42.0.50"}
+	dd := ddProxy{Found: true, Transparent: true, Path: "/tmp/settings-store.json"}
+	fix := sniRewriteFix(tgt, ctr, dd)
+	if !strings.Contains(fix, "Confirmed") || !strings.Contains(fix, "settings-store.json") {
+		t.Fatalf("fix should cite the setting it actually read: %s", fix)
+	}
+	if !strings.Contains(fix, "*.corp.example") {
+		t.Fatalf("fix should suggest a concrete bypass value: %s", fix)
+	}
+	// 已经被 Bypass 覆盖时就不能再说"确认是它"——那会把人引到一个已经对的地方。
+	dd.Exclude = []string{"10.0.0.0/8"}
+	if strings.Contains(sniRewriteFix(tgt, ctr, dd), "Confirmed") {
+		t.Fatal("an excluded target must not be blamed on the bypass list")
+	}
+}
+
+func TestParentDomain(t *testing.T) {
+	cases := map[string]string{
+		"gitlab.corp.example": "corp.example",
+		"corp.example":        "corp.example", // 只有两级，去掉一级就没意义了
+		"gitlab":              "gitlab",
+	}
+	for in, want := range cases {
+		if got := parentDomain(in); got != want {
+			t.Fatalf("parentDomain(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// allow 里允许写 `.foo.com` 这种后缀形式，那不是一个能解析的主机。
+func TestPlainHostRejectsWhatCannotBeProbed(t *testing.T) {
+	for _, bad := range []string{".corp.example", "*.corp.example", "localhost", "a.com/x", "host:443", ""} {
+		if got := plainHost(bad); got != "" {
+			t.Fatalf("plainHost(%q) = %q, want empty", bad, got)
+		}
+	}
+	if got := plainHost(" GitLab.Corp.Example "); got != "gitlab.corp.example" {
+		t.Fatalf("plainHost should trim and lowercase, got %q", got)
+	}
+}
+
+// prep 模板里的注释带着一堆 gitlab.corp.example 示例，照着探只会得到一片
+// "no such host"，还白花两个位置的探测预算。
+func TestPrepHostsSkipsCommentLines(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".sbx"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "# COPY from gitlab.example.invalid\nFROM golang:1.23\n" +
+		"ENV GOPRIVATE=gitlab.corp.example\n" +
+		"RUN git config --global url.\"ssh://git@gitlab.corp.example/\".insteadOf x\n"
+	if err := os.WriteFile(filepath.Join(dir, ".sbx", "prep.Dockerfile"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a := &App{}
+	a.WS.Root = dir
+	a.Cfg.Prep.File = ".sbx/prep.Dockerfile"
+
+	got := a.prepHosts()
+	for _, h := range got {
+		if h == "gitlab.example.invalid" {
+			t.Fatalf("a commented-out example must not become a probe target: %v", got)
+		}
+	}
+	var found bool
+	for _, h := range got {
+		if h == "gitlab.corp.example" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the real private host should be picked up: %v", got)
+	}
+	// golang:1.23 不是主机名，别当成目标。
+	for _, h := range got {
+		if strings.HasPrefix(h, "golang") {
+			t.Fatalf("an image tag is not a hostname: %v", got)
+		}
+	}
+}
+
+// 目标发现要验三件事,而这三件都不该依赖"跑测试的时候网络通不通":
+// 只收私有地址、同一个目标不探两遍、总数有上限。
+func TestCollectTargetsFiltersDedupesAndCaps(t *testing.T) {
+	private := func(h string) bool { return strings.HasSuffix(h, ".corp.example") }
+
+	got := collectTargets(
+		[]config.Forward{{Name: "gitlab", To: config.Target{S: "10.42.0.50:443"}, Host: "gitlab.corp.example"}},
+		[]string{"api.anthropic.com", "registry.corp.example", "gitlab.corp.example"},
+		[]string{"gitlab.corp.example", "models.corp.example"},
+		private,
+	)
+
+	var names []string
+	for _, t := range got {
+		names = append(names, t.Name)
+	}
+	// 公网的 allow 条目不进来；已经被 forward 覆盖的 gitlab 不重复进来。
+	want := []string{"gitlab", "allow:registry.corp.example", "prep:models.corp.example"}
+	if len(got) != len(want) {
+		t.Fatalf("targets = %v, want %v", names, want)
+	}
+	for i := range want {
+		if got[i].Name != want[i] {
+			t.Fatalf("targets = %v, want %v", names, want)
+		}
+	}
+	// 来源要留在名字里：用户得知道这个目标是从哪条配置推出来的。
+	if got[2].Port != 443 {
+		t.Fatalf("discovered targets probe 443, got %d", got[2].Port)
+	}
+}
+
+func TestCollectTargetsRespectsTheCap(t *testing.T) {
+	var many []string
+	for i := 0; i < maxReachTargets+5; i++ {
+		many = append(many, fmt.Sprintf("h%d.corp.example", i))
+	}
+	got := collectTargets(nil, many, nil, func(string) bool { return true })
+	if len(got) != maxReachTargets {
+		t.Fatalf("len = %d, want %d: doctor must stay bounded", len(got), maxReachTargets)
 	}
 }

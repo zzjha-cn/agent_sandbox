@@ -30,8 +30,14 @@
 FROM golang:1.23
 
 # A private CA is just an ordinary COPY; sbx provides no special mechanism.
+# Two hard requirements -- miss either one and it fails *silently* (this step still
+# exits 0; the build only breaks later, when dependencies are fetched):
+#   1. It must be PEM. If you were handed DER (.cer / .der), convert it first:
+#        openssl x509 -inform DER -in corp.cer -out corp.crt
+#   2. The filename must end in .crt -- update-ca-certificates only scans *.crt
+# The trailing test -e turns that silent no-op into a loud failure.
 # COPY .sbx/ca/corp.crt /usr/local/share/ca-certificates/
-# RUN update-ca-certificates
+# RUN update-ca-certificates && test -e /etc/ssl/certs/corp.pem
 
 WORKDIR /src
 
@@ -60,3 +66,13 @@ RUN --mount=type=secret,id=netrc,target=/root/.netrc \
 # time. sbx config show reports the source as "prep".
 # RUN mkdir -p /sbx && printf '%s' \
 #     '{"allow":["gitlab.corp.example"],"env":{"GOFLAGS":"-mod=mod"}}' > /sbx/prep.json
+
+# Proxies: this build runs with the host's proxy explicitly cleared. Docker
+# Desktop injects its proxy settings into docker build, and leaving them in
+# reproduces the exact problem prep exists to solve: everything goes through a
+# proxy that cannot reach the internal network. (Pulling the base image is
+# unaffected -- the daemon does that.)
+# Set one here only if this machine needs a proxy to reach the public internet
+# at all, and always pair it with NO_PROXY:
+# ENV HTTPS_PROXY=http://proxy.corp.example:8080 \
+#     NO_PROXY=gitlab.corp.example,.corp.example,10.0.0.0/8

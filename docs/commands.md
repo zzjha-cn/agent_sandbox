@@ -1115,7 +1115,7 @@ notify_throttle = 600   # 两次同类通知的最小间隔（秒），默认 60
 
 ---
 
-## 体检：`sbx doctor`（M3-13、M4-5、M4-18）
+## 体检：`sbx doctor`（M3-13、M4-5、M4-18、M4-19）
 
 ```console
 $ sbx doctor
@@ -1129,16 +1129,22 @@ $ sbx doctor
   ! trust       .sbx/ changed since you last confirmed it
       → sbx trust
   ✓ notify      open.feishu.cn is allowed automatically
-  ! reach       gitlab: gitlab.corp.example:443 reachable at 10.42.0.50; TLS fails with SNI but succeeds without
-      → the peer drops the handshake once it sees the server name — that is the peer's policy, not
-        something sbx can change. For go module fetches, seed the dependency with sbx prep build
-        instead of reaching the source at run time.
+  ! dd-proxy    Docker Desktop sends every container connection to 127.0.0.1:7890 and sniffs its SNI;
+                the bypass list does not cover 10.0.0.1, 172.16.0.1, 192.168.0.1
+      → that proxy decides by domain name, so an internal host is handed to a proxy node that cannot
+        reach it — the failure surfaces as a TLS error, not as a routing one. Add your private ranges
+        and internal domains under Docker Desktop → Settings → Resources → Proxies → Bypass, for
+        example: *.corp.example,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+  ✗ reach       prep:gitlab.corp.example: gitlab.corp.example:443 reachable at 10.42.0.50; TLS fails
+                with SNI but succeeds without (unexpected eof while reading), while your machine
+                handshakes fine with the same name
+      → something on the container's path is reading the SNI and rewriting the destination by name …
   ✓ smoke       the screen of running sbx-shop-e76272-fix looks normal
 
-1 warning(s), 1 failure(s)
+2 warning(s), 2 failure(s)
 ```
 
-十项检查：docker 可用性、VM 内存够不够（R10）、**磁盘占用**、上游代理连通性、`sbx-proxy` 健康（R8）、登录态、信任状态、通知配置、**内网可达性**、首次启动冒烟（R9：claude 的内部状态字段随版本变化，卡在对话框上会让无人值守直接失效）。
+十一项检查：docker 可用性、VM 内存够不够（R10）、**磁盘占用**、上游代理连通性、`sbx-proxy` 健康（R8）、登录态、信任状态、通知配置、**Docker Desktop 的透明代理**、**内网可达性**、首次启动冒烟（R9：claude 的内部状态字段随版本变化，卡在对话框上会让无人值守直接失效）。
 
 - **只有 `✗` 才让 `sbx doctor` 非 0 退出**。`!` 的意思是"能用，但该改"——要是它也让命令失败，写进脚本的人就只能加 `|| true`，那警告就白给了。`--strict` 下警告也算失败。
 - `--quick` 跳过慢的那两项（内网探针、冒烟检查）。
@@ -1180,15 +1186,59 @@ sbx prep drop --all              # 连当前种子镜像一起删——删的是
 | 宿主机通、容器卡在 **tcp** | `✗` | 你的机器有一条 VM 没有的路由——通常是代理例外表。改 Docker Desktop → Settings → Resources → **Proxies → Bypass** |
 | 两边都卡在 **dns** | `!` | 名字写错，或者要连的 VPN 没开。和沙箱无关 |
 | 两边都卡在 **tcp** | `!` | 对端或它前面的网络在拒绝。**sbx 绕不过去**，去找那个服务的负责人（[boundary.md §3.4](boundary.md)） |
-| tcp 通、带 SNI 断、裸 IP 通 | `!` | 对端看到服务器名之后主动断开。这是对端的策略；取 go 模块的话改用 `sbx prep build` 预抓 |
+| tcp 通、带 SNI 断、裸 IP 通、**宿主机带 SNI 也断** | `!` | 对端看到服务器名之后主动断开。这是对端的策略；取 go 模块的话改用 `sbx prep build` 预抓 |
+| tcp 通、带 SNI 断、裸 IP 通、**宿主机带 SNI 正常** | `✗` | 不是对端——是容器出去的那条路在按 SNI 改写目的地。见下面的 [dd-proxy](#dd-proxy-这一项为什么必须单独存在m4-19) |
 
 几个实现上的决定：
 
 - **探针跑在 `sbx-egress` 上**（没有就退回默认 bridge）——那是 forwarder 和 squid 待的位置，也就是沙箱实际从哪里出去。**不是** Task 自己的 internal 网络：那张网按设计没有默认路由，在那儿探什么都不通，量到的是设计而不是故障。
-- **目标取自 `[[forward]]`**，不用你再敲一遍地址。配了 `host` 的那几条按真实域名探，否则测不到对端的 SNI 策略。`to` 写成裸端口号的（指向宿主机）不探：那条路由由 Docker 自己维护。
-- 没配 `[[forward]]` 就跳过，不猜地址。
+- **目标有三个来源**，覆盖运行期和构建期（M4-19）：`[[forward]]` 的每一条、`network.allow` 里解析到私有地址的那些、以及 prep 文件里出现过的主机名。后两类都**先解析、只留落在私有地址的**——这既是"值得探"的判据，也是不去骚扰公网主机的保险。输出里的 `allow:` / `prep:` 前缀说明这个目标是从哪条配置推出来的。
+- 配了 `host` 的 forward 按真实域名探，否则测不到对端的 SNI 策略。`to` 写成裸端口号的（指向宿主机）不探：那条路由由 Docker 自己维护。
+- **prep 那一类是启发式，不是契约**：按正则从 Dockerfile 里捞主机名，注释行整行跳过（模板里全是 `gitlab.corp.example` 这类示例）。这么做的理由是，Dockerfile 里没有地方声明"我要触达哪个内网源"，而那恰恰是最容易被代理咬到的一类。
+- 一个目标都没找到就跳过，不猜地址；最多探 6 个，四级 × 两个位置，再有用也不能把 doctor 拖成分钟级。
 - 容器侧复用 forwarder 已经 pin 住的 `alpine/socat` 镜像，宿主机侧用 Go 自己的 `net` 和 `crypto/tls`——**刻意不调 curl**，macOS 自带的是 LibreSSL，它和系统代理的交互会给出和实际不符的结论。
 - TLS 两级只在 443 / 8443 / 9443 上跑。`forward` 是纯 TCP 中继，握不握得上手不归它管，所以 TLS 的结果**不会**把这一项打成 `✗`，它是诊断上下文。
+
+### dd-proxy 这一项为什么必须单独存在（M4-19）
+
+这一项是被一次真实故障逼出来的。现象分两层：
+
+1. `sbx prep build` 拉私有 Go module，报 `x509: certificate signed by unknown authority`。原因是 `COPY` 进去的私有 CA 是 **DER 格式、扩展名是 `.cer`**——`update-ca-certificates` 只扫 `*.crt` 且只认 PEM，两条都不满足就**静默跳过并 exit 0**，构建一路走到 `go mod download` 才炸。
+2. CA 修好之后错误变成 `EOF`。真正的原因在两层之外。
+
+第二层是这样的：Docker Desktop 开着 `VpnKitTransparentProxy` 时，会**嗅探容器出站连接的 SNI**，然后向宿主机代理发 `CONNECT <嗅到的域名>:443`。于是同一个 `10.10.16.50:443`：
+
+```
+带 SNI   → CONNECT gitlab.corp.example:443 → 代理按域名判，内网域名没规则 → 发给代理节点 → 断
+不带 SNI → CONNECT 10.10.16.50:443         → 代理按私有 IP 判，直连 → 通
+```
+
+把 SNI 换成 `example.com` 去连同一个内网 IP，拿回来的是 **Cloudflare 签的证书**——这是最硬的那个反证：连接根本没到那个 IP。
+
+**为什么单独一项、而且不归 Slow：**
+
+- 它只读一个 JSON 文件（`settings-store.json`）加问一次系统代理，不碰网络也不碰 docker，所以 `--quick` 也跑。它是**唯一能在构建失败之前就说出这件事**的检查。
+- [boundary.md §2.8 坑一](boundary.md) 不够。那条说 `sbx prep build` 要清掉 `HTTP_PROXY` / `HTTPS_PROXY`——确实清了，但**透明拦截根本不在环境变量里，清不掉**。
+- `reach` 只探运行期的目标，而这次故障在构建期。同一个根因，但旧版本的 `reach` 即便探到了也会把它判成"对端的 SNI 策略，改用 `sbx prep build`"——而 prep build 走的正是同一条路，照着做只会再撞一次墙。
+
+报警条件是三者同时成立：**代理确实在用**（`manual` 模式配了上游，或 `system` 模式且系统里真有代理）、**透明拦截开着**、**Bypass 列表没覆盖三个 RFC 1918 网段**。少一条都不报——`doctor` 里的噪音会让人连真的警告一起忽略。
+
+> 提示里那句"代理是按**名字**被问的"是重点。这次故障里代理本身是有私有 IP 直连规则的，坏就坏在 Docker 把"按 IP"变成了"按域名"，恰好绕开了那条规则。只加网段不加域名，同样会再踩一次。
+
+修法（按偏好排序）：
+
+1. **Docker Desktop → Settings → Resources → Proxies → Bypass**，把内网域名和私有网段都填进去：`*.corp.example,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16`。
+2. 在代理客户端里给内网域名加一条 DIRECT 规则（Clash / mihomo 系还要一并处理 `dns.nameserver-policy`、`fake-ip-filter` 和 `sniffer.skip-domain`，少一个就还会漏）。
+3. 关掉 Docker Desktop 的代理（`ProxyHTTPMode = off`）。
+
+自己手工复现这个判断,两条命令就够——一条通一条不通就是它：
+
+```bash
+curl -sS -o /dev/null -w "direct  %{http_code}\n" --noproxy '*' --max-time 10 \
+  "https://gitlab.corp.example/some/repo?go-get=1" --cacert .sbx/ca/corp.crt
+curl -sS -o /dev/null -w "proxied %{http_code}\n" --proxy http://127.0.0.1:7890 --max-time 10 \
+  "https://gitlab.corp.example/some/repo?go-get=1" --cacert .sbx/ca/corp.crt
+```
 
 ---
 

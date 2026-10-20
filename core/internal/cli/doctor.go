@@ -72,6 +72,9 @@ var checks = []checker{
 	{Name: "login", NeedDocker: true, Run: checkLogin},
 	{Name: "trust", NeedRepo: true, Run: checkTrust},
 	{Name: "notify", Run: checkNotify},
+	// 只读 Docker Desktop 的设置文件 + 问一次系统代理，不碰网络也不碰 docker，
+	// 所以不归 Slow：它要在 sbx prep build 失败**之前**就说话（M4-19）。
+	{Name: "dd-proxy", Run: checkDDProxy},
 	// reach 要合并后的配置才知道探什么（[[forward]]），也要 docker 起容器。
 	// 归到 Slow：每个目标四级 × 两个位置，--quick 时跳过。
 	{Name: "reach", NeedDocker: true, NeedRepo: true, Slow: true, Run: checkReach},

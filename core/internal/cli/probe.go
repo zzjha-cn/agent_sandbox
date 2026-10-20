@@ -4,6 +4,9 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -123,6 +126,109 @@ func forwardTargets(fwds []config.Forward) []probeTarget {
 		out = append(out, probeTarget{Name: f.Name, Host: host, Port: port})
 	}
 	return out
+}
+
+// maxReachTargets 封顶。四级 × 两个位置 × 每个目标，探针再有用也不能把 doctor
+// 拖成分钟级；超出的部分不探，而不是探一半。
+const maxReachTargets = 6
+
+// reachTargets 汇总所有值得探的内网目标（M4-19）。
+//
+// 三个来源，覆盖运行期和构建期：
+//
+//	[[forward]]      运行期的洞，目标是明写的
+//	network.allow    放行名单里解析到私有地址的那些
+//	prep 文件里的主机名  构建期要触达的内网源
+//
+// 后两类都要先解析、只保留**落在私有地址**的——这既是"值得探"的判据，也是不去
+// 骚扰公网主机的保险。prep 那一类是启发式而不是契约：Dockerfile 里没有声明内网
+// 依赖的地方，而那恰恰是最容易被代理咬到的一类（见 ddproxy.go 开头那段）。
+func (a *App) reachTargets() []probeTarget {
+	return collectTargets(a.Cfg.Forward, a.Cfg.Network.Allow, a.prepHosts(), resolvesPrivate)
+}
+
+// collectTargets 是上面那段的纯逻辑部分。isPrivate 作为参数传进来，测试里就能
+// 在不碰 DNS 的前提下验筛选、去重和封顶——这三件事都不该靠"当时网络通不通"来验。
+func collectTargets(fwds []config.Forward, allow, prepHosts []string, isPrivate func(string) bool) []probeTarget {
+	out := forwardTargets(fwds)
+	seen := map[string]bool{}
+	for _, t := range out {
+		seen[t.addr()] = true
+	}
+	add := func(src, host string) {
+		t := probeTarget{Name: src + ":" + host, Host: host, Port: 443}
+		if seen[t.addr()] || len(out) >= maxReachTargets || !isPrivate(host) {
+			return
+		}
+		seen[t.addr()] = true
+		out = append(out, t)
+	}
+	for _, h := range allow {
+		if h = plainHost(h); h != "" {
+			add("allow", h)
+		}
+	}
+	for _, h := range prepHosts {
+		add("prep", h)
+	}
+	return out
+}
+
+// plainHost 把 allow 条目收敛成一个能解析的主机名。allow 里允许写 `.foo.com`
+// 这种后缀形式，那不是一个主机，探不了；带通配或路径的同理。
+func plainHost(s string) string {
+	s = strings.TrimSpace(strings.ToLower(s))
+	if s == "" || strings.ContainsAny(s, "*/:") || strings.HasPrefix(s, ".") {
+		return ""
+	}
+	if !strings.Contains(s, ".") {
+		return ""
+	}
+	return s
+}
+
+// hostPattern 从 prep 文件里捞主机名。要求至少两级、以字母结尾的 TLD——
+// 这样能排掉版本号、文件名和 `go.mod` 之类，代价是漏掉单级的内网短名。
+var hostPattern = regexp.MustCompile(`[A-Za-z0-9][A-Za-z0-9._-]*\.[A-Za-z]{2,}`)
+
+// prepHosts 扫 prep 文件里出现过的主机名。
+//
+// 注释行整行跳过：`sbx prep init` 生成的模板里有一堆 gitlab.corp.example 之类的
+// 示例，照着探只会得到一片 "no such host"。
+func (a *App) prepHosts() []string {
+	if a.WS.Root == "" || a.Cfg.Prep.File == "" {
+		return nil
+	}
+	b, err := os.ReadFile(filepath.Join(a.WS.Root, filepath.FromSlash(a.Cfg.Prep.File)))
+	if err != nil {
+		return nil
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, line := range strings.Split(string(b), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		for _, m := range hostPattern.FindAllString(line, -1) {
+			h := strings.ToLower(strings.Trim(m, "."))
+			if !seen[h] {
+				seen[h] = true
+				out = append(out, h)
+			}
+		}
+	}
+	return out
+}
+
+// resolvesPrivate 报告这个名字是否解析到私有地址。解析不出来就是 false：
+// 一个连名字都没有的候选不值得花两个位置的探测预算。
+func resolvesPrivate(host string) bool {
+	ips, err := net.LookupIP(host)
+	if err != nil || len(ips) == 0 {
+		return false
+	}
+	ip := pickIP(ips)
+	return ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast()
 }
 
 // probeHost 在宿主机上跑一遍阶梯，用 Go 自己的 net 和 crypto/tls。
@@ -358,7 +464,7 @@ func parseProbe(out string) (steps []step, ip, issuer string) {
 //	lvOK   容器到得了，forward 能用
 //	lvFail 宿主机到得了而容器到不了 —— 沙箱侧的问题，有得修
 //	lvWarn 两边都到不了 —— 对端或网络的问题，sbx 修不了，但你得知道
-func verdict(t probeTarget, host, ctr ladder) (level, string, string) {
+func verdict(t probeTarget, host, ctr ladder, dd ddProxy) (level, string, string) {
 	if ctr.Err != nil {
 		return lvWarn, fmt.Sprintf("%s: could not run the probe container (%v)", t.addr(), ctr.Err), ""
 	}
@@ -370,12 +476,24 @@ func verdict(t probeTarget, host, ctr ladder) (level, string, string) {
 		if ctr.IP != "" {
 			detail += " at " + ctr.IP
 		}
-		// 带 SNI 断、裸 IP 通 —— 这是对端在看到 SNI 之后主动断的典型形状。
+		// 带 SNI 断、裸 IP 通。这个形状有两个完全不同的成因，给错结论比不给更糟：
+		//
+		//   ① 对端的策略：它看到服务器名就断。对谁都这样，宿主机也一样断。
+		//   ② 本机路径上有东西在按 SNI 改写目的地（Docker Desktop 的透明代理 +
+		//      宿主机代理）。只有容器这条路有，宿主机直连不受影响。
+		//
+		// 分辨它们不需要新探测——**宿主机那一级已经量过了**：宿主机带 SNI 能握手，
+		// 就说明对端不是对谁都断，断的是容器出去的那条路。
 		sni, hasSNI := ctr.find(stepSNI)
 		nosni, hasNo := ctr.find(stepNoSNI)
 		if hasSNI && hasNo && !sni.OK && nosni.OK {
-			return lvWarn, detail + fmt.Sprintf("; TLS fails with SNI but succeeds without (%s)", sni.Info),
-				"the peer drops the handshake once it sees the server name — that is the peer's policy, not something sbx can change. For go module fetches, seed the dependency with sbx prep build instead of reaching the source at run time."
+			detail += fmt.Sprintf("; TLS fails with SNI but succeeds without (%s)", sni.Info)
+			if hs, ok := host.find(stepSNI); ok && hs.OK {
+				return lvFail, detail + ", while your machine handshakes fine with the same name",
+					sniRewriteFix(t, ctr, dd)
+			}
+			return lvWarn, detail,
+				"the peer drops the handshake once it sees the server name — your machine is refused the same way, so this is the peer's policy, not something sbx can change. For go module fetches, seed the dependency with sbx prep build instead of reaching the source at run time."
 		}
 		if ctr.Issuer != "" {
 			detail += ", TLS peer issued by " + ctr.Issuer
@@ -411,6 +529,30 @@ func verdict(t probeTarget, host, ctr ladder) (level, string, string) {
 		"neither position gets through, so the sandbox is not what is blocking you."
 }
 
+// sniRewriteFix 给"容器带 SNI 握不上、宿主机能"这个形状的修法。
+//
+// 结论本身来自测量，不依赖配置；读 Docker Desktop 的设置只是为了把提示说具体——
+// 能确认那个开关开着、而且 Bypass 没覆盖这个目标时，就直接给出要填什么。
+func sniRewriteFix(t probeTarget, ctr ladder, dd ddProxy) string {
+	const why = "something on the container's path is reading the SNI and rewriting the destination by name — typically Docker Desktop's transparent proxy handing `CONNECT " +
+		"<name>:443` to your host proxy, which then resolves that name on the public internet instead of inside your network. "
+	const how = "Add this host and your private ranges under Docker Desktop → Settings → Resources → Proxies → Bypass"
+	if dd.Found && dd.Transparent && !dd.excludes(t.Host, net.ParseIP(ctr.IP)) {
+		return why + fmt.Sprintf("Confirmed: VpnKitTransparentProxy is on in %s and the bypass list does not cover %s. %s, for example: %s,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16",
+			dd.Path, t.Host, how, "*."+parentDomain(t.Host))
+	}
+	return why + how + ", or add a direct/DIRECT rule for this domain in your proxy client (a rule that only matches the private IP range is not enough — the proxy is asked by name, not by address)."
+}
+
+// parentDomain 去掉最左边一级，用来在提示里给出一个 `*.example.com` 形状的建议值。
+// 只有一级或两级时原样返回——猜错了也只是提示里的示例。
+func parentDomain(host string) string {
+	if i := strings.Index(host, "."); i >= 0 && strings.Count(host, ".") >= 2 {
+		return host[i+1:]
+	}
+	return host
+}
+
 func reasonOf(l ladder, name string) string {
 	if s, ok := l.find(name); ok && s.Info != "" {
 		return s.Info
@@ -421,13 +563,14 @@ func reasonOf(l ladder, name string) string {
 // checkReach 是 doctor 里的那一项。目标取自配置里的 [[forward]]——
 // 没配就没有可探的东西，这时候跳过而不是去猜一个地址。
 func checkReach(a *App, _ docEnv) Check {
-	targets := forwardTargets(a.Cfg.Forward)
+	targets := a.reachTargets()
 	if len(targets) == 0 {
-		return skip("reach", "no [[forward]] targets configured, nothing to probe")
+		return skip("reach", "no internal targets found in [[forward]], network.allow or the prep file")
 	}
+	dd, _ := currentDDProxy()
 	worst, lines, fix := lvOK, []string{}, ""
 	for _, t := range targets {
-		lv, detail, f := verdict(t, probeHost(t), a.probeContainer(t))
+		lv, detail, f := verdict(t, probeHost(t), a.probeContainer(t), dd)
 		if t.Name != "" {
 			detail = t.Name + ": " + detail
 		}
