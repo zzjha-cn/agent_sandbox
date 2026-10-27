@@ -1,7 +1,7 @@
 <h1 align="center">sbx</h1>
 
 <p align="center">
-  Run Claude Code in a Docker sandbox — skip the permission prompts without betting your machine on it.
+  Run Claude Code or Codex in a Docker sandbox — skip the permission prompts without betting your machine on it.
 </p>
 
 <p align="center">
@@ -13,7 +13,7 @@
 <p align="center">
   <img alt="Go" src="https://img.shields.io/badge/Go-1.27-00ADD8?logo=go&logoColor=white">
   <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue">
-  <img alt="Status" src="https://img.shields.io/badge/status-M1%20%2B%20M2%20done-brightgreen">
+  <img alt="Status" src="https://img.shields.io/badge/status-Claude%20%2B%20Codex-brightgreen">
 </p>
 
 ---
@@ -46,12 +46,12 @@ fix-login   running  sbx/fix-login   1      3f +48 -6    8s ago       ~/.sbx/wor
 | You want the prompts off, but not an agent loose on your filesystem | It only ever sees one worktree and its own container. The rest of your host is never mounted |
 | Two tasks editing the same repo collide | Each task gets its own git worktree and `sbx/<task>` branch — physically separate |
 | Agent-installed dependencies pollute your local environment | `node_modules` and friends are masked by volumes; invisible in both directions |
-| It ran all night and you have no idea what it did or where it connected | State comes from Claude hooks (`sbx ls`); all egress goes through Squid (`sbx net denied`) |
+| It ran all night and you have no idea what it did or where it connected | State comes from provider status records (`sbx ls`); all egress goes through Squid (`sbx net denied`) |
 | Closing the terminal kills the agent | The agent runs in tmux *inside* the container — survives closed terminals and host reboots |
 
 ## Quick start
 
-**Prerequisites**: Docker Desktop running (10GB of memory recommended), Go 1.27, a Claude subscription.
+**Prerequisites**: Docker Desktop running (10GB of memory recommended), Go 1.27, an account supported by Claude Code or Codex (or a configured API key for supported modes).
 
 ### 1. Install
 
@@ -64,6 +64,8 @@ make build
 ln -sf "$PWD/bin/sbx" /usr/local/bin/sbx   # optional
 sbx --version
 ```
+
+If you skip the symlink, use the absolute path to `core/bin/sbx` in subsequent examples; [testing.md](docs/testing.md) shows how to keep the tested binary fixed.
 
 `sbx` is a single binary that only shells out to `docker` and `git`, so a symlink is all the installation there is.
 
@@ -86,23 +88,41 @@ sudo install -m 0755 sbx /usr/local/bin/sbx
 upstream = "http://host.docker.internal:7890"   # leave empty for a direct connection
 ```
 
-### 3. Log in (once; every task shares it)
+### 3. Check daemon ownership and log in
+
+Use a Docker daemon dedicated to one trusted operator. Team members should use separate daemons or VMs; Task names and labels do not isolate users sharing Docker access.
 
 ```bash
-sbx login            # opens claude's login flow in a throwaway container
-sbx login --status   # which account is this?
+sbx isolation status --json
+# Only when upgrading an existing, unclaimed daemon that belongs to you:
+sbx isolation adopt
 ```
 
-Open the link it prints, paste the code back. Credentials live in the `sbx-home` volume, shared by every task and never inside one. `sbx login --logout` clears them; `--force` switches accounts.
+An empty daemon is claimed on its first resource-changing command. An unadopted legacy installation or a different owner is rejected; do not delete the ownership volume to bypass it. `SBX_HOME` separates host configuration, not Docker credentials or daemon ownership.
+
+Log in to the provider you will use:
+
+```bash
+sbx login claude
+sbx login claude --status
+# Or reuse an existing local Codex auth.json:
+sbx login codex --import ~/.codex
+sbx login codex --status
+# Without a local auth.json: sbx login codex (device-code flow)
+```
+
+Claude login uses its browser/code flow; Codex import copies only `auth.json`, without browser authorization or copying config/sessions. Credentials live in `sbx-home`, shared by tasks on this daemon. Use `sbx login <provider> --logout` to clear that provider; importing over existing Codex credentials requires `--force`. Omitting the provider always selects Claude.
 
 ### 4. Run your first task
 
 ```bash
 cd ~/code/shop
-sbx run fix-login
+sbx run fix-login                 # default: Claude
+# Or, without changing configuration:
+sbx run --agent codex codex-fix
 ```
 
-That's it. Worktree, branch, container, network and proxy credentials are all set up, and Claude Code is waiting inside.
+That's it. Worktree, branch, container, network and proxy credentials are all set up, and the selected agent is waiting inside. `--agent` selects the provider for this invocation; use the same provider when resuming that Task. To make Codex the default, set top-level `default_agent = "codex"` in your configuration.
 
 ## The workflow
 
@@ -118,7 +138,7 @@ sbx done fix-login             # tear down the container, keep the branch
 git merge sbx/fix-login        # merge it yourself — sbx never merges for you
 ```
 
-**`Ctrl-D` exits Claude; it does not detach.** The tmux session survives it, though, so `sbx run` brings Claude back and continues the previous conversation. A slip of the finger costs nothing.
+**`Ctrl-D` exits the agent; it does not detach.** The tmux session survives it, though, so `sbx run` brings Claude back and continues the previous conversation. A slip of the finger costs nothing.
 
 Want the changes to land in your repo directory, visible to `git status` on the host right away? **Omit the task name** — `sbx run` uses the main task, which works on the repo root with no worktree and no branch. Trade-offs and when to use it: [docs](docs/commands.md#我想直接在仓库目录里干活main-task).
 
@@ -128,7 +148,7 @@ Want the changes to land in your repo directory, visible to `git status` on the 
 |---|---|
 | **Workspace** | A git repository, detected from your current directory |
 | **Task** | One line of work = one container + one worktree + one `sbx/<task>` branch |
-| **main task** | The special case when you omit the name: works on the repo root, no isolation |
+| **main task** | The special case when you omit the name: works on the repo root, with no separate worktree or branch |
 
 All a container can see is: its worktree, your repository's `.git` directory, the shared `sbx-home` (login state and Claude config), `sbx-cache` (package-manager caches) and a read-only `/sbx/gen` (hooks, settings, status line). **Nothing else from your host is mounted.**
 
@@ -202,6 +222,7 @@ These are decided, not pending. Writing them down is the point: without it, the 
 `~/.sbx/config.toml`; every field is optional:
 
 ```toml
+default_agent = "claude"     # claude | codex
 profile = "web-go"            # built-in profile: web-go | py-rust
 # image = "ghcr.io/me/dev:1"  # or bring your own image, overriding profile
 
@@ -211,7 +232,9 @@ mode      = "open"            # open | allowlist
 allow     = []                # appended to the built-in allowlist
 
 [resources]
-cpus = 2 ; memory = "3g" ; pids = 1024
+cpus = 2
+memory = "3g"
+pids = 1024
 
 [deps]
 mask = ["node_modules"]       # each masked by a volume, keeping your host clean
@@ -224,7 +247,7 @@ sbx config show    # every effective value and which layer it came from
 sbx trust          # review this repo's .sbx/ and record it as trusted
 ```
 
-The project layer travels with the repo, so **secret-looking keys and absolute paths are rejected outright in that layer**. And because a `git pull` can change it under you, `sbx run` stops and shows you the diff whenever `.sbx/` differs from what you last confirmed — repos without a `.sbx/` directory never see any of this. Full field list and when changes take effect: [docs/commands.md](docs/commands.md#配置四层adr-00090010design-91).
+The project layer travels with the repo, so **secret-looking keys and absolute paths are rejected outright in that layer**. And because a `git pull` can change it under you, `sbx run` stops and shows you the diff whenever `.sbx/` differs from what you last confirmed — repos without a `.sbx/` directory never see any of this. Full field list and when changes take effect: [docs/commands.md](docs/commands.md#配置四层adr-0009design-91).
 
 ## Bringing your own image
 
@@ -238,7 +261,7 @@ image = "ghcr.io/me/devbox:2026-10"   # 1. a ready-made image
 profile = "web-go"                    # 3. a built-in profile (the default)
 ```
 
-Whichever you pick, **you only supply the language environment**. sbx layers its own agent layer on top — tini, tmux, git, ripgrep, Node, claude-code, mise, and an `agent` user whose UID matches yours — so you never install the agent yourself. The image tag is a hash of its inputs, so changing your base rebuilds automatically.
+Whichever you pick, **you only supply the language environment**. sbx layers its own agent layer on top — tini, tmux, git, ripgrep, Node, Claude Code, Codex, mise, and an `agent` user whose UID matches yours — so you never install the agent yourself. The image tag is a hash of its inputs, so changing your base rebuilds automatically.
 
 Two things to know before you build one:
 
@@ -260,7 +283,7 @@ The project layer travels with the repo, so onboarding a teammate is three steps
 2. Your teammate clones, runs `sbx trust` and reads what the diff shows them.
 3. `sbx run`.
 
-What *cannot* be in that file, by design: anything that looks like a credential, any absolute path, any command that would run in the container (`on_idle` and friends), and a short registry of safety switches and whole sections (`git.protect`, `prep.on_drift`, `[prep.secret]`, `[[forward]]`). These red lines are enforced, not advisory — a repo cannot decide where your credentials come from, what runs inside your sandbox, or what your machine dials out to.
+What *cannot* be in that file, by design: anything that looks like a credential, any absolute path, any command that would run in the container (`on_idle` and friends), and a short registry of safety switches and whole sections (`git.protect`, `prep.on_drift`, `[prep.secret]`, `[[forward]]`, and global-only `[isolation]`). These red lines are enforced, not advisory — a repo cannot decide where your credentials come from, what runs inside your sandbox, or what your machine dials out to.
 
 ## Troubleshooting
 
@@ -270,6 +293,8 @@ What *cannot* be in that file, by design: anything that looks like a credential,
 | The agent says a download failed | In allowlist mode the proxy blocked it. `sbx net denied` shows what, `sbx net allow <host>` fixes it and hot-reloads running tasks |
 | `sbx run` stops and asks you to log in | The credentials in `sbx-home` expired. `sbx login` once; every task shares it |
 | `sbx run` stops on `.sbx/` | Someone changed the project config. It prints the diff — read it, then `sbx trust` |
+| Daemon ownership is rejected | Run `sbx isolation status --json`; adopt only your own unclaimed legacy daemon. Use a separate daemon for another operator |
+| A Codex Task is rejected when resuming | Keep its original provider: `sbx run --agent codex <task>`, or set `default_agent = "codex"` |
 | Something is off and you don't know what | `sbx doctor`. It checks docker, the proxy, login, trust, notifications and the agent's first-run state, and prints a fix for each problem |
 
 ## Documentation
@@ -279,6 +304,8 @@ What *cannot* be in that file, by design: anything that looks like a credential,
 | Doc | What's in it |
 |---|---|
 | [Introduction](https://zzjha-cn.github.io/agent_sandbox/) | **Start here** — a web page covering a day of real use, the architecture diagram, and a Q&A on each piece |
+| [automation.md](docs/automation.md) | Machine protocol, bounded runs and exit codes |
+| [testing.md](docs/testing.md) | Formal manual testing and reproducible checks |
 | [commands.md](docs/commands.md) | **Command reference**: every command, flag, config field and environment variable |
 | [walkthrough.md](docs/walkthrough.md) | One scenario end to end — what Docker, git and squid each do behind every command |
 | [architecture.md](docs/architecture.md) | How the pieces fit together and where data flows |
@@ -287,20 +314,24 @@ What *cannot* be in that file, by design: anything that looks like a credential,
 
 ## Status
 
-**M1, M2, M3 (except Codex, M3-6) and most of M4 are done.** Available commands: `run / attach / shell / stop / ls / path / done / drop / logs / port / net / memory / login / config / trust / prep / doctor / upgrade`.
+**Claude Code and Codex are supported.** The execution refactor and v1 machine protocol are implemented. Available commands: `run / admit / version / isolation / attach / shell / stop / ls / path / done / drop / logs / port / net / memory / login / config / trust / prep / doctor / upgrade`.
 
-Known limits: there is no `sbx merge` and no Codex support yet (M3-6); a host proxy has to speak HTTP (SOCKS-only needs a shim of your own); base images have to be Debian or Ubuntu; a service or a forward is reached by its name, not `localhost`. See also [Deliberately not provided](#deliberately-not-provided).
+Known limits: there is no `sbx merge`, automatic artifact delivery or multi-user isolation on a shared daemon; a host proxy has to speak HTTP (SOCKS-only needs a shim of your own); base images have to be Debian or Ubuntu; a service or a forward is reached by its name, not `localhost`. See also [Deliberately not provided](#deliberately-not-provided).
 
 Roadmap: [implementation-checklist.md](docs/implementation-checklist.md).
 
 ## Development
 
+Run from `core/`:
+
 ```bash
 make test          # unit tests
 make test-docker   # docker-backed integration tests (first run builds images; takes a few minutes)
 make lint          # golangci-lint, falling back to go vet + gofmt
-make e2e           # end-to-end acceptance (requires a logged-in sandbox)
+make e2e           # legacy Claude acceptance; real model calls, requires Claude login
 ```
+
+For bounded automation, use `sbx version --json`, `sbx admit --envelope request.json`, then `sbx run --envelope request.json` from the target repository. The envelope takes its provider from configuration; it cannot be combined with `--agent`. See [automation](docs/automation.md) for schema, timeout, cancellation and exit codes, and [testing](docs/testing.md) for formal manual acceptance and test prerequisites.
 
 Add `-v / --verbose` to print every docker and git command as it runs.
 

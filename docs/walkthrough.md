@@ -3,6 +3,32 @@
 > 本文用一个具体场景，从头到尾按顺序讲一遍：每条命令敲下去之后，sbx、Docker、git、squid、claude 分别做了什么，留下了什么。
 > 讲的是 M1 代码的实际行为。想先了解 sbx 是什么、为什么这么设计，见[项目主页](https://zzjha-cn.github.io/agent_sandbox/)；命令和参数的速查见 [commands.md](commands.md)，结构化的说明见 [architecture.md](architecture.md)，设计取舍见 [design.md](design.md) 和 `private/adr/`（未纳入版本控制）。
 
+## 先选 provider 与检查环境
+
+本文主体沿用 Claude 的完整日常场景；Claude 特有的 hooks、宿主机配置和项目记忆不代表 Codex 也使用同一套机制。命令按 2026-10-27 实现核对。正式业务测试步骤见 [testing.md](testing.md)，机器协议与退出码见 [automation.md](automation.md)。
+
+首次使用或升级旧版本，先执行 `sbx isolation status --json`；仅当 daemon 确认归自己独占且旧卷待接管时执行 `sbx isolation adopt`。不应覆盖已有 config.toml 来照抄示例，下面的配置应合并到个人配置中。
+
+如果你使用已登录的 Codex，可以先走这个短流程：
+
+```bash
+sbx login codex --status
+# 仅在沙箱尚未导入、且本机有 auth.json 时：
+sbx login codex --import ~/.codex
+cd ~/code/shop
+sbx trust --show
+# 存在待确认的项目变更时，审阅后执行 sbx trust
+sbx run --agent codex codex-fix
+# Ctrl-b 松手再按 d：离开，保留运行
+sbx attach codex-fix
+sbx stop codex-fix
+sbx run --agent codex codex-fix     # 恢复必须继续选择 Codex
+```
+
+`sbx login` 省略参数仍是 Claude，即使 `default_agent = "codex"`。`--agent` 不写配置；若默认仍是 Claude，每次恢复 Codex Task 都要显式指定。Codex headless 可用 `sbx run --agent codex codex-job -p "完成约定修复、运行测试并提交，不推送"`；容器停止后 `sbx logs codex-job` 仍可读。退出 0 后仍须检查测试、差异及提交，再 done/merge。
+
+Codex 的对话恢复按 Task 记录的 session ID，`--fresh` 在启动新一轮时新开会话，不切换 provider 或重建容器。认证导入不复制本机 config、skills、AGENTS.md 或 sessions；Claude 的宿主机配置/记忆同步属于下面 Claude 场景的特有功能。
+
 ## 场景
 
 | 设定 | 值 |
@@ -12,7 +38,7 @@
 | 网络 | 本机开着代理 `127.0.0.1:7890`，在容器里访问它的地址是 `host.docker.internal:7890` |
 | 由此算出的名字 | Workspace id = `shop-e76272`（目录名 + 仓库根路径 sha1 的前 6 位）<br>记忆 key = `-Users-apple-code-shop` |
 
-全文按时间顺序分 15 幕：前 12 幕是日常回路，后 3 幕是「项目跑起来还缺点什么」——连数据库、装私有依赖、够内网。每一幕先给命令，再按顺序说明发生了什么。
+全文按时间顺序分 16 幕：前 12 幕是日常回路，后 3 幕是「项目跑起来还缺点什么」——连数据库、装私有依赖、够内网。每一幕先给命令，再按顺序说明发生了什么。
 
 ---
 
@@ -20,20 +46,23 @@
 
 ```bash
 cd ~/workspace/.../agent_sandbox/core && make build    # 得到 bin/sbx，把它放进 PATH
-cat > ~/.sbx/config.toml <<'EOF'
+```
+
+在个人 `~/.sbx/config.toml` 中合并下面的配置，不要覆盖已有配置：
+
+```toml
 [network]
 upstream = "http://host.docker.internal:7890"
-mode = "allowlist"      # 全文按白名单模式讲；2026-10-08 起默认是 open（不拦截）
-EOF
+mode = "allowlist"      # 本文显式使用白名单；默认是 open
 ```
 
 - 构建出的 `sbx` 是一个独立的二进制。Dockerfile、白名单、squid 模板都通过 `go:embed` 打包在里面，运行时不需要源码目录。
-- 配置文件只写了上游代理，其他项都用默认值：
+- 本例设置上游代理与 allowlist，其他项用默认值：
   - 镜像：`web-go`
   - 资源：2 CPU、3g 内存
   - 网络：这里显式写了 allowlist；不写的话默认是 `open`，下面讲到的拦截都不会发生
-  - 依赖遮盖：`node_modules`
-  - claude 版本：`latest`
+  - 依赖遮盖：`node_modules`、`.next`
+  - Claude/Codex 构建版本默认 `latest`；正式重复测试可用 agents.<provider>.version 固定版本
 
 ---
 
@@ -51,7 +80,7 @@ sbx run fix-login
 - 分支：`sbx/fix-login`
 - 代理用户名（task-id）：`shop-e76272.fix-login`
 
-**② 判断新建还是恢复。** `docker inspect sbx-shop-e76272-fix-login` 显示容器不存在，所以走新建流程。从这里开始，每新建一样东西，就往回滚栈里登记一个对应的清理动作。
+**② 准入与判断新建还是恢复。** Task 锁、daemon 归属、原 provider、并发和活动 headless 检查在资源创建前完成。主流程由 execution.Service 编排。 `docker inspect sbx-shop-e76272-fix-login` 显示容器不存在，所以走新建流程。从这里开始，先按本次 attempt 的所有权登记回滚，再创建资源；即使 daemon 创建成功后客户端丢失响应，仍能按 token 查找并回收本次对象。旧资源不会按同名无条件删除。
 
 **③ 建 worktree。**
 
@@ -88,7 +117,7 @@ git worktree add -b sbx/fix-login ~/.sbx/worktrees/shop-e76272/fix-login <HEAD �
 1. 渲染 `~/.sbx/proxy/squid.conf`，其中包括上游代理那行 `cache_peer host.docker.internal parent 7890 …`。
 2. 写入占位片段 `tasks/00-empty.conf`。
 3. 创建网络 `sbx-egress`。这是普通 bridge 网络，可以出网。
-4. 启动容器 `sbx-proxy`，镜像是 `ubuntu/squid`，内存上限 128m。整个 `~/.sbx/proxy` 目录只读挂到容器的 `/etc/sbx`。
+4. 启动容器 `sbx-proxy`，镜像是 `ubuntu/squid`，内存上限 256m。整个 `~/.sbx/proxy` 目录只读挂到容器的 `/etc/sbx`。
 5. 反复执行 `squid -k check`，直到 squid 就绪。
 
 **⑦ 创建 Task 网络，接入代理。**
@@ -105,16 +134,16 @@ git worktree add -b sbx/fix-login ~/.sbx/worktrees/shop-e76272/fix-login <HEAD �
 
 **⑧ 准备 volume。**
 
-- `sbx-home` 和 `sbx-cache` 是第一次创建。sbx 用一次性 root 容器把它们 chown 成你的 UID，并在 `sbx-cache` 里建好 npm、pip、go 等缓存子目录。
-- 依赖 volume `sbx-shop-e76272-fix-login-dep-0`：用来遮住 worktree 里的 `node_modules`。
+- `sbx-home`、`sbx-cache` 和 `sbx-mise` 是第一次创建。sbx 用一次性 root 容器把它们 chown 成你的 UID，并在 `sbx-cache` 里建好 npm、pip、go 等缓存子目录。
+- 依赖卷 dep-0/dep-1 分别遮住 web-go 默认的 `node_modules` / `.next`，仅新建的卷初始化，不覆盖旧依赖。
 
 **⑨ 渲染生成文件，然后创建容器。**
 
 1. gen 目录里写入三样东西：
    - `hooks/status.sh`
-   - `settings.sbx.json`：5 个 hooks
+   - `settings.sbx.json`：6 个 hooks
    - `host-claude/CLAUDE.md`：你宿主机 `~/.claude/CLAUDE.md` 的快照
-2. `docker run -d`，挂载 worktree、主仓库 `.git`、依赖 volume、`sbx-home`、`sbx-cache`、state、gen（只读），以及只读的 `~/.claude/skills`、`agents`、`commands`。
+2. `docker run -d`，挂载 worktree、主仓库 `.git`、依赖 volume、`sbx-home`、`sbx-cache`、`sbx-mise`、state、gen（只读），以及只读的 `~/.claude/skills`、`agents`、`commands`。
 3. 设置环境变量 `HTTPS_PROXY=http://shop-e76272.fix-login:<token>@proxy:3128` 和 git 作者信息。git 作者信息取自你仓库的 `git config`。
 4. 容器的主进程是 `tini → sleep infinity`。claude 还没有启动。
 5. 写入 `meta.json`。
@@ -127,33 +156,24 @@ git worktree add -b sbx/fix-login ~/.sbx/worktrees/shop-e76272/fix-login <HEAD �
 2. 宿主机这个仓库的 Claude 记忆被导入沙箱，终端输出：`导入项目记忆：add 3`。
 3. 执行 `claude auth status`，返回 `loggedIn: false`。sbx 打印登录命令后报错。
 
-**⑪ 回滚。** 回滚栈按登记的逆序执行：
+**⑪ 回滚。** 使用独立、有界的 cleanup context 逆序执行已登记动作：清理本次 agent 容器和依赖卷，回滚本次 proxy attachment、删除本次 Task 网络，恢复此前存在的 meta、gen 和会话标记；此前不存在的状态文件则移除。主错误与每个清理错误分别保留，清理失败不能记为成功。
 
-1. 删 `meta.json`
-2. 删容器
-3. 删依赖 volume
-4. 从 squid 去掉这个 Task 的片段、passwd 条目和网络连接；现在没有别的 Task，sbx-proxy 被停掉
-5. 删 Task 网络
+worktree、用户分支、镜像、共享 home/cache/mise、daemon 归属记录按设计保留。已有 dedicated proxy 不删，失败时恢复原配置/状态；shared proxy 只回滚当前 Task 的记录，其他 Task 的凭据不动。首次创建时没有旧 meta，失败后不会留下一个假的成功 Task。
 
-以下内容不回滚：
-
-- worktree：留着，以免丢失你可能已经放进去的东西；
-- 镜像，以及 `sbx-home`、`sbx-cache`：都是共享资源。
-
-终端提示：`在「启动 Agent」这一步失败，清理本次新建的资源（worktree 保留）…`
+终端会指出失败阶段；协议模式还会给出执行分类与 cleanup_state。若主容器被外部删掉但旧 forwarder 尚存，重建会明确拒绝覆盖它，先检查旧数据再 done 后重建。
 
 ---
 
 ## 第 2 幕：登录（只需一次）
 
 ```bash
-docker run -it --rm -e HOME=/home/agent -v sbx-home:/home/agent \
-  -e HTTPS_PROXY=http://host.docker.internal:7890 sbx/web-go:<hash> claude auth login
+sbx login claude
+sbx login claude --status
 ```
 
-- 这条命令就是上一幕 sbx 打印出来的。代理地址取自配置里的 `network.upstream`，没有配置时这一行省略。
-- 你在浏览器里完成授权，粘贴授权码。凭据写进 `sbx-home` 这个 volume。
-- 之后所有 Task 都挂载同一个 `sbx-home`，所以只需要登录一次。
+- sbx 在临时容器内完成 Claude 登录，不必手写 Docker 参数或镜像 hash。它不接 Task 网络；按配置使用上游代理或直连。
+- 人在浏览器完成授权，粘贴授权码。凭据写入 `sbx-home`，后续同 daemon 的 Claude Task 复用。
+- Codex 可导入 `auth.json` 或使用设备码；见开头短流程。`done` 不删除任何 provider 的共享登录态。
 
 ---
 
@@ -330,7 +350,7 @@ sbx run fix-login
 5. `docker start` 启动容器。
 6. 启动 Agent：预置、导入记忆（如果宿主机又多了记忆）、检查登录、在 tmux 里启动 claude、冒烟检查。
 
-大约 3 秒后进入 claude。它是新会话，昨天的对话历史还在 `sbx-home` 里，可以用 claude 自己的 `/resume` 找回。
+进入 Claude 后默认用 `--continue` 续接本 Task 的上次对话；`--fresh` 才在重新启动 agent 时开新的一段。恢复耗时取决于镜像、运行时安装和认证，不保证固定秒数。
 
 ---
 

@@ -1,5 +1,7 @@
 # sbx 实施清单
 
+> 按 2026-10-27 更新当前状态；历史里程碑保留其当时的验收说明。当前使用、自动化和正式测试分别见 [命令手册](commands.md)、[自动化手册](automation.md)、[测试指南](testing.md)。
+
 | 项 | 内容 |
 |---|---|
 | 依据 | [design.md](design.md)、ADR 0001–0016（`private/adr/`，未纳入版本控制） |
@@ -13,7 +15,7 @@
 
 ---
 
-## M0 验证 ✅ 已完成（2026-10-04，见 [M0-SUMMARY](../spikes/M0-SUMMARY.md)；Codex 部分推迟到 M3-6）
+## M0 验证 ✅ 已完成（2026-10-04，见 [M0-SUMMARY](../spikes/M0-SUMMARY.md)；M0 时 Codex 延后到 M3-6，现已完成）
 
 > 目标：把会推翻设计的不确定项先排除。产出放在 `spikes/<编号>/`，每项附一份 `RESULT.md`（结论、证据、对设计的影响）。
 
@@ -144,8 +146,8 @@
 - [x] **M3-5** 依赖遮盖由配置驱动（M2 已通）+ **per-Profile 默认值**：web-go → `node_modules`/`.next`，py-rust → `.venv`/`target`。默认值在**四层合并之后**按最终 profile 补上，再和显式写的取并集——profile 可能被后面的层改掉，而列表是并集的，先放 web-go 的默认值再并上 py-rust 的会得到一份四不像（多出来的遮盖项会在 worktree 里凭空建出目录）。
 
 ### Agent
-- [ ] **M3-6** 支持 Codex：生成 `config.toml`，带上 `--dangerously-bypass-approvals-and-sandbox`，支持 `--agent codex` 和 `default_agent`。
-- [x] **M3-7** headless 模式：`sbx run <task> -p "..."`（`-p -` 读 stdin），输出写入 `run.log`；`sbx logs <task> [-f] [-n]` 直接读宿主机上的文件，容器停了也看得到。**仍然跑在 tmux 里**（"有没有 Agent 在跑"只有 `tmux has-session` 一个事实来源，另起一条路会让第二次 run 再拉起一个 claude 抢同一棵 worktree），`sbx attach` 因此还能围观 headless 的输出。prompt 走 `gen/prompt.txt`，不进命令行。**跑完由脚本 `kill 1` 停掉容器**（design §3.1 的状态机），释放内存和并发名额；`run.exit` 里是 claude 的退出码，`sbx ls` 显示 `exited(<code>)`，sbx 自己也用这个码退出。Task 正在 running/idle 时 `-p` 直接拒绝（§10.1 第 4 步）。
+- [x] **M3-6** Codex 已实现：交互/headless、--agent 与 default_agent、设备码/auth.json 导入、Task 精确 session 恢复/fresh、超时/取消。API key 仅 headless；不自动导入宿主 config/skills/sessions，也不承诺生成一套宿主 Codex 配置。
+- [x] **M3-7** headless 模式：`sbx run <task> -p "..."`（`-p -` 读 stdin），输出写入 `run.log`；`sbx logs <task> [-f] [-n]` 直接读宿主机上的文件，容器停了也看得到。**仍然跑在 tmux 里**（"有没有 Agent 在跑"只有 `tmux has-session` 一个事实来源，另起一条路会让第二次 run 再拉起一个 claude 抢同一棵 worktree），`sbx attach` 因此还能围观 headless 的输出。prompt 走 `gen/prompt.txt`，不进命令行。**跑完由脚本 `kill 1` 停掉容器**（design §3.1 的状态机），释放内存和并发名额；`run.exit` 里是 claude 的退出码，`sbx ls` 显示 `exited(<code>)`，普通 headless 模式仅成功为 0，非零返回一般错误 1；机器 v1 将 agent 非零分类为 5，原码在 result 中。Task 正在 running/idle 时 `-p` 直接拒绝（§10.1 第 4 步）。
 
 ### 状态和通知
 - [x] **M3-8** 注入状态 hooks。**M1 实现时就顺带做完了**（`agent.hookEvents`），而且比设计多两个事件：`Notification`（空闲约 60s）和 `SessionEnd`（claude 自己退出）。M3-7 实测确认 headless 下事件序列同样完整：`SessionStart → UserPromptSubmit → PreToolUse → Stop → SessionEnd`。
@@ -169,9 +171,18 @@
 
 ---
 
+## 执行内核与协议（2026-10-27）
+
+- [x] 生命周期主编排归 execution.Service，创建/恢复归 Provisioner，认证/会话归 AgentStarter。
+- [x] 创建前按 token 登记回滚；恢复保护旧 meta/gen/会话与 sidecar，保留主错误和清理错误。
+- [x] sbx.execution/v1：version/capabilities、只读 admit、envelope run、事件/结果与分类退出码。
+- [x] 墙钟超时与 SIGINT/SIGTERM 停止真实执行；v1 不自动交付产物。
+- [x] 独占 daemon 的 namespace/owner 门禁及旧卷显式接管；不开放同 daemon 不互信多用户。
+- [x] 开发验收覆盖 Codex/PTY/资源故障；业务项目正式测试入口见 testing.md，历史结果不代替业务验收。
+
 ## 后续（暂不排期）
 
-- [ ] 缓解 R1：启动前对 `.git/hooks` 和 `.git/config` 做快照比对，或者在宿主机侧设置 `core.hooksPath`（ADR 0003）。
+- [x] R1 已由嵌套只读挂载 `.git/hooks` / `.git/config` 缓解（含 submodule）；剩余 Git 历史写权限不等于已彻底隔离不可信仓库。
 - [ ] 适配 devcontainer.json（ADR 0007）。
 - [ ] Task 排队调度（需要的话，要先重新评估"不做常驻进程"的原则）。
 

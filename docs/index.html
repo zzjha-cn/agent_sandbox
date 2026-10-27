@@ -3,21 +3,21 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>sbx — a sandbox runtime for Claude Code</title>
-<meta name="description" content="sbx runs Claude Code inside a Docker sandbox: one container, one git worktree and one branch per task. A day of real use, the architecture, a Q&A on each piece, and a scenario index.">
+<title>sbx — a sandbox runtime for Claude Code and Codex</title>
+<meta name="description" content="sbx runs Claude Code or Codex inside a Docker sandbox: one container, one git worktree and one branch per task. A day of real use, the architecture, a Q&A on each piece, and a scenario index.">
 <link rel="canonical" href="https://zzjha-cn.github.io/agent_sandbox/">
 
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="sbx">
 <meta property="og:url" content="https://zzjha-cn.github.io/agent_sandbox/">
-<meta property="og:title" content="sbx — a sandbox runtime for Claude Code">
+<meta property="og:title" content="sbx — a sandbox runtime for Claude Code and Codex">
 <meta property="og:description" content="Skip the permission prompts without betting your machine on it. One container, one git worktree and one branch per task.">
 <meta property="og:image" content="https://zzjha-cn.github.io/agent_sandbox/og.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="sbx — run Claude Code in a Docker sandbox">
+<meta property="og:image:alt" content="sbx — run Claude Code or Codex in a Docker sandbox">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="sbx — a sandbox runtime for Claude Code">
+<meta name="twitter:title" content="sbx — a sandbox runtime for Claude Code and Codex">
 <meta name="twitter:description" content="Skip the permission prompts without betting your machine on it. One container, one git worktree and one branch per task.">
 <meta name="twitter:image" content="https://zzjha-cn.github.io/agent_sandbox/og.png">
 
@@ -247,10 +247,10 @@ footer code{font-size:12.5px}
 
 <header>
   <div class="mark">s<span>b</span>x</div>
-  <p class="tagline">Run Claude Code in a Docker sandbox — skip the permission prompts without betting your machine on it.</p>
+  <p class="tagline">Run Claude Code or Codex in a Docker sandbox — skip the permission prompts without betting your machine on it.</p>
   <p class="subline">One container, one git worktree and one branch per task. Inside, <code>--dangerously-skip-permissions</code> is fine. Outside, nothing changed.</p>
   <div class="meta">
-    <span class="chip on">M1 complete</span>
+    <span class="chip on">Claude + Codex</span>
     <span class="chip">M3 nearly done</span>
     <span class="chip">Go 1.27</span>
     <span class="chip">Apache-2.0</span>
@@ -420,7 +420,7 @@ seeding cache/go-mod from sbx/prep-shop-e76272:a1b2c3d4e5f6 (184MB) ...</pre></d
 
   <div class="body" style="margin-top:26px">
     <p>The lifecycle <code>run → stop → run (resume) → done</code> creates, pauses, restores and tears down all four together.</p>
-    <p><strong>sbx itself is only an orchestrator</strong>: a single Go binary that does everything by shelling out to <code>docker</code> and <code>git</code>, with no SDKs. It does not stay resident — the command exits and the agent keeps running inside the container.</p>
+    <p><strong>sbx itself is only an orchestrator</strong>: a single Go binary that does everything by shelling out to <code>docker</code> and <code>git</code>, with no SDKs. It has no resident daemon: detached commands return while the agent keeps running; a foreground headless caller waits for its result.</p>
   </div>
 </section>
 
@@ -442,23 +442,32 @@ seeding cache/go-mod from sbx/prep-shop-e76272:a1b2c3d4e5f6 (184MB) ...</pre></d
         <tr><td class="k">Docker Desktop, running</td><td>Everything runs in containers. Give the VM around 10&nbsp;GB; each task is capped at 2 CPUs and 3&nbsp;g</td></tr>
         <tr><td class="k">git</td><td>Worktrees and branches are driven through the git CLI</td></tr>
         <tr><td class="k">Go 1.27</td><td>Only to build the binary. Nothing at runtime</td></tr>
-        <tr><td class="k">A Claude subscription</td><td>One <code>sbx login</code>; credentials live in a shared volume, never inside a task</td></tr>
+        <tr><td class="k">A Claude Code or Codex account</td><td>Use <code>sbx login claude</code> or <code>sbx login codex --import ~/.codex</code>; credentials are shared within your dedicated daemon</td></tr>
       </tbody>
     </table>
   </div>
   <div class="body" style="margin-top:16px">
-    <p>That is the whole list. <strong>Your project's Node, Python or Go toolchain does not need to be on the host</strong> — it is in the image. sbx writes to exactly two places outside Docker: the binary wherever you put it, and <code>~/.sbx/</code>. Uninstalling is deleting those two.</p>
+    <p>That is the whole list. <strong>Your project's Node, Python or Go toolchain does not need to be on the host</strong> — it is in the image. Its control files live under <code>~/.sbx/</code>; Task worktrees and branches also update the repository Git metadata. Docker volumes retain authentication and caches independently of the binary.</p>
+
+    <h3>Choose a provider and check ownership</h3>
+    <p>Use a Docker daemon dedicated to one trusted operator. Run <code>sbx isolation status --json</code>; adopt legacy volumes with <code>sbx isolation adopt</code> only after confirming that the daemon is yours. Changing <code>SBX_HOME</code> does not isolate Docker volumes or users.</p>
+    <div class="code"><pre>sbx login codex --import ~/.codex   # only auth.json, not config or sessions
+sbx login codex --status
+sbx run --agent codex codex-fix     # select Codex without editing configuration
+sbx run --agent codex codex-fix     # resume with the same provider</pre></div>
+    <p>Without a local auth.json, <code>sbx login codex</code> uses device-code login. Omitting the provider from login always selects Claude. For automation, <code>sbx version --json</code>, <code>sbx admit --envelope request.json</code> and <code>sbx run --envelope request.json</code> provide schema discovery, read-only admission and a bounded headless run. The envelope takes its provider from configuration, not <code>--agent</code>.</p>
+    <p>See the <a href="automation.md">automation reference</a> for timeout, cancellation and exit codes, and the <a href="testing.md">testing guide</a> before running formal acceptance.</p>
 
     <h3>Seven steps behind one command</h3>
     <p>sbx is <strong>a single Go binary with no daemon and no background service</strong>. It shells out to <code>docker</code> and <code>git</code> — no SDKs — and for a task that does not exist yet, <code>sbx run fix-login</code> does this:</p>
     <ol class="steps">
       <li><b>Locate the workspace.</b> <code>git rev-parse --show-toplevel</code>; the id is the directory name plus six hex of the path's hash, e.g. <code>shop-e76272</code>.</li>
       <li><b>Create the worktree and branch.</b> <code>git worktree add ~/.sbx/worktrees/&lt;ws&gt;/&lt;task&gt; -b sbx/&lt;task&gt;</code>, starting from HEAD unless you pass <code>--base</code>.</li>
-      <li><b>Make sure the image exists.</b> The tag is a hash of the two Dockerfiles, the entrypoint, the pinned Claude version and your UID/GID — unchanged inputs reuse the image, a changed one rebuilds.</li>
+      <li><b>Make sure the image exists.</b> The tag is a hash of the two Dockerfiles, the entrypoint, the Claude and Codex versions and your UID/GID — unchanged inputs reuse the image, a changed one rebuilds.</li>
       <li><b>Create the task's network</b>, <code>--internal</code>: no route to the outside at all.</li>
       <li><b>Attach it to the proxy.</b> Start the shared squid if it is not up, mint this task's username and random token, write its config fragment, <code>squid -k reconfigure</code>.</li>
       <li><b>Create the dep volumes and the container</b>, mounting the worktree, the main repo's <code>.git</code>, <code>sbx-home</code>, <code>sbx-cache</code>, the state directory and a read-only <code>/sbx/gen</code> — and nothing else from your host.</li>
-      <li><b>Start Claude in tmux inside the container, then exit.</b> The command returns; the agent keeps running without it.</li>
+      <li><b>Start the selected agent in tmux.</b> Interactive run attaches; <code>--detach</code> returns while the agent keeps running. Headless waits by default and stops its container on completion.</li>
     </ol>
     <p style="margin-top:16px">Any step that fails <strong>unwinds the earlier ones in reverse</strong>, keeping the worktree so nothing you wrote is lost.</p>
     <p>Running the same name again is the <strong>resume</strong> path, not an error: container stopped, start it; Claude exited because you hit <kbd>Ctrl-D</kbd>, restart it in the same tmux session and continue the previous conversation; everything already up, just attach. So <code>sbx run</code> is safe to type twice.</p>
@@ -672,7 +681,7 @@ seeding cache/go-mod from sbx/prep-shop-e76272:a1b2c3d4e5f6 (184MB) ...</pre></d
         </table>
       </div>
       <div class="a" style="margin-top:12px">
-        <p>For a run you started with <code>sbx run &lt;task&gt; -p "&lt;prompt&gt;"</code>, the whole transcript is on disk: <code>sbx logs &lt;task&gt;</code> reads it from the host, so it still works after the container has stopped (a headless run stops its own container when it finishes). An interactive agent's output lives in the tmux session instead — read that with <code>attach</code> while the container is up.</p>
+        <p>Codex uses its wrapper to record <code>CodexStart</code>, <code>CodexExit</code> and the exact Task session ID; it does not use Claude hooks or Claude project-memory sync. For a run you started with <code>sbx run &lt;task&gt; -p "&lt;prompt&gt;"</code>, the whole transcript is on disk: <code>sbx logs &lt;task&gt;</code> reads it from the host, so it still works after the container has stopped (a headless run stops its own container when it finishes). An interactive agent's output lives in the tmux session instead — read that with <code>attach</code> while the container is up.</p>
       </div>
     </div>
   </div>
@@ -855,7 +864,7 @@ mask = ["node_modules"]    <span class="c"># add .venv, target, vendor, …</spa
     <div class="qa">
       <p class="q">How are images handled? Does every run rebuild?</p>
       <div class="a">
-        <p>Two layers: a <strong>profile layer</strong> (Debian + Go + Node + Python) and an <strong>agent layer</strong> (tmux, git, ripgrep, jq, claude-code, the non-root <code>agent</code> user). The tag is <strong>a hash of the inputs</strong> — both Dockerfiles, the entrypoint, the pinned Claude version and your UID/GID — so an unchanged input reuses the image and a changed one rebuilds by itself. The first build takes a few minutes; after that a task is up in seconds.</p>
+        <p>Two layers: a <strong>profile layer</strong> (Debian + Go + Node + Python) and an <strong>agent layer</strong> (tmux, git, ripgrep, jq, claude-code, the non-root <code>agent</code> user). The tag is <strong>a hash of the inputs</strong> — both Dockerfiles, the entrypoint, the Claude and Codex versions and your UID/GID — so an unchanged input reuses the image and a changed one rebuilds by itself. The first build takes a few minutes; after that a task is up in seconds.</p>
         <p>Claude inside the container <strong>never auto-updates</strong>; <code>sbx upgrade</code> rebuilds the agent layer. Existing tasks keep their old image until they are torn down and recreated — which is what keeps one task on one version for its whole life.</p>
       </div>
     </div>
@@ -900,7 +909,7 @@ core/assets/agent-layer/Dockerfile       <span class="c"># tmux, git, jq, claude
     <table>
       <thead><tr><th>I want to…</th><th>Command</th><th>Detail</th></tr></thead>
       <tbody>
-        <tr><td>install and log in for the first time</td><td><code>make build</code> → <code>sbx run</code> → <code>claude auth login</code></td><td class="k">acts 0–2</td></tr>
+        <tr><td>install and log in for the first time</td><td><code>make build</code> → <code>sbx isolation status --json</code> → <code>sbx login claude</code> → <code>sbx run</code></td><td class="k">acts 0–2</td></tr>
         <tr><td>start a new task</td><td><code>sbx run fix-login</code></td><td class="k">act 3</td></tr>
         <tr><td>start a second one alongside it</td><td><code>sbx run add-search --detach</code></td><td class="k">act 4</td></tr>
         <tr><td>understand what happens while the agent works</td><td>—</td><td class="k">act 5</td></tr>
@@ -938,18 +947,19 @@ core/assets/agent-layer/Dockerfile       <span class="c"># tmux, git, jq, claude
     <div class="num">07</div>
     <div>
       <h2>Where it stands today</h2>
-      <p>M1, M2, M3 (except Codex, M3-6) and most of M4 are done.</p>
+      <p>Claude Code, Codex and the v1 execution protocol are implemented (updated 2026-10-27).</p>
     </div>
   </div>
 
   <div class="body">
-    <p>Available commands: <code>run / attach / shell / stop / ls / path / done / drop / logs / port / net / memory / login / config / trust / prep / clean / doctor / upgrade</code>.</p>
+    <p>Available commands: <code>run / admit / version / isolation / attach / shell / stop / ls / path / done / drop / logs / port / net / memory / login / config / trust / prep / clean / doctor / upgrade</code>.</p>
     <h3>Limits worth knowing up front</h3>
     <ul class="limits">
       <li>two built-in profiles (<code>web-go</code>, <code>py-rust</code>); a project can bring its own image with <code>.sbx/Dockerfile</code>, as long as it is Debian or Ubuntu based</li>
       <li>a host proxy has to speak HTTP; a SOCKS-only proxy needs a shim of your own</li>
       <li>there is no <code>sbx merge</code>; merging is always done by a person in the main repo</li>
-      <li>there is no Codex support yet (M3-6)</li>
+      <li>tasks on the same Docker daemon share identity volumes; different users need separate daemons or VMs</li>
+      <li>v1 reports execution results, but does not automatically deliver artifacts, merge or push</li>
       <li>a service or a forward is reached by its name, not <code>localhost</code> — it is a different container</li>
       <li>a forward carries no audit trail: squid cannot see raw TCP, which is why each one has to be declared by hand and is printed on every run</li>
       <li><code>[[services]]</code> containers are not counted in the memory budget <code>sbx doctor</code> checks</li>
@@ -988,7 +998,7 @@ core/assets/agent-layer/Dockerfile       <span class="c"># tmux, git, jq, claude
   </p>
   <p class="fine">sbx is an open-source project under
     <a href="https://github.com/zzjha-cn/agent_sandbox/blob/main/LICENSE">Apache-2.0</a>. It drives Docker and git through their CLIs
-    and ships no agent of its own — Claude Code runs unmodified inside the sandbox.
+    and ships no agent of its own — Claude Code and Codex run unmodified inside the sandbox.
     This page is published from <code>docs/index.html</code> in the repository; corrections are welcome as
     issues or pull requests.</p>
 </footer>

@@ -3,7 +3,7 @@
 > 按"你会在什么时候用到它"递进排列：装一次 → 日常回路 → 会话控制 → 观察 → 网络 → 维护，最后是参数、配置和环境变量的速查。
 > 不想要 worktree、想让改动直接落在仓库目录里，看[「我想直接在仓库目录里干活」](#我想直接在仓库目录里干活main-task)。
 > 还不知道 sbx 是什么、为什么这么设计，先看[项目主页](https://zzjha-cn.github.io/agent_sandbox/)；想看一个连续场景从头到尾发生了什么，去 [walkthrough.md](walkthrough.md)；想看组件怎么拼的，去 [architecture.md](architecture.md)。
-> 本文描述 M1 + 部分 M2 的**实际代码行为**（`core/internal/cli/`），不是计划。
+> 本文按 2026-10-27 的**实际代码行为**更新，包含 Claude/Codex、v1 执行协议与 daemon 归属门禁（`core/internal/cli/`），不是计划。
 
 ## 先有的三个概念
 
@@ -13,7 +13,7 @@
 | **Task** | Workspace 下的一条工作线。一个 Task = 一个容器 + 一个 worktree + 一个分支 `sbx/<task>` | `sbx run <task>` |
 | **main Task** | 省略 task 名时的特例：**直接用仓库根**，不建 worktree，没有专属分支 | `sbx run` |
 
-**几乎所有命令都要在仓库目录里执行**（要靠 cwd 推断 Workspace）。只有 `sbx upgrade` 例外，它只读全局配置。
+**几乎所有命令都要在仓库目录里执行**（要靠 cwd 推断 Workspace）。`version`、`login`、`isolation`、`upgrade`、`doctor`、`ls --all` 等可在仓库外使用；其中运行环境检查和登录仍需 Docker。`run`、`admit` 以当前仓库为 Workspace。
 
 一句话记住路径：**Task 的改动在它自己的 worktree 里（`~/.sbx/worktrees/<ws>/<task>`），不在你的仓库目录里**，合并分支之后才回到仓库。想让改动直接落在仓库目录里，见[「我想直接在仓库目录里干活」](#我想直接在仓库目录里干活main-task)。
 
@@ -36,7 +36,7 @@ sbx isolation adopt           # 声明这是当前用户独占的 daemon，保�
 sbx isolation status --json
 ```
 
-空 daemon 首次操作自动登记归属。`admit` 不创建归属记录；错误 owner、跨 namespace 的 Task 和显式 `shared-daemon` 部署均被拒绝。daemon、旧卷与新对象的 namespace/owner、全局配置、回滚和恢复步骤见 [R6 隔离设计与验收](r6-isolation.md)。本轮开发环境已完成接管，现有 Codex 登录继续可用。
+空 daemon 首次操作自动登记归属。`admit` 不创建归属记录；错误 owner、跨 namespace 的 Task 和显式 `shared-daemon` 部署均被拒绝。daemon、旧卷与新对象的 namespace/owner、全局配置、回滚和恢复步骤见 [R6 隔离设计与验收](r6-isolation.md)。是否需要接管取决于本机 status，不应照搬其他机器的验收状态。`[isolation]` 只能写入个人全局配置，项目层和 workspace 层均不可设置；不同 `SBX_HOME` 不隔离 Docker 卷。
 
 需要宿主机代理时写 `~/.sbx/config.toml`（全部字段见下文「配置：四层」一节）：
 
@@ -54,7 +54,7 @@ sbx login --status   # 看看现在是哪个账号
 
 临时选择执行 provider 无需修改配置：`sbx run --agent codex codex-demo`，或 `sbx run --agent claude claude-demo`。`--agent` 覆盖本次的 `default_agent`，不写配置文件；恢复时仍检查 Task 原有 provider，不能用它切换已有 Task 的身份归属。协议模式 `--envelope` 保持从配置选择 provider，不接受此运行覆盖参数。
 
-命令形式是 `sbx login [claude|codex]`，**省略时就是 claude**。Codex 支持设备码登录，或者显式导入本机已有认证：
+命令形式是 `sbx login [claude|codex]`，**省略时就是 claude**。Codex 的 `sbx login codex` 使用设备码流程，不在 Task 内启动 localhost 浏览器回调服务；也可显式导入本机已有认证：
 
 ```sh
 sbx login codex --import ~/.codex              # 从目录读取 auth.json
@@ -67,15 +67,16 @@ sbx login codex --status
 
 源文件不被修改。导入是一次独立拷贝，后续刷新不与宿主机双向同步。若宿主机认证保存在系统钥匙串而没有 `auth.json`，命令会给出说明；不会自动读取钥匙串或改写本机 Codex 配置。可按 [Codex 官方说明](https://developers.openai.com/codex/auth) 配置文件凭据存储后再导入。`--import` 仅支持 Codex，不能与 `--status`、`--logout` 混用。
 
-它在一个临时容器里挂上 `sbx-home` 跑 `claude auth login`，凭据落在这个 volume 里。**这个容器没有 Task，也就不接 Task 网络和 `sbx-proxy`**：配了 `network.upstream` 就走上游代理，否则直连。第一次 `sbx run` 发现没凭据时会停下来让你先跑这条。
+交互登录在一个临时容器里挂上 `sbx-home`，按 provider 跑 `claude auth login` 或 `codex login --device-auth`，凭据落在这个 volume 里。**这个容器没有 Task，也就不接 Task 网络和 `sbx-proxy`**：配了 `network.upstream` 就走上游代理，否则直连。第一次 `sbx run` 发现没凭据时会停下来让你先跑这条。
 
-`sbx done` 不会删 `sbx-home`（只删 `sbx.kind=dep` 的 Task 私有 volume）。OAuth token 过期后再跑一次 `sbx login`，写的是同一个 volume，所有 Task 立刻跟着生效。
+`sbx done` 不会删 `sbx-home`（只删 `sbx.kind=dep` 的 Task 私有 volume）。认证失效时对相应 provider 重新登录或导入；凭据保存在同一个 volume，后续 agent 启动复用。不要把省略 provider 的 `sbx login` 当成默认执行 provider 的登录命令。
 
 | 参数 | 做什么 |
 |---|---|
 | `--status` | 只打印登录态，不登录 |
-| `--logout` | 退出登录，清掉 `sbx-home` 里的凭据 |
-| `--force` | 已经登录时也重新走一遍（换账号） |
+| `--logout` | 退出选定 provider，不清空整个 `sbx-home` |
+| `--force` | 已登录时重走流程，或允许替换已有 Codex 导入凭据 |
+| `--import <path>` | 仅 Codex；目录或 auth.json；不能与 status/logout 混用 |
 | `--console` | 用 Anthropic Console 账号（按量计费）而不是 Claude 订阅 |
 | `--email <addr>` | 预填登录页上的邮箱 |
 
@@ -103,21 +104,24 @@ git branch -D sbx/fix-login
 
 | 情况 | 行为 |
 |---|---|
-| 容器不存在 | 新建：worktree → 镜像 → 网络 → 接入 proxy → volume → 容器 → 起 claude。任何一步失败都会逆序清理（worktree 保留） |
-| 容器存在但停了 | `docker start`，再确认 claude 在跑 |
-| 容器在跑、claude 也在 | 什么都不做，直接 attach |
-| 容器在跑、claude 退了（Ctrl-D / `/exit`） | **在原 tmux 会话里重新拉起**，默认带 `--continue` 接上上次对话 |
+| 容器不存在 | 新建：worktree → 镜像 → 网络 → 接入 proxy → volume → 容器 → 启动选定 Agent。失败时只回滚本次拥有的资源，保留 worktree 和既有 Task 状态 |
+| 容器存在但停了 | 恢复 proxy、services/forwards、gen，再启动容器和原 provider |
+| 容器在跑、Agent 也在 | 什么都不做，直接 attach |
+| 容器在跑、Agent 已退出 | 在原 tmux 会话里重新拉起；Claude 用 `--continue`，Codex 用该 Task 记录的准确 session ID |
 
-所以 `sbx run <同一个名字>` 是幂等的恢复命令，手滑退出 claude 之后再跑一次就回来了。
+`sbx run <同一个名字>` 会复用 Task；新一轮 headless 仍可能再次执行工具，并非幂等重放。`--agent` 必须匹配既有 Task 的 provider，即使容器已丢失也不能切换。`--fresh` 在重新启动 agent 时新开对话，不打断仍在运行的会话。
 
 | 参数 | 说明 |
 |---|---|
-| `--base <ref>` | 新建分支的起点，默认当前 HEAD。Task 已存在时忽略并提示 |
+| `--agent claude\|codex` | 本次执行 provider，默认配置的 default_agent；不写配置 |
+| `--base <ref>` | 新建分支的起点，默认当前 HEAD。容器已存在时忽略并提示 |
 | `-d, --detach` | 只启动不进入，适合批量铺任务 |
 | `--fresh` | 重新拉起时开一段新对话（默认接上这个 Task 的上次对话） |
 | `--net open\|allowlist` | 只影响本次，不写配置 |
 | `--proxy shared\|dedicated` | 只影响本次，不写配置；Task 建好之后换不了（见下文） |
-| `-p, --prompt <text>` | headless：跑完这段 prompt 就结束，不进会话（`-p -` 从 stdin 读） |
+| `-p, --prompt <text>` | headless：不自动 attach（`-p -` 从 stdin 读） |
+| `--jsonl` | 仅 headless；内部执行事件，不等同公开 v1 协议 |
+| `--envelope <file\|->` | v1 headless 信封；字段、组合限制和退出码见 [自动化手册](automation.md) |
 
 `--base` 用在从某个历史提交或另一分支起步：`sbx run hotfix --base v1.2.0`。分支已存在时，`ls` 里的 AHEAD/DIFF 基准自动取它和 HEAD 的分叉点（merge-base）。
 
@@ -131,15 +135,21 @@ sbx logs nightly                        # 看完整输出
 sbx logs nightly -f -n 50               # 跟着看，先打最后 50 行
 ```
 
-`-p` 和交互模式的区别只有两点：**不进 tmux**，以及**跑完容器自己停掉**。
+`-p` 和交互模式的区别只有两点：**不自动 attach**，以及**跑完容器自己停掉**（底层仍使用 tmux）。
 
-- 前台跑时 sbx 跟着 `run.log` 打印直到结束，并用 claude 的退出码退出——所以 `sbx run t -p "..." && git merge sbx/t` 这种写法是成立的。
+- 人类输出模式前台等待完成后打印日志；agent 成功为 0，agent 非零返回一般错误 1，不透传原始 agent code。机器调用用 `--envelope`，非零 agent 对应进程码 5，原码在 result 中。成功不替代测试和代码审查，不据此自动合并。
 - **跑完容器会停**：整夜铺十个任务时，跑完一个就释放一份内存和一个 `max_running` 名额。想进去看现场就 `sbx run <task>` 把它起回来，worktree、分支、`run.log` 都还在。
-- `sbx ls` 显示 `exited(0)`（或非 0 的码）。注意这是 **claude 的**退出码，不是容器的。
-- 输出在 `~/.sbx/state/<ws>/<task>/run.log`，追加写，每轮前面有一行时间分隔头，超过 10MB 轮转成 `run.log.1`。`sbx logs` 读的就是这个文件，**所以容器停了照样看得到**。
+- `sbx ls` 显示 `exited(0)`（或非 0 的码）。注意这是 **Agent 的**退出码，不是容器的，也不等于 sbx 的分类退出码。
+- 输出在 `~/.sbx/state/<ws>/<task>/run.log`，追加写，超过 10MB 轮转成 `run.log.1`；Claude 有运行分隔头，Codex 保留原生 JSONL 输出。`sbx logs` 读的就是这个文件，**所以容器停了照样看得到**。
 - 默认接上这个 Task 的上次对话（和交互模式一样），`--fresh` 才新开一段。连续 `-p` 可以一轮一轮往下推。
 - 它仍然跑在 tmux 里，所以**跑的过程中可以 `sbx attach` 进去围观**。
-- 一个 Task 里已经有会话在跑时，`-p` 会被**直接拒绝**，不会插队——两个 claude 抢同一棵 worktree 只会互相踩。
+- 一个 Task 里已经有会话在跑时，`-p` 会被**直接拒绝**，不会插队——两个 Agent 抢同一棵 worktree 只会互相踩。
+
+### 机器调用与执行结果
+
+公开入口是 `sbx version --json` → `sbx admit --envelope request.json` → `sbx run --envelope request.json`。`admit` 只读，不预留资源；run 重新准入。JSONL stdout 和诊断 stderr 分开，调用方同时核对进程码与 result。
+
+超时只在信封中通过 `timeout_seconds` 设置（0 无上限，最大 86400 秒），不是普通 run 的 flag；SIGINT/SIGTERM 取消会停止实际执行。失败回滚不删除工作树；恢复失败保护旧资源和 meta/会话状态。公开 v1 不自动交付产物。完整字段、分类码、交付失败和脚本注意事项见 [automation.md](automation.md)，正式使用验收见 [testing.md](testing.md)。
 
 ### `sbx done <task>...`
 
@@ -150,7 +160,9 @@ sbx logs nightly -f -n 50               # 跟着看，先打最后 50 行
 - **未提交的改动** → 直接报错，让你先去提交；`--force` 才丢弃。
 - **已提交未合并** → 分支和 commit 都在 `.git` 里，删 worktree 不影响。
 
-删的是：容器、Task 网络、proxy 上的这个用户（dedicated 模式下是整个 sidecar 容器）、`sbx.kind=dep` 的依赖 volume、worktree、state 目录。**不删**：分支、`sbx-home`、`sbx-cache`、镜像。最后一个 shared Task 结束时顺带停掉 `sbx-proxy`。
+删的是：容器、Task 网络、proxy 上的这个用户（dedicated 模式下是整个 sidecar 容器）、`sbx.kind=dep` 的依赖 volume、worktree、state 目录。**不删**：分支、`sbx-home`、`sbx-cache`、`sbx-mise`、`sbx-daemon-ownership`、镜像。最后一个 shared Task 结束时顺带停掉 `sbx-proxy`。
+
+Task 内容会删除，空的 workspace 级父目录会保留，避免 Docker Desktop 删除/重建父目录后 bind 源路径失效。
 
 同时会提醒一次项目记忆（见 `sbx memory pull`）——趁容器还在的时候读，所以提醒发生在删之前。
 
@@ -251,7 +263,7 @@ STATUS 由容器状态和 claude hooks 写的 `status.json` 共同推导：
 | `absent` | 没有容器（只剩 state） |
 | `stopped` | 容器已停（含 `docker stop` 的 SIGTERM/SIGKILL） |
 | `exited(<code>)` / `exited(oom)` | 容器异常退出；`oom` 说明内存不够，调 `resources.memory` |
-| `starting` | 容器在跑，但还没收到第一个 hook |
+| `starting` | 容器在跑，但尚未收到该 provider 的首个就绪状态 |
 | `running` | Agent 正在干活（`UserPromptSubmit` / `PreToolUse`） |
 | `idle` | Agent 停下了：可能干完了，**也可能在等你回话**（`Notification`） |
 | `exited(0)` | headless 跑完了（`sbx run -p`），这是 claude 的退出码 |
@@ -329,7 +341,7 @@ sbx trust             # 确认这个仓库的 .sbx/ 内容（见下）
 
 **记忆是单向自动的**：每次 `sbx run` 把宿主机这个仓库的记忆（`~/.claude/projects/<key>/memory/`）导入沙箱；沙箱里新记的**不会自动回来**，要 `memory pull`（ADR 0016）。它先按文件列出差异（`add` / `update` / `merge` / `conflict` / `keep`），确认后才写；两边都改过的标 `conflict`，不自动合，留给你手处理。`sbx done` 时会提醒一次。
 
-**`sbx upgrade`** 在 Profile 镜像里 `npm view` 查最新版，重建 Agent 层，把版本号记在 `~/.sbx/claude-version`。容器里的 claude 不会自动更新，**已有 Task 仍用旧镜像**，`done` 之后重新 `run` 才换上。配置里固定了 `agents.claude.version` 时它会拒绝执行，让你改配置。这是唯一不需要在 git 仓库里执行的命令。
+**`sbx upgrade`** 在 Profile 镜像里 `npm view` 查最新版，重建 Agent 层，把版本号记在 `~/.sbx/claude-version`。容器里的 claude 不会自动更新，**已有 Task 仍用旧镜像**，`done` 之后重新 `run` 才换上。配置里固定了 `agents.claude.version` 时它会拒绝执行，让你改配置。这条命令不要求在 Git 仓库内执行；它目前只升级 Claude，Codex 用 agents.codex.version。
 
 ---
 
@@ -369,13 +381,20 @@ sbx trust             # 确认这个仓库的 .sbx/ 内容（见下）
 
 | 命令 | 参数 | 默认 |
 |---|---|---|
-| `run [task]` | `--base <ref>` | 当前 HEAD |
+| `run [task]` | `--agent claude\|codex` | default_agent（默认 claude） |
+| | `--base <ref>` | 当前 HEAD |
+| | `--jsonl` | false，需 -p |
+| | `--envelope <file\|->` | 无；与 run 任务参数/覆盖 flag 互斥 |
 | | `-d, --detach` | false |
 | | `--fresh` | false（接上次对话） |
 | | `--net open\|allowlist` | 跟随配置 |
 | | `--proxy shared\|dedicated` | 跟随配置 |
 | | `--cloud-mcp` | false（云端 MCP 被拦；只能开不能关） |
 | | `-p, --prompt <text>` | 空（交互模式）；`-` 读 stdin |
+| `admit` | `--envelope <file\|->` | 必填；只读准入 |
+| `version` | `--json` | false |
+| `isolation status` | `--json` | false |
+| `isolation adopt` | 无 | 显式接管本人独占的旧 daemon |
 | `logs <task>` | `-f, --follow` | false |
 | | `-n, --tail <行数>` | 0（全部），`-f` 时默认 20 |
 | `ls` | `--all` | false（只看当前仓库） |
@@ -842,14 +861,14 @@ sbx trust -y       # 不询问直接记下
 - **符号链接按链接本身记录，不跟随**。否则把 `.sbx/Dockerfile` 指到别处，换掉目标文件就能在哈希不变的情况下换掉实际内容。
 - 快照里**存了文本文件的内容**（≤256KB），所以第二次变更能直接给你 diff，不用去翻 git 历史。二进制和超大文件只存哈希：变了会告诉你，但给不出 diff。
 - 记录在 `~/.sbx/trust/<ws>.json`，**按 Workspace 分开**。同一份代码 clone 到两个目录是两个 Workspace，各自确认各自的。
-- 只拦 `sbx run`。**已经在跑的 Task 不受影响**，`attach`、`shell`、`ls` 照常。
+- `run` 和 `admit` 都检查 trust。**已经在跑的 Task 不受影响**，`attach`、`shell`、`ls` 照常。
 - **安全开关只能写在全局层或工作区层**（目前是 `git.protect` 和 `prep.on_drift`）。和"密钥类字段""执行类字段"那种按键名形状猜的红线不同，这一条是一份显式清单：跟着仓库走的配置不该有能力关掉保护，哪怕信任确认会把改动摊开给你看。
 - `sbx net allow --project` 写完 `.sbx/sandbox.toml` 会顺手更新信任记录——这次改动是你让 sbx 做的。但**仅限写之前本来就是已信任状态**，否则会把别人留下的、你还没看过的改动一起放行。
 
 ```toml
 profile       = "web-go"      # 内置 Profile：web-go | py-rust
 # image       = "..."         # 直接用现成镜像，覆盖 profile（M3-2）
-default_agent = "claude"
+default_agent = "claude"     # claude | codex；login 省略参数仍始终选择 claude
 max_running   = 3             # 同时运行的 Task 上限，跨 Workspace 计数
 
 [network]
@@ -909,13 +928,22 @@ protect = true                # 把 .git/hooks 和 .git/config 只读挂载（M4
 # host = "gitlab.corp.example"   # 可选：容器里仍用真实域名访问，保住 SNI 和证书
 # allow_public = false            # 解除"目标必须是私有地址"，会醒目警告
 
+[agents.codex]
+version = "latest"            # 固定版本会改变镜像 hash；新建容器使用新镜像
+# api_key_env = "CODEX_API_KEY" # Codex API key 当前只支持 headless
+
+# 仅个人全局 config.toml 可以写；复制项目模板时请删掉本表
+[isolation]
+boundary = "dedicated-daemon" # shared-daemon 会被拒绝
+# owner = "operator-a"        # 默认由本机身份推导；改名不会迁移既有归属
+
 [agents.claude]
 version      = "latest"       # 写死版本会让 sbx upgrade 拒绝执行
 # api_key_env  = "ANTHROPIC_API_KEY"   # 从宿主机环境变量读，优先于订阅登录
 # api_key_file = "~/.keys/anthropic"   # 或者从文件读。两者只能二选一
 ```
 
-**生效优先级**：命令行 flag（`--net`、`--proxy`）> 配置文件 > 内置默认值。这两个 flag 只改这一次执行，不落盘；`sbx net allow` 落盘。
+**生效优先级**：命令行 flag（`--agent`、`--net`、`--proxy`）> 配置文件 > 内置默认值。这些 flag 只改这一次执行，不落盘；`sbx net allow` 落盘。
 
 **改了配置什么时候生效**：`network.allow` 对运行中的 Task 可以用 `net allow` 热加载；`resources`、`deps.mask`、`git.protect`、`env`、`forward` 的 `host`、`profile`、`network.proxy` 是建容器时定的，要 `done` 后重建；`mode` 和 `upstream` 下次 `run` 时重新渲染 proxy 配置；`services` 和 `forward` 的增减在下次 `run` 时生效（已经起着的伴生容器原样留着）。
 
@@ -1092,6 +1120,8 @@ $ sbx run api
 
 ---
 
+Codex 使用 `[agents.codex]` 的 `api_key_env = "CODEX_API_KEY"` 或 `api_key_file`，同样二选一；当前只支持 headless。交互 Codex 应先 `sbx login codex` 或导入认证。`sbx upgrade` 目前只升级 Claude；更新 Codex 用 `agents.codex.version`，新建 Task 使用更新后的镜像，已有容器不会自动换镜像。
+
 ## 云端 MCP（M2-10a、ADR 0015）
 
 默认**不**让 Task 连 Claude 的云端连接器：代理拦 `mcp-proxy.anthropic.com`，同时在注入的 settings 里写 `disableClaudeAiConnectors: true`（不从源头关掉的话 claude 会反复重试，实测一分钟撞出三百多次 403，R11）。
@@ -1112,6 +1142,8 @@ cloud_mcp = true                 # 一直打开
 ---
 
 ## 跑完告诉我一声：`on_idle` / `on_exit`（M3-10、design §7.2）
+
+下面的 Notification/SessionEnd hook 说明适用于 Claude；Codex 不注册 Claude hooks，当前仅 headless 包装器支持同步 on_exit，不提供同等的交互 on_idle 通知。
 
 ```toml
 # ~/.sbx/config.toml 或 ~/.sbx/workspaces/<ws>.toml —— 不能写在项目层
@@ -1315,5 +1347,7 @@ VM 内存取自 `docker info` 的 `MemTotal`，Docker Desktop 下就是那台 VM
 - **`forward` 没有审计**：squid 管不了裸 TCP，所以 forwarder 的流量不进访问日志、`sbx net denied` 也看不见。补偿手段是"必须逐条显式声明 + 每次 `sbx run` 打印 + 记进 meta"。
 - **prep 的凭据只在 build 期存在**：Task 跑到一半才发现缺一个私有依赖时，它装不上——这是设计，不是缺陷。重跑 `sbx prep build` 再建 Task。
 - 上游代理只支持 http；只有 SOCKS 的宿主机代理需要你自己加一层转发（design §6.4）。
-- **Codex 还没接**（M3-6）：`--agent codex` 和 `default_agent = "codex"` 目前会明确报错。
+- **Codex 已支持**：交互、headless、准确 session 恢复和 fresh；API key 仅支持 headless。宿主机 Codex 配置/skills/sessions 不会随 auth.json 导入。
+- **daemon 是用户隔离边界**：同 daemon 不支持不互信多用户；`[isolation]` 不可由项目/workspace 覆盖。
+- **v1 无产物交付**：agent 退出 0 不保证测试或提交已完成，分支仍需人工审查。
 - 底层镜像必须是 Debian/Ubuntu 系（ADR 0007）。

@@ -1,5 +1,7 @@
 # M1 实施清单：MVP
 
+> 本文是 M1 的历史实现/验收记录。当前 provider、命令、隔离门禁及正式测试以 [commands.md](commands.md)、[automation.md](automation.md)、[testing.md](testing.md) 为准。
+
 | 项 | 内容 |
 |---|---|
 | 目标 | 一个 Task 能在沙箱里无人值守地跑起来；两个 Task 能并行 |

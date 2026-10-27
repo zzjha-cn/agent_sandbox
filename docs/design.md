@@ -2,8 +2,8 @@
 
 | 项 | 内容 |
 |---|---|
-| 状态 | v1.2 —— M0–M4 已实现。本文是运行时的整体设计；边界与前置依赖（prep / services / forward）的完整口径在 [boundary.md](boundary.md) |
-| 日期 | 2026-10-04（M4 后修订于 2026-10-15） |
+| 状态 | v1.3 —— 2026-10-27：Claude/Codex、执行内核及 sbx.execution/v1 已实现。本文是运行时的整体设计；边界与前置依赖（prep / services / forward）的完整口径在 [boundary.md](boundary.md) |
+| 日期 | 2026-10-04（按当前实现修订于 2026-10-27） |
 | 依据 | [CONTEXT.md](CONTEXT.md)（术语表）、ADR 0001–0019（`private/adr/`，未纳入版本控制）、[M0 验证汇总](../spikes/M0-SUMMARY.md) |
 
 ---
@@ -19,7 +19,7 @@ Claude Code 和 Codex 已经承担了大量编码工作。要让它们**放开�
 - **G1 无人值守**：Agent 以免确认模式运行，可以持续数小时。断开终端或崩溃后能接回或续跑。
 - **G2 并行**：同一个仓库上可以同时跑多个 Task，互不干扰。
 - **G3 兼容交互**：可以随时 attach 进去结对、插话纠偏。
-- **G4 可控边界**：文件系统上只暴露代码；网络默认按白名单放行，所有访问都可以审计。
+- **G4 可控边界**：文件系统上只暴露代码；HTTP(S) 默认 open，可配置 allowlist；代理日志可审计，显式 TCP forward 不经过 Squid。
 - **G5 团队可用**：单二进制分发；项目配置提交进仓库，团队成员 clone 下来就能用。
 - **G6 与宿主机无关**：沙箱只是容器，macOS 和 Linux 上行为一致。
 
@@ -177,7 +177,7 @@ Workspace (git 仓库) 1 ──── * Task 1 ──── 1 Sandbox
 | `~/.claude/{skills,agents,commands}`（存在的目录） | `/sbx/host-claude/<name>`，再由 sbx 在 `~/.claude/` 下建软链接指过去 | **ro** | 宿主机配置只读。目录里指向外部的软链接在容器里不可用，`sbx run` 时警告（M1 实现） |
 | `~/.claude/CLAUDE.md` | 每次 `sbx run` **快照复制**到 `gen/host-claude/CLAUDE.md`，`~/.claude/CLAUDE.md` 软链接到 `/sbx/gen/host-claude/CLAUDE.md` | ro | 单文件不能直接 bind mount（M0-3），所以复制；宿主机修改后下次 `sbx run` 生效（M1 实现） |
 | `~/.claude/projects/<key>/memory/`（项目自动记忆） | 不挂载。每次拉起 claude 前**导入**到 `sbx-home` 的同名目录；`sbx memory pull` 展示差异后导回宿主机 | — | 三方比较，冲突不覆盖，`MEMORY.md` 按行合并（ADR 0016） |
-| `~/.codex/{AGENTS.md,...}` | `/home/agent/.codex/...` | **ro** | 同上 |
+| 显式指定的 Codex auth.json | 原子导入 `sbx-home` 的 `.codex/auth.json` | 私有认证文件 | 仅 `sbx login codex --import`，不自动同步宿主 config/AGENTS.md/skills/sessions |
 | 生成目录 `~/.sbx/state/<ws>/<task>/gen/`（hooks 脚本、`settings.sbx.json`） | `/sbx/gen` | ro | **挂载目录，不挂载单个文件**（M0-3：单文件 bind mount 会读到截断的内容）。hooks 通过 `claude --settings /sbx/gen/settings.sbx.json` 注入（M0-5） |
 | `sbx-cache` | `/sbx/cache/{npm,pip,uv,go-mod,go-build,cargo}` | rw | 全局包缓存。**用环境变量显式指向这里**（`npm_config_cache`、`PIP_CACHE_DIR`、`UV_CACHE_DIR`、`GOMODCACHE`、`GOCACHE`、`CARGO_HOME`），不依赖各镜像的默认路径（M0-2：golang 镜像的默认路径是 `/go/pkg/mod`） |
 | `sbx-mise` | `/home/agent/.local/share/mise` | rw | 全局共享的语言运行时 |
@@ -398,20 +398,20 @@ http_access allow u_<id>
 
 | 方式 | 流程 |
 |---|---|
-| 订阅登录（默认） | `sbx login [claude\|codex]`（省略即 claude）：启动一个临时 agent 容器（挂载 `sbx-home`），执行 `claude auth login`，凭据落到 `sbx-home`，所有 Task 共享。这个容器没有 Task，不接 Task 网络和 `sbx-proxy`，走上游代理或直连。`--status / --logout / --force / --console / --email`；Codex 待 M3-6 |
+| 订阅登录（默认） | `sbx login [claude\|codex]`（省略即 claude）：启动一个临时 agent 容器（挂载 `sbx-home`），按 provider 执行 `claude auth login` 或 `codex login --device-auth`，凭据落到 `sbx-home`，所有 Task 共享。这个容器没有 Task，不接 Task 网络和 `sbx-proxy`，走上游代理或直连。`--status / --logout / --force / --console / --email`；Codex 还支持显式导入已有 auth.json，Claude 专属 flags 不用于 Codex |
 | API key | `~/.sbx/config.toml` 里写 `agents.claude.api_key_env = "ANTHROPIC_API_KEY"`（从宿主机环境变量读取）或 `api_key_file = "..."`，启动时以环境变量注入，优先级高于订阅登录 |
 
 实现补充（M2-13）：
 
 - 两个键二选一，同时配直接报错。**配了但取不到值也报错**（环境变量没设、文件不存在或为空），不静默退回订阅登录——否则用户以为在用 API key，账单却记到订阅账号上。
-- 注入用的环境变量名（claude → `ANTHROPIC_API_KEY`）跟登录流程一样是表驱动的（`authCLIs.keyEnv`），加 Agent 时在同一张表里加一行。
+- 注入用的环境变量名（Claude → `ANTHROPIC_API_KEY`，Codex → `CODEX_API_KEY`（仅 headless））跟登录流程一样是表驱动的（`authCLIs.keyEnv`），加 Agent 时在同一张表里加一行。
 - key 会留在容器的 `Config.Env` 里，`docker inspect` 看得到——这是环境变量注入的固有代价。
 - 环境变量只能在建容器时注入。已有容器不会因为改了配置就拿到 key，`sbx run` 会用 `docker inspect` 检出这种情况并提示 `done` 后重建，而不是让 claude 抛一个难懂的认证错误。
 - **claude 看到自定义 key 会弹 "Detected a custom API key … Do you want to use this API key?" 并默认停在 No**，无人值守会卡死（M2-13 实测，这一条设计稿里没有）。preseed 顺带把 key 的后 20 个字符写进 `~/.claude.json` 的 `customApiKeyResponses.approved`（并从 `rejected` 里移除），和 R9 说的"内部状态字段随版本变化"是同一类脆弱点，升级时要冒烟。
 
 **M0-1 结论**：
 - Claude：`claude auth login` 在容器里交互完成（显示 URL，粘贴授权码），**不需要回调端口**；全新容器能复用 volume 里的凭据。备选是 `claude setup-token`，生成长期 token 后作为环境变量注入。
-- Codex：使用 `codex login --device-auth`（设备码）。推迟到 M3-6 再验证。
+- Codex：`sbx login codex` 使用设备码；`--import <目录或文件>` 只导入 auth.json，不重新做浏览器授权。交互和 headless 已实现；Task 以准确 session ID 恢复，fresh 新开对话。
 
 ### 7.2 生成的 Agent 配置
 
@@ -450,6 +450,9 @@ http_access allow u_<id>
 ---
 
 ## 8. 安全模型
+
+当前部署边界是每位可信委托人独占 Docker daemon，可由 rootless daemon 或独立 VM 承载。同 daemon 的不互信多用户不受支持；不同 Task/owner 标签或 SBX_HOME 不能代替 Docker API 权限隔离。`sbx-daemon-ownership` 记录 owner 与 daemon namespace，不挂入 Task，不由 done/clean 删除。旧共享卷需显式 adopt；项目/workspace 不可改 isolation。当前验证不等于所有 rootless/VM 平台均已完成实机验收。
+
 
 ### 8.1 威胁模型
 
@@ -592,36 +595,35 @@ memory = "4g"                 # 覆盖个人全局默认值（默认 3g）
 | `sbx logs <task> [-f] [-n <行数>]` | 查看 `run.log`。直接读宿主机上的文件（state 本来就是 bind mount），**容器停了照样看得到**——headless 跑完容器就停了，这是常态 |
 | `sbx port <task> [port] [--rm]` | 映射到宿主机 `127.0.0.1` 上的随机空闲端口并打印地址（socat 转发容器，R7 已定）。省略 port 时列出已映射的；`--rm` 收回 |
 | `sbx run ... [--net open\|allowlist]` | 本次的网络模式，覆盖配置 |
-| `sbx net denied [task]` / `sbx net allow <host>...` | 见 §6.5。`--project` 待 M2-1 |
+| `sbx net denied [task]` / `sbx net allow <host>...` | 见 §6.5。`--project` 写项目配置并按信任规则更新记录 |
 | `sbx login claude\|codex` | 见 §7.1 |
+| `sbx version --json` | v1 schema 与 capability 发现 |
+| `sbx admit --envelope <file\|->` | 只读准入检查，不预留资源 |
+| `sbx run --envelope <file\|->` | 公开 headless 协议，超时、事件和分类退出码见 [automation.md](automation.md) |
+| `sbx isolation status [--json]` / `sbx isolation adopt` | 独占 daemon 状态与旧卷显式接管；仅个人全局层可配置 isolation |
 | `sbx trust` | 见 §9.3 |
-| `sbx upgrade` | 重建 Agent 层；已有的 Task 下次启动时生效 |
+| `sbx upgrade` | 升级 Claude 并重建 Agent 层；仅新建容器使用新镜像。Codex 通过 agents.codex.version 固定/更新 |
 | `sbx memory pull [--yes]` | 把沙箱里新记的项目记忆导回宿主机：先展示差异，确认后写入（ADR 0016） |
 | `sbx done <task>` | 删除容器、Task 网络、依赖 volume、worktree、state，以及共享 proxy 上的凭据和片段；保留 `sbx/<task>` 分支 |
 | `sbx drop <task>` | 同上，并删除分支；需要输入 task 名确认 |
-| `sbx doctor [--quick] [--strict]` | 表驱动的 8 项检查：docker、VM 内存（R10）、上游代理连通性、`sbx-proxy` 健康（R8）、登录态、信任状态、通知配置、首次启动冒烟（R9）。每项给 `✓ ! ✗ -` 和一行修复建议。**有 fail 才非 0 退出**，warn 不算（否则脚本里都得 `\|\| true`）；`--strict` 下 warn 也算 |
+| `sbx doctor [--quick] [--strict]` | 表驱动检查（另含 isolation、disk、dd-proxy、reach）：docker、VM 内存（R10）、上游代理连通性、`sbx-proxy` 健康（R8）、登录态、信任状态、通知配置、首次启动冒烟（R9）。每项给 `✓ ! ✗ -` 和一行修复建议。**有 fail 才非 0 退出**，warn 不算（否则脚本里都得 `\|\| true`）；`--strict` 下 warn 也算 |
 
 ### 10.1 `sbx run` 主流程
 
+```text
+CLI：输入/配置/flag → trust → Request（envelope 先严格解码）
+Service：Task 锁 → inspect → daemon/provider/活动任务/并发准入
+  ├─ 新建：worktree → image/prep → 状态快照 → proxy/network/sidecar
+  │        → volumes/seeding → gen → container/CA → meta → AgentStarter
+  └─ 恢复：meta/prep → proxy/sidecar → gen 快照 → start → AgentStarter
+AgentStarter：provider 认证 → 当前 Task 的会话/fresh → tmux 启动 → readiness
+Service：headless wait / 超时取消 stop → 事件与结果；交互返回 attach/detach
+CLI：展示结果或进入 TTY
 ```
-1. 解析 Workspace：git rev-parse --show-toplevel → ws id
-2. 加载 4 层配置并合并、校验
-3. 信任检查：.sbx/ 哈希 ≠ trust 记录 → 打印 diff，退出
-4. Task 已存在？
-     ├─ running/idle → 直接 attach（或在 -p 模式下拒绝）
-     └─ stopped      → 跳到第 9 步
-5. 并发检查：running+idle 的 Task 数 ≥ max_running → 报错退出
-6. 准备 worktree：git worktree add ~/.sbx/worktrees/<ws>/<task> -b sbx/<task> <base>
-   （main Task 跳过这一步，直接使用主工作目录）
-7. 确保派生镜像存在：计算 hash，不存在则构建 Profile 再叠加 Agent 层
-8. 创建 Task 网络、依赖 volume；按 proxy 部署方式：
-     ├─ shared    → 确保 sbx-proxy 在运行；生成凭据，写入 passwd 和 tasks/allow 片段；
-     │              network connect 到 Task 网络；squid -k reconfigure
-     └─ dedicated → 创建 squid sidecar（写入白名单和上游配置）
-   然后创建 agent 容器（注入对应的 HTTP(S)_PROXY）
-9. 启动容器；docker exec 在 tmux 会话里拉起 Agent（headless 模式下直接执行并写 run.log）
-10. 写 state/meta.json，然后 attach（或返回）
-```
+
+Provisioner 在资源创建前登记带本次 token 的回滚，代理接入保留可恢复快照；创建失败保留 worktree，恢复失败保护旧 Task 数据。清理在独立的有界 context 中执行，主错误和清理错误分开。meta 在 agent 启动之前写，失败后恢复旧快照，不能保留覆盖后丢失旧数据的状态。
+
+公开 v1 不声明 artifact delivery，成功不等于有提交或已合并。完整机器契约以 [automation.md](automation.md) 及 `version --json` 为准。主容器丢失但旧 forward 存在时拒绝破坏性重建；先确认旧状态，再 done/run。
 
 ---
 
@@ -649,6 +651,9 @@ memory = "4g"                 # 覆盖个人全局默认值（默认 3g）
 core/                  # Go module sandx（M1 实际位置）
   cmd/sbx/main.go
   internal/
+    execution/   # 服务编排、Provisioner、AgentStarter、回滚/等待/停止
+    protocol/    # sbx.execution/v1 信封、schema、事件与结果
+    isolation/   # daemon namespace/owner 与显式 adopt
     config/      # 4 层加载、合并、校验
     trust/       # 哈希、快照、diff
     workspace/   # ws id、worktree 管理

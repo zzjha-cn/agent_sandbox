@@ -1,7 +1,9 @@
 # sbx 实现现状：设计与流程
 
-> 对应代码：`core/`（M1 完成，含交互验收后的 4 个修正）。本文只写**代码现在实际怎么工作**。
+> 对应代码：`core/`（2026-10-27；Claude/Codex、执行内核及 v1 协议已实现）。本文只写**代码现在实际怎么工作**。
 > 目标设计见 [design.md](design.md)，按场景逐步讲解见 [walkthrough.md](walkthrough.md)。决策依据 `private/adr/` 和验收记录 `private/m1-acceptance.md` 不纳入版本控制，只在本地可见。
+
+公开用法见 [commands.md](commands.md)、[automation.md](automation.md)；正式业务测试见 [testing.md](testing.md)。文中的 Claude hooks/记忆为 provider 专属实现，Codex 的状态与会话由其包装器记录。
 
 **阅读路线**：
 
@@ -154,7 +156,7 @@ Task 属于一个 **Workspace**（ws），也就是一个主仓库。在 worktre
 ### 4.3 Agent 怎么跑起来
 
 - 容器的主进程是 `tini → sleep infinity`，只负责让容器保持运行。
-- claude 由 sbx 用 `docker exec` 在 tmux 会话 `agent` 里启动，所以人可以随时 attach 进去，离开后它继续运行（ADR 0004）。
+- Claude 或 Codex 由 sbx 用 `docker exec` 在 tmux 会话 `agent` 里启动，所以人可以随时 attach 进去，离开后它继续运行（ADR 0004）。
 - 启动前先运行预置脚本，跳过首次启动的各种对话框；启动后做冒烟检查。具体步骤见 §7.3。
 
 ---
@@ -201,7 +203,7 @@ agent 容器 ──(Task 网络 --internal)──▶ sbx-proxy:3128 ──(sbx-e
 
 ### 6.1 Agent 状态
 
-`settings.sbx.json` 注册了 6 个 hooks，都调用 `status.sh <state>`。脚本原子写入 `/sbx/state/status.json`，也就是宿主机上的 `state/<ws>/<task>/status.json`，并追加一行到 `events.log`。
+Claude 的 `settings.sbx.json` 注册了 6 个 hooks，都调用 `status.sh <state>`。脚本原子写入 `/sbx/state/status.json`，也就是宿主机上的 `state/<ws>/<task>/status.json`，并追加一行到 `events.log`。
 
 | 事件 | state |
 |---|---|
@@ -210,6 +212,8 @@ agent 容器 ──(Task 网络 --internal)──▶ sbx-proxy:3128 ──(sbx-e
 | SessionEnd | exited |
 
 同一个文件里还有 `disableClaudeAiConnectors: true`（`network.cloud_mcp` 为 false 时，也就是默认）：代理拦掉云端 MCP 之后 claude 会反复重试，这个键从源头关掉连接器的拉取。
+
+Codex 不依赖 Claude hooks：headless 从原生 thread.started 记录当前 Task 的 session ID，包装器写 CodexStart/CodexExit 和 run.exit。交互时记录启动时间并在退出时按准确 worktree 匹配会话；不从共享身份卷猜“全局最近会话”。
 
 ### 6.2 `sbx ls`
 
@@ -253,40 +257,37 @@ claude 的自动记忆在宿主机上存于 `~/.claude/projects/<key>/memory/`�
 
 | 操作 | ① 代码 | ② 运行 | ③ 网络 | ④ 状态 |
 |---|---|---|---|---|
-| run 新建 | 建 worktree 和分支 | 确保镜像；建依赖 volume 和容器；启动 Agent | 确保代理；建 Task 网络；接入代理 | 写 meta 和生成文件；导入记忆 |
+| run 新建 | 建 worktree 和分支 | 确保镜像；建依赖 volume 和容器；启动 Agent | 确保代理；建 Task 网络；接入代理 | 写 meta 和生成文件；导入 Claude 记忆 |
 | stop | 不变 | 停容器 | 没有运行中的 Task 时停代理 | 不变 |
-| run 恢复 | 不变 | 启动容器；启动 Agent | 启动代理；重新接入（token 不变） | 重新生成文件；导入记忆 |
+| run 恢复 | 不变 | 启动容器；启动 Agent | 启动代理；重新接入（token 不变） | 重新生成文件；导入 Claude 记忆 |
 | done | 删 worktree，留分支 | 删容器和依赖 volume | 摘除；删网络；没有运行中的 Task 时停代理 | 删 state；提醒导回记忆 |
 
 ### 7.2 run 新建
 
-按下面的顺序建立资源，最后启动 Agent。容器要放在最后一步创建，因为它需要代理地址和所有挂载源都已就绪。每一步新建的资源都登记到回滚栈。任何一步失败，就逆序清理本次新建的资源，worktree 保留，并在报错里说明失败在哪一步。
+execution.Service 负责锁、inspect/admit、create/resume、wait/stop 及事件/结果，Provisioner 负责下面的阶段顺序；CLI 只组合适配器并处理终端展示。
+
+按下面的顺序建立资源，最后启动 Agent。容器要放在最后一步创建，因为它需要代理地址和所有挂载源都已就绪。创建前登记回滚，以唯一 sbx.provision token 限定本次所有权；不能按名字误删旧资源。任何一步失败，就逆序清理本次新建的资源，worktree 保留，并在报错里说明失败在哪一步。
 
 1. **worktree**（§3）
 2. **镜像**：hash 命中就跳过，否则构建（§4.1）
 3. **state 目录**
-4. **代理**：`Ensure`，创建 internal 网络，`AttachTask`，拿到代理地址（§5）
+4. **代理与 sidecar**：`Ensure`、internal 网络、proxy attachment、services/forwards。dedicated 先 create，再连接 egress，再 start，避免 Squid 启动时缓存上游 DNS 失败
 5. **volume**：共享 volume 第一次创建时 chown 成 agent 用户；每个依赖遮盖目录建一个 volume
 6. **生成文件**：hooks、settings、CLAUDE.md 快照
 7. **容器**：`docker run -d`，带上挂载表（§4.2）、代理地址、git 身份和资源上限
-8. **meta.json**：在启动 Agent 之前写，这样 Agent 启动失败时还能走恢复流程
+8. **meta.json**：在启动 Agent 之前写；失败回滚时恢复旧快照，无旧文件则移除
 9. **启动 Agent**（§7.3）
 
 ### 7.3 启动 Agent（新建和恢复共用）
 
-1. tmux 会话已经存在，并且 claude 还在跑（`status.json` 不是 exited）：直接返回。
-2. 预置脚本（以 agent 用户执行，幂等）：
-   - 把"已完成引导""信任此目录""跳过危险模式确认"写进 claude 配置；
-   - 把 `~/.claude/{CLAUDE.md,skills,agents,commands}` 软链接到只读挂载的目录。
-3. 导入项目记忆（§6.3）。失败只警告，不中断。
-4. `claude auth status`：没登录就打印登录命令后退出。命令里的代理参数取自 `network.upstream`。
-5. 在 tmux 里启动 claude。会话不存在就 `new-session`，会话还在但 claude 已退出就 `respawn-window -k`（复用同一个窗口，已经 attach 的人不用重进）。
-   - 实际跑的是 `claude … ; printf '[sbx] claude 已退出…'; exec bash -l`。**claude 退出后窗口里留一个 login shell**，否则窗口关闭会连带结束 tmux 会话，Task 就再也 attach 不回去（§7.6）。
-   - 这个 Task 以前跑过 claude（`events.log` 存在）时默认带 `--continue`，接上上次对话；`sbx run --fresh` 可以开新的一段。
-6. 冒烟检查，最多 30 秒：
-   - 画面上出现已知对话框：报错，附上最后 20 行画面。这说明预置字段可能随 claude 版本变了。
-   - `status.json` 变成 exited，或者画面出现退出提示：报错，说明 claude 启动后立刻退出了。
-   - `status.json` 出现 `SessionStart`：成功。
+`execution.AgentStarter` 解析 provider，处理认证、会话、fresh 和 readiness：
+
+1. 已有活动 tmux 会话时复用；headless 并发提交在准入阶段已拒绝。
+2. Claude 运行 preseed 并导入项目记忆；Codex 不使用这套预置和记忆导入。
+3. 按项目版本文件安装运行时，再检查 provider 登录或配置的 API key。Codex API key 只支持 headless。
+4. Claude 默认 `--continue`；Codex 按 Task 的 `codex-session` 精确恢复。fresh 忽略旧会话，仅在新一轮启动时生效。
+5. tmux 不存在时 new-session，旧 agent 已退出时 respawn。交互退出后留下 shell；headless 包装器记录原始 agent code 并停止容器。
+6. readiness 检查受执行 context 控制。Claude 读 SessionStart，Codex 读 CodexStart；短 headless 完成记录也算已启动。超时或取消停止真实执行，不只结束宿主等待。
 
 ### 7.4 run 恢复
 
@@ -298,7 +299,7 @@ claude 的自动记忆在宿主机上存于 `~/.claude/projects/<key>/memory/`�
 4. 容器停止了就启动。
 5. 启动 Agent（§7.3）。
 
-整个过程约 3 秒。
+恢复失败会停止本次启动的执行、移除本次新建 sidecar，并恢复旧 gen/会话标记及 proxy 配置；旧容器、依赖数据和 meta 保留。清理采用独立 context，清理错误随主错误返回。
 
 ### 7.5 其他命令
 
@@ -367,20 +368,13 @@ mask = ["node_modules"]
 version = "latest"
 ```
 
-### 9.2 登录与升级
+### 9.2 登录、归属与升级
 
-- **登录**：所有 Task 共用 `sbx-home` 里的登录态，只需登录一次。M1 要手动执行下面的命令，M2 会做成 `sbx login`：
+`sbx login [claude|codex]` 管理共享 sbx-home 中的 provider 身份；省略名称始终为 Claude。Codex 支持设备码或显式 `--import <目录或auth.json>`，不复制宿主 config/sessions/skills。登录由人完成，Task 复用认证。
 
-  ```
-  docker run -it --rm -e HOME=/home/agent -v sbx-home:/home/agent \
-    [-e HTTPS_PROXY=<upstream>] sbx/web-go:<hash> claude auth login
-  ```
+`isolation.Guard` 在操作前验证独占 daemon。owner 由本机身份推导或个人全局配置指定，namespace 绑定 daemon ID；归属保存在不挂入 Task 的 sbx-daemon-ownership。旧共享卷需显式 adopt，不能通过换 SBX_HOME 逃逸归属检查。项目和 workspace 层禁止设置 isolation。
 
-- **升级**：容器里的 claude 不会自更新。`sbx upgrade` 的过程：
-  1. 用 npm 查询最新版本，记到 `~/.sbx/claude-version`；
-  2. 重建 Agent 层。
-
-  只有新建的 Task 会用新版本，已有 Task 要 done 后重新 run。
+`sbx upgrade` 只查询/升级 Claude，记录 claude-version 并重建镜像；固定版本时要求先改配置。Codex 版本由 agents.codex.version 控制。新建容器使用新镜像，旧 Task 的容器不会原地升级。
 
 ### 9.3 代码结构
 
@@ -389,7 +383,10 @@ core/
 ├─ cmd/sbx/          入口
 ├─ assets/           go:embed：Dockerfile、entrypoint、hooks、白名单、squid 模板
 └─ internal/
-    ├─ cli/          命令；把下面各包串成 §7 的流程
+    ├─ cli/          命令、配置/输入边界、基础设施适配器与终端展示
+    ├─ execution/    生命周期编排、回滚、认证/会话启动、等待与停止
+    ├─ protocol/     公开 sbx.execution/v1 的信封、schema、事件和结果
+    ├─ isolation/    daemon namespace/owner、旧卷接管与操作门禁
     ├─ workspace/    ① git：解析 ws、worktree 增删、dirty 检查
     ├─ image/        ② 镜像 hash 与构建
     ├─ agent/        ② 挂载、环境变量、预置、tmux、冒烟检查
@@ -398,10 +395,10 @@ core/
     ├─ memory/       ④ 记忆三方比较、tar 进出容器
     ├─ config/       配置
     ├─ docker/       docker CLI 封装；RunSpec → 参数（纯函数）
-    └─ fsutil/       原子写
+    └─ fsutil/       原子写与保留状态快照
 ```
 
-依赖方向：`cli` → 各业务包 → `docker` / `fsutil`。命令参数和配置文件的渲染都写成纯函数，用 golden 文件测试。
+依赖方向：`cli` 组合 `execution` 与 `protocol`，`execution` 调用领域/基础设施适配器；`docker` 不反向依赖 Task 或 CLI。命令参数和配置文件的渲染都写成纯函数，用 golden 文件测试。
 
 ---
 
@@ -409,21 +406,10 @@ core/
 
 ### 10.1 测试
 
-| 层 | 命令 | 覆盖 |
-|---|---|---|
-| 单元 + golden | `make test` | 命名、配置、状态推导、docker 参数、squid 渲染、apr1、预置幂等、记忆比较 |
-| Docker 集成 | `make test-docker` | 镜像内容；shared 的代理隔离矩阵（200/403/407）、热加载、日志轮转；dedicated 的白名单、策略拦截、生命周期 |
-| 端到端 | `make e2e` | 两个并行 Task 由真实的 claude 各提交一次，覆盖 §7 全流程和 §8 的检查，共 32 项 |
-| 真实仓库 | 手动 | 交互模式已通过；无人值守（离开 30 分钟以上）待做 |
+确定性入口为 `go -C core test ./...`、`go -C core vet ./...`；执行、proxy 与协议可跑 race。受控真实 Docker 测试通过 SBX_REAL_DOCKER_E2E 显式启用，完整旧 build-tag 集成为 make test-docker。详细命令、镜像前提和模型调用边界见 [testing.md](testing.md)。
 
-### 10.2 还没做
+开发期验收覆盖真实 Codex headless、准确恢复/fresh/隔离、模型长工具超时/信号、PTY attach/detach、main 及资源部分创建回滚。这些结果不代替你的业务项目测试；正式测试应保留需求判据、代码差异、项目测试和清理证据。
 
-| 项 | 计划 |
-|---|---|
-| Codex、`sbx port`、`sbx drop` | M3-6、M3-11、M3-12 |
-| 更多 Profile、自定义镜像、mise | M3-1、M3-2、M3-3 |
-| 发布物（交叉编译、安装说明） | M3-14、M3-15 |
+### 10.2 当前边界
 
-M2 全部完成。M3 的无人值守主线也已完成：headless（`sbx run -p`）与 `sbx logs`、`sbx ls` 的 DENIED 列和 `--all`、`on_idle`/`on_exit` 通知、`sbx doctor`。
-
-已知现象：claude 画面会提示 `Remote managed settings failed to load (401)`，暂不影响使用，继续观察。
+Claude/Codex、Profile/自定义镜像/mise、port/drop、prep/services/forwards、发布构建和执行协议均已实现。尚不提供自动 merge/push、产物 sink 交付或 master-worker 常驻控制面。同 daemon 的不互信多用户隔离不受支持。工具/MCP 的通用受控接入仍是单独需求，不等于打开 Claude 云端连接器就已实现。

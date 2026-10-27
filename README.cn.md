@@ -1,7 +1,7 @@
 <h1 align="center">sbx</h1>
 
 <p align="center">
-  在 Docker 沙箱里跑 Claude Code —— 跳过权限确认，也不用拿自己的机器冒险。
+  在 Docker 沙箱里跑 Claude Code / Codex —— 跳过权限确认，也不用拿自己的机器冒险。
 </p>
 
 <p align="center">
@@ -13,7 +13,7 @@
 <p align="center">
   <img alt="Go" src="https://img.shields.io/badge/Go-1.27-00ADD8?logo=go&logoColor=white">
   <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue">
-  <!-- <img alt="Status" src="https://img.shields.io/badge/status-M1%20%2B%20M2%20%E9%83%A8%E5%88%86-orange"> -->
+  <img alt="Status" src="https://img.shields.io/badge/status-Claude%20%2B%20Codex-brightgreen">
 </p>
 
 ---
@@ -46,7 +46,7 @@ fix-login   running  sbx/fix-login   1      3f +48 -6    8s ago       ~/.sbx/wor
 
 ## 快速开始
 
-**前提**：Docker Desktop 已启动（建议给到 10GB 内存）、Go 1.27、一个 Claude 订阅。
+**前提**：Docker Desktop 已启动（建议给到 10GB 内存）、Go 1.27、一个 Claude Code 或 Codex 支持的账号。
 
 ### 1. 装
 
@@ -59,6 +59,8 @@ make build
 ln -sf "$PWD/bin/sbx" /usr/local/bin/sbx   # 可选
 sbx --version
 ```
+
+不建软链时，后面的 sbx 命令应换成 `core/bin/sbx` 的绝对路径；[测试指南](docs/testing.md) 演示了固定使用同一个构建的方法。
 
 `sbx` 是单个二进制，只调用 `docker` 和 `git`，所以一个软链就是全部的安装过程。
 
@@ -81,23 +83,39 @@ sudo install -m 0755 sbx /usr/local/bin/sbx
 upstream = "http://host.docker.internal:7890"   # 留空表示直连
 ```
 
-### 3. 登录（只需一次，之后所有 Task 共享）
+### 3. 检查 daemon 归属并登录
+
+每位委托人使用独占 Docker daemon；团队成员各用独立 daemon 或 VM。同一 daemon 上的 Task 名和标签不能隔离不同用户。
 
 ```bash
-sbx login            # 在一个临时容器里打开 claude 的登录流程
-sbx login --status   # 现在登录的是哪个账号
+sbx isolation status --json
+# 仅在升级旧版本、尚未登记且确认这个 daemon 归自己独占时执行：
+sbx isolation adopt
 ```
 
-照提示打开链接、粘贴授权码。凭据存在 volume `sbx-home` 里，所有 Task 共享，不在任何 Task 内部。`sbx login --logout` 清掉，`--force` 换账号。
+空 daemon 首次资源操作自动登记；旧卷未接管或 owner 不匹配时会拒绝执行。`SBX_HOME` 只分开宿主机配置，不隔离共享卷或 daemon 归属。按选用的 provider 登录：
+
+```bash
+sbx login claude
+sbx login claude --status
+# 或复用本机 Codex 的 auth.json：
+sbx login codex --import ~/.codex
+sbx login codex --status
+# 没有本机 auth.json 时：sbx login codex（设备码登录）
+```
+
+Claude 按提示打开链接并粘贴授权码；Codex 导入只复制 `auth.json`，不需要再次浏览器授权，也不复制配置或会话。凭据存在 `sbx-home` 里，同一 daemon 的 Task 共用。`sbx login <provider> --logout` 退出对应 provider，替换已有 Codex 导入凭据需要 `--force`。省略 provider 的 `sbx login` 始终选择 Claude。
 
 ### 4. 跑第一个任务
 
 ```bash
 cd ~/code/shop
-sbx run fix-login
+sbx run fix-login                 # 默认 Claude
+# 不改配置，临时使用 Codex：
+sbx run --agent codex codex-fix
 ```
 
-就这样。worktree、分支、容器、网络、代理凭据都建好了，Claude Code 已经在里面等你。
+就这样。worktree、分支、容器、网络、代理凭据都建好了，选定的 Agent 已经在里面等你。`--agent` 只覆盖本次；恢复同一 Task 时仍须选择原 provider。要默认使用 Codex，在配置顶层设置 `default_agent = "codex"`。
 
 ## 工作流程
 
@@ -111,7 +129,7 @@ sbx done fix-login             # 收工：拆容器，留分支
 git merge sbx/fix-login        # 合并（sbx 不会自动合并）
 ```
 
-**`Ctrl-D` 是退出 Claude，不是离开。** 但退出后 tmux 会话还在，`sbx run` 可以重新拉起并接上上次对话 —— 手滑不丢东西。
+**`Ctrl-D` 是退出 Agent，不是离开。** 但退出后 tmux 会话还在，`sbx run` 可以重新拉起并接上上次对话 —— 手滑不丢东西。
 
 想让改动直接落在仓库目录里、宿主机 `git status` 立刻可见？**省略 task 名**：`sbx run` 会用 main Task 直接操作仓库根，不建 worktree 也不建分支。代价和适用场景见[文档](docs/commands.md#我想直接在仓库目录里干活main-task)。
 
@@ -121,7 +139,7 @@ git merge sbx/fix-login        # 合并（sbx 不会自动合并）
 |---|---|
 | **Workspace** | 一个 git 仓库，`cd` 进去自动识别 |
 | **Task** | 一条工作线 = 一个容器 + 一棵 worktree + 一条分支 `sbx/<task>` |
-| **main Task** | 省略 task 名的特例：直接用仓库根，不隔离 |
+| **main Task** | 省略 task 名的特例：直接用仓库根，不单独建 worktree 或分支 |
 
 容器里能看到的只有：这棵 worktree、你仓库的 `.git` 目录、共享的 `sbx-home`（登录态 + Claude 配置）、`sbx-cache`（包管理器缓存）、只读的 `/sbx/gen`（hooks、settings、状态栏）。**宿主机其余目录一概没挂。**
 
@@ -195,6 +213,7 @@ to   = "db.corp.example:5432"   # 只写 `to = 5432` 表示你本机的端口
 `~/.sbx/config.toml`，全部字段可选：
 
 ```toml
+default_agent = "claude"     # claude | codex
 profile = "web-go"            # 内置 Profile：web-go | py-rust
 # image = "ghcr.io/me/dev:1"  # 或者直接用现成镜像，覆盖 profile
 
@@ -204,7 +223,9 @@ mode      = "open"            # open | allowlist
 allow     = []                # 追加到内置白名单
 
 [resources]
-cpus = 2 ; memory = "3g" ; pids = 1024
+cpus = 2
+memory = "3g"
+pids = 1024
 
 [deps]
 mask = ["node_modules"]       # 每项挂一个 volume 遮住，不污染宿主机
@@ -217,7 +238,7 @@ sbx config show    # 生效配置，外加每个值来自哪一层
 sbx trust          # 确认这个仓库的 .sbx/ 内容
 ```
 
-项目层跟着仓库走，所以**密钥类字段和绝对路径在那一层会直接报错**。也正因为它会被 `git pull` 改掉，`.sbx/` 和上次确认的内容不一致时 `sbx run` 会停下来给你看 diff；没有 `.sbx/` 的仓库完全碰不到这套东西。字段全集和改完什么时候生效：[docs/commands.md](docs/commands.md#配置四层adr-00090010design-91)。
+项目层跟着仓库走，所以**密钥类字段和绝对路径在那一层会直接报错**。也正因为它会被 `git pull` 改掉，`.sbx/` 和上次确认的内容不一致时 `sbx run` 会停下来给你看 diff；没有 `.sbx/` 的仓库完全碰不到这套东西。字段全集和改完什么时候生效：[docs/commands.md](docs/commands.md#配置四层adr-0009design-91)。
 
 ## 用你自己的镜像
 
@@ -231,7 +252,7 @@ image = "ghcr.io/me/devbox:2026-10"   # 1. 直接用现成镜像
 profile = "web-go"                    # 3. 内置 Profile（默认）
 ```
 
-不管选哪条，**你只需要提供语言环境**。sbx 会自动在上面叠一层 Agent 层——tini、tmux、git、ripgrep、Node、claude-code、mise，以及一个 UID 和你一致的 `agent` 用户——claude 不用你自己装。镜像 tag 是输入内容的 hash，底换了会自动重建。
+不管选哪条，**你只需要提供语言环境**。sbx 会自动在上面叠一层 Agent 层——tini、tmux、git、ripgrep、Node、Claude Code、Codex、mise，以及一个 UID 和你一致的 `agent` 用户——Agent CLI 不用你自己装。镜像 tag 是输入内容的 hash，底换了会自动重建。
 
 动手前有两件事要知道：
 
@@ -253,7 +274,7 @@ profile = "web-go"                    # 3. 内置 Profile（默认）
 2. 队友 clone 下来执行 `sbx trust`，看一眼 sbx 摊开给他的内容。
 3. `sbx run`。
 
-**这个文件里写不了的东西**（红线，是强制的不是建议）：任何像凭据的字段、任何绝对路径、任何会在容器里执行的命令（`on_idle` 这类），以及一份显式登记的安全开关与整节（`git.protect`、`prep.on_drift`、`[prep.secret]`、`[[forward]]`）。一个仓库不该决定你的凭据从哪来、你的沙箱里跑什么，也不该决定你这台机器往哪儿连。
+**这个文件里写不了的东西**（红线，是强制的不是建议）：任何像凭据的字段、任何绝对路径、任何会在容器里执行的命令（`on_idle` 这类），以及一份显式登记的安全开关与整节（`git.protect`、`prep.on_drift`、`[prep.secret]`、`[[forward]]`、仅全局可设的 `[isolation]`）。一个仓库不该决定你的凭据从哪来、你的沙箱里跑什么，也不该决定你这台机器往哪儿连。
 
 ## 出问题了看这里
 
@@ -263,6 +284,8 @@ profile = "web-go"                    # 3. 内置 Profile（默认）
 | Agent 说某个下载失败了 | allowlist 模式下被代理拦了。`sbx net denied` 看拦了什么，`sbx net allow <host>` 放行并对运行中的 Task 热加载 |
 | `sbx run` 停下来让你登录 | `sbx-home` 里的凭据过期了。`sbx login` 一次，所有 Task 共享 |
 | `sbx run` 卡在 `.sbx/` 上 | 项目配置被改过。它会把改动打出来——看完执行 `sbx trust` |
+| daemon 归属被拒绝 | `sbx isolation status --json`；只接管本人独占且未登记的旧 daemon，其他用户使用独立 daemon |
+| Codex Task 恢复时提示 provider 不符 | `sbx run --agent codex <task>`，或把 default_agent 设为 codex；不能切换已有 Task 的 provider |
 | 说不清哪里不对 | `sbx doctor`。docker、代理、登录、信任、通知、Agent 首次启动状态都查一遍，每个问题给一条可以直接复制的修复命令 |
 
 ## 文档
@@ -270,6 +293,8 @@ profile = "web-go"                    # 3. 内置 Profile（默认）
 | 文档 | 讲什么 |
 |---|---|
 | [项目主页](https://zzjha-cn.github.io/agent_sandbox/) | **从这里开始**：日常场景、架构图、一问一答，网页版（英文） |
+| [automation.md](docs/automation.md) | 机器调用、任务信封、超时/取消和退出码 |
+| [testing.md](docs/testing.md) | 正式测试步骤、验收清单及测试前提 |
 | [commands.md](docs/commands.md) | **命令手册**：每条命令、每个参数、配置字段、环境变量 |
 | [walkthrough.md](docs/walkthrough.md) | 一个连续场景从头到尾：每条命令背后 Docker / git / squid 各做了什么 |
 | [architecture.md](docs/architecture.md) | 组件怎么拼的，数据往哪流 |
@@ -278,20 +303,24 @@ profile = "web-go"                    # 3. 内置 Profile（默认）
 
 ## 项目状态
 
-**M1、M2、M3（Codex 除外，M3-6）和 M4 的大部分都已完成。** 可用命令：`run / attach / shell / stop / ls / path / done / drop / logs / port / net / memory / login / config / trust / prep / doctor / upgrade`。
+**Claude Code、Codex、执行层重构和 v1 机器协议已实现。** 可用命令：`run / admit / version / isolation / attach / shell / stop / ls / path / done / drop / logs / port / net / memory / login / config / trust / prep / doctor / upgrade`。
 
-已知边界：没有 `sbx merge`；Codex 还没接（M3-6）；上游代理只支持 http（只有 SOCKS 的话要自己加一层转发）；底层镜像必须是 Debian/Ubuntu 系；伴生服务和 forward 都按名字访问，不是 `localhost`。另见[明确不提供](#明确不提供)。
+已知边界：没有 `sbx merge`；不自动交付产物，也不支持同 daemon 上的不互信多用户隔离；上游代理只支持 http（只有 SOCKS 的话要自己加一层转发）；底层镜像必须是 Debian/Ubuntu 系；伴生服务和 forward 都按名字访问，不是 `localhost`。另见[明确不提供](#明确不提供)。
 
 路线图见 [implementation-checklist.md](docs/implementation-checklist.md)。
 
 ## 开发
 
+以下命令在 `core/` 下运行：
+
 ```bash
 make test          # 单元测试
 make test-docker   # 带 docker 的集成测试（首次会构建镜像，要几分钟）
 make lint          # golangci-lint；没装则退回 go vet + gofmt
-make e2e           # 端到端验收（需要已登录）
+make e2e           # 旧版 Claude 端到端验收（需要已登录）
 ```
+
+需要机器调用或超时控制时，使用 `sbx version --json`、`sbx admit --envelope request.json` 和 `sbx run --envelope request.json`。信封从配置选择 provider，不接受 `--agent`。详见 [自动化手册](docs/automation.md) 和 [正式测试指南](docs/testing.md)。
 
 加 `-v / --verbose` 可以打印执行的每一条 docker 和 git 命令。
 

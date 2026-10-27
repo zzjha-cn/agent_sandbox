@@ -1,6 +1,6 @@
 # sbx — AI 编码 Agent 沙箱运行时
 
-> 状态：M1（MVP）已实现（2026-10-06）。实现现状见 [architecture.md](architecture.md) 和 [walkthrough.md](walkthrough.md)，完整设计见 [design.md](design.md)，实施清单见 [implementation-checklist.md](implementation-checklist.md)（M1 详细清单见 [m1-checklist.md](m1-checklist.md)，M4 见 [m4-checklist.md](m4-checklist.md)），决策详见 [private/adr/](private/adr/)。
+> 当前行为按 2026-10-27 代码更新：Claude Code / Codex、执行服务和公开 v1 协议已实现。入口见 [命令手册](commands.md)、[自动化手册](automation.md)、[测试指南](testing.md)，实现说明见 [architecture.md](architecture.md)，整体设计见 [design.md](design.md)。旧里程碑和 ADR 是历史决策，不替代当前命令帮助。
 
 ## 定位
 
@@ -9,14 +9,14 @@
 - **主场景**：无人值守的自主执行（长时间运行、多任务并行，例如在会话中跑 `/auto-it` 循环）。
 - **兼容场景**：交互式结对编程。
 - **不做**：远程 / 云端 / 多租户共享运行环境。团队成员各自在本机使用。
-- **原则**：沙箱只是容器，不依赖宿主机操作系统特性；`sbx` 在 macOS 和 Linux 宿主机上行为一致。
+- **原则**：沙箱只是容器，不依赖宿主机操作系统特性；支持 macOS/Linux 部署；平台网络、权限和 rootless/VM 的行为仍需在目标环境验收。
 
 ## 术语表
 
 | 术语 | 定义 |
 |---|---|
 | **Workspace** | 一个 git 仓库，即宿主机上的本地代码目录。 |
-| **Task** | Workspace 上的一个工作单元，拥有独立的 git worktree 和分支。交互模式使用默认 Task `main`，直接挂主工作目录。 |
+| **Task** | Workspace 上的一个工作单元，拥有独立的 git worktree 和分支。省略任务名使用 main，直接挂主工作目录；命名 Task 同时支持交互与 headless。 |
 | **Sandbox** | Task 的运行时容器，生命周期跟随 Task：可停止 / 恢复，Task 收尾时销毁。 |
 | **Profile** | 语言环境镜像（Dockerfile 或镜像名），只负责语言运行时和系统依赖。内置 `web-go`、`py-rust`。 |
 | **Agent 层** | `sbx` 自动叠加在 Profile 之上的固定层：claude / codex CLI、tmux、git、非 root 用户、proxy 环境变量、入口脚本、状态 hooks。 |
@@ -27,7 +27,7 @@
 | **sbx-home** | 所有 Task 共享的 volume，存放 Agent 登录态、会话历史和缓存。 |
 | **依赖遮盖** | 用每个 Task 独立的 named volume 盖住 worktree 内的依赖目录（如 `node_modules`、`.venv`、`target`），避免 Linux 二进制写回宿主机。 |
 | **信任确认（trust）** | 宿主机侧 `~/.sbx/trust/` 记录你确认过的 `.sbx/` 内容哈希。内容变化后拒绝启动 Task，直到执行 `sbx trust`。 |
-| **Task 状态** | `running`（Agent 工作中）/ `idle`（等待输入）/ `exited(agent)`（容器还在，但 claude 已退出）/ `stopped`（容器已停止）/ `exited(code\|oom)`（headless 结束或被 OOM 杀掉）。 |
+| **Task 状态** | `running`（Agent 工作中）/ `idle`（等待输入）/ `exited(agent)`（容器还在，但 Agent 已退出）/ `stopped`（容器已停止）/ `exited(code\|oom)`（headless 结束或被 OOM 杀掉）。 |
 
 ## 目录与配置布局
 
@@ -45,9 +45,9 @@
 
 配置合并顺序：内置默认 → `~/.sbx/config.toml` → `<repo>/.sbx/sandbox.toml` → `~/.sbx/workspaces/<repo>.toml`。列表取并集，其他值后者覆盖前者。
 
-## 命令草图
+## 当前命令入口
 
-> 这是设计期的草图，含尚未实现的命令。**已实现的命令、参数和配置以 [commands.md](commands.md) 为准。**
+完整 flags 与组合限制以 [commands.md](commands.md) 和当前二进制 `--help` 为准。
 
 | 命令 | 作用 |
 |---|---|
@@ -59,38 +59,47 @@
 | `sbx ls` | 列出 Task：状态、分支、提交数和 diff 统计、最后活动时间、网络被拒次数 |
 | `sbx port <task> <port>` | 把容器端口映射到宿主机的随机空闲端口 |
 | `sbx net denied [task]` / `sbx net allow <host>` | 查看被拒请求；把域名加进白名单 |
-| `sbx login claude\|codex` | 在容器里完成订阅登录，凭据写入 sbx-home |
+| `sbx login [claude\|codex]` | 默认 Claude；Codex 可设备码登录或显式导入 auth.json |
+| `sbx run --agent codex <task>` | 本次选择 Codex，不修改配置，恢复要求原 provider |
+| `sbx version --json` | 获取 schema 与 capabilities |
+| `sbx admit --envelope <file\|->` | 只读检查，不预留资源 |
+| `sbx run --envelope <file\|->` | v1 headless、墙钟超时和分类退出码 |
+| `sbx isolation status [--json]` / `sbx isolation adopt` | 当前 daemon 归属与本人独占旧卷接管 |
 | `sbx trust` | 确认 `.sbx/` 的当前内容 |
-| `sbx upgrade` | 重建 Agent 层（升级 CLI） |
+| `sbx upgrade` | 升级 Claude 并重建 Agent 层；新建容器生效 |
 | `sbx done <task>` | 销毁容器、worktree 和依赖 volume，保留分支 |
 | `sbx drop <task>` | 同上，并删除分支（需要确认） |
 
+## 执行与用户边界
+
+执行服务编排 create/resume、headless wait/stop、超时/取消、结构化事件和结果，CLI 保留配置、trust 和终端适配。`[isolation]` 只能由个人全局配置设置，namespace 绑定 daemon ID。旧卷需显式 adopt；共享身份与 owner 标记不由 Task 清理删除。不同 SBX_HOME 不能提供用户隔离。
+
 ## 决策索引
 
-> ADR 放在 `docs/private/adr/`，不纳入版本控制（见 `.gitignore` 的 `private`），下面的链接只在本地有效。
+> ADR 放在 `docs/private/adr/`，不纳入版本控制（见 `.gitignore` 的 `private`），下面保留决策编号供本地追溯，不依赖未分发的 ADR 文件。
 
 | # | 决策 |
 |---|---|
-| [0001](private/adr/0001-container-isolation.md) | 用容器级隔离，不绑定特定 Docker 实现 |
-| [0002](private/adr/0002-task-scoped-sandbox.md) | 每个 Task 一个 Sandbox，Workspace → Task → Sandbox |
-| [0003](private/adr/0003-worktree-with-writable-git.md) | 用 worktree，主 `.git` 可写挂载（R1 已由 0019 缓解） |
-| [0004](private/adr/0004-agent-in-tmux.md) | Agent 跑在容器内的 tmux 里，另有 headless 模式 |
-| [0005](private/adr/0005-egress-proxy-allowlist.md) | 用 Squid 做 Egress Proxy，白名单为默认，可切换 open |
-| [0006](private/adr/0006-auth-and-host-config.md) | 共享 sbx-home 存放登录态，宿主机配置只读挂入 |
-| [0007](private/adr/0007-profile-plus-agent-layer.md) | Profile 加自动叠加的 Agent 层，内置两个 Profile |
-| [0008](private/adr/0008-dependency-volumes.md) | 依赖目录用 volume 遮盖，缓存全局共享 |
-| [0009](private/adr/0009-layered-config.md) | 配置分四层 |
-| [0010](private/adr/0010-config-trust.md) | 用信任确认防止配置被篡改 |
-| [0011](private/adr/0011-status-notify-reclaim.md) | 状态、通知、回收，不做常驻守护进程 |
-| [0012](private/adr/0012-resources-and-ports.md) | 资源上限、并发上限、端口按需映射 |
-| [0013](private/adr/0013-go-binary-docker-cli.md) | 用 Go 单二进制，通过 docker CLI 编排；Agent 免确认模式运行 |
-| [0014](private/adr/0014-proxy-shared-or-dedicated.md) | Egress Proxy 默认共享，可以配置为独占 |
-| [0015](private/adr/0015-block-cloud-mcp-by-default.md) | 默认拦截 claude.ai 云端 MCP 连接器 |
-| [0016](private/adr/0016-project-memory-sync.md) | 项目自动记忆：导入沙箱，手动导回 |
-| [0017](private/adr/0017-private-access.md) | 用具名「私有源」统一处理内网 / 私有化接入（已被 0018 部分取代，设计见 [private-access.md](private-access.md)） |
-| [0018](private/adr/0018-boundary-and-prep.md) | 前置依赖用 prep 固化，活的依赖用 sidecar 开窄洞（设计见 [boundary.md](boundary.md)） |
-| [0019](private/adr/0019-git-readonly-mounts.md) | 用嵌套只读挂载封住 `.git` 的代码执行面（R1），修订 0003 |
+| 0001（本地 ADR） | 用容器级隔离，不绑定特定 Docker 实现 |
+| 0002（本地 ADR） | 每个 Task 一个 Sandbox，Workspace → Task → Sandbox |
+| 0003（本地 ADR） | 用 worktree，主 `.git` 可写挂载（R1 已由 0019 缓解） |
+| 0004（本地 ADR） | Agent 跑在容器内的 tmux 里，另有 headless 模式 |
+| 0005（本地 ADR） | 用 Squid 做 Egress Proxy，当前 open 为默认，可切换 allowlist |
+| 0006（本地 ADR） | 共享 sbx-home 存放登录态，宿主机配置只读挂入 |
+| 0007（本地 ADR） | Profile 加自动叠加的 Agent 层，内置两个 Profile |
+| 0008（本地 ADR） | 依赖目录用 volume 遮盖，缓存全局共享 |
+| 0009（本地 ADR） | 配置分四层 |
+| 0010（本地 ADR） | 用信任确认防止配置被篡改 |
+| 0011（本地 ADR） | 状态、通知、回收，不做常驻守护进程 |
+| 0012（本地 ADR） | 资源上限、并发上限、端口按需映射 |
+| 0013（本地 ADR） | 用 Go 单二进制，通过 docker CLI 编排；Agent 免确认模式运行 |
+| 0014（本地 ADR） | Egress Proxy 默认共享，可以配置为独占 |
+| 0015（本地 ADR） | 默认拦截 claude.ai 云端 MCP 连接器 |
+| 0016（本地 ADR） | 项目自动记忆：导入沙箱，手动导回 |
+| 0017（本地 ADR） | 用具名「私有源」统一处理内网 / 私有化接入（已由 0018 的 prep/sidecar 分流取代，见 [boundary.md](boundary.md)） |
+| 0018（本地 ADR） | 前置依赖用 prep 固化，活的依赖用 sidecar 开窄洞（设计见 [boundary.md](boundary.md)） |
+| 0019（本地 ADR） | 用嵌套只读挂载封住 `.git` 的代码执行面（R1），修订 0003 |
 
 ## M0 验证结论（2026-10-04）
 
-全部通过（Codex 部分推迟到 M3-6），详见 [spikes/M0-SUMMARY.md](../spikes/M0-SUMMARY.md)。资源默认值已定：Docker VM 10GB，每个 Task 2C/3g，`max_running = 3`（ADR 0012 修订）。
+全部通过（当时 Codex 延后；当前支持状态以正文为准），详见 [spikes/M0-SUMMARY.md](../spikes/M0-SUMMARY.md)。资源默认值已定：Docker VM 10GB，每个 Task 2C/3g，`max_running = 3`（ADR 0012 修订）。

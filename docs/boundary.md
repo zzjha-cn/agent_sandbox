@@ -1,6 +1,6 @@
 # 沙箱边界与前置依赖
 
-> 状态：**P0–P4 已实现**（M4，2026-10-15）。P5 文档表态进行中。决策见 [ADR 0018](private/adr/0018-boundary-and-prep.md)，关联 [ADR 0017](private/adr/0017-private-access.md)（已被部分取代）。涉及 [design.md](design.md) §2、§4、§6、§9。
+> 状态：**P0–P4 已实现**（M4，2026-10-15）。P5 文档表态进行中。决策见 ADR 0018（本地 ADR），关联 ADR 0017（本地 ADR）（已被部分取代）。涉及 [design.md](design.md) §2、§4、§6、§9。
 >
 > 命令用法见 [commands.md](commands.md)（`prep` / `forward` / `clean`），端到端的例子见 [walkthrough.md](walkthrough.md) 附三。
 
