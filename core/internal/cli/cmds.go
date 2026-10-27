@@ -315,12 +315,13 @@ func (a *App) done(t task.Task, force, dropping bool) error {
 		if err := t.WS.RemoveWorktree(t.Worktree(), force); err != nil {
 			return err
 		}
-		os.Remove(filepath.Dir(t.Worktree())) // 空的 worktrees/<ws> 目录
+		// Keep the shared workspace parent stable for Docker Desktop bind mounts.
 	}
 	if err := os.RemoveAll(t.StateDir()); err != nil {
 		return err
 	}
-	os.Remove(filepath.Dir(t.StateDir()))
+	// Keep state/<ws>: deleting/recreating a shared parent can leave Docker
+	// Desktop resolving the old directory when the next Task binds its files.
 	if dropping {
 		return nil
 	}

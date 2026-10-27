@@ -73,8 +73,18 @@ func protocolErrorCode(err error) string {
 	return "runner_error"
 }
 
-func (a *App) writeProtocolFailure(err error) {
-	_ = json.NewEncoder(a.Out).Encode(protocolFailure{SchemaVersion: protocol.SchemaVersion, Type: "failed", ErrorCode: protocolErrorCode(err)})
+func (a *App) writeProtocolFailure(err error) error {
+	if writeErr := a.writeProtocolRecord(protocolFailure{SchemaVersion: protocol.SchemaVersion, Type: "failed", ErrorCode: protocolErrorCode(err)}); writeErr != nil {
+		return errors.Join(err, writeErr)
+	}
+	return err
+}
+
+func (a *App) writeProtocolRecord(record any) error {
+	if err := json.NewEncoder(a.Out).Encode(record); err != nil {
+		return &execution.ExecutionError{Kind: execution.DeliveryFailedKind, Stage: "writing protocol response", Cause: err}
+	}
+	return nil
 }
 
 func (a *App) loadEnvelopeTask(env protocol.Envelope) (task.Task, error) {
@@ -97,23 +107,19 @@ func (a *App) admitCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 0 {
 				err := &protocol.CodedError{Code: "invalid_envelope", Err: fmt.Errorf("admit accepts no positional arguments")}
-				a.writeProtocolFailure(err)
-				return err
+				return a.writeProtocolFailure(err)
 			}
 			if source == "" {
 				err := &protocol.CodedError{Code: "invalid_envelope", Err: fmt.Errorf("--envelope is required")}
-				a.writeProtocolFailure(err)
-				return err
+				return a.writeProtocolFailure(err)
 			}
 			env, err := readEnvelope(cmd, source)
 			if err != nil {
-				a.writeProtocolFailure(err)
-				return err
+				return a.writeProtocolFailure(err)
 			}
 			t, err := a.loadEnvelopeTask(env)
 			if err != nil {
-				a.writeProtocolFailure(err)
-				return err
+				return a.writeProtocolFailure(err)
 			}
 			driver := a.executionDriver()
 			exists, running, err := driver.Inspect(cmd.Context(), execution.Request{Task: t, Mode: execution.Headless, Config: a.Cfg})
@@ -130,10 +136,9 @@ func (a *App) admitCmd() *cobra.Command {
 				}
 			}
 			if err != nil {
-				a.writeProtocolFailure(err)
-				return err
+				return a.writeProtocolFailure(err)
 			}
-			return json.NewEncoder(a.Out).Encode(admissionRecord{SchemaVersion: protocol.SchemaVersion, Type: "admitted", TaskID: env.TaskID, Admitted: true, Existing: exists, Running: running})
+			return a.writeProtocolRecord(admissionRecord{SchemaVersion: protocol.SchemaVersion, Type: "admitted", TaskID: env.TaskID, Admitted: true, Existing: exists, Running: running})
 		}}
 	cmd.Flags().StringVar(&source, "envelope", "", "read the JSON envelope from a file or '-' for stdin")
 	return cmd
@@ -147,7 +152,7 @@ func (a *App) versionCmd() *cobra.Command {
 				fmt.Fprintln(a.Out, Version)
 				return nil
 			}
-			return json.NewEncoder(a.Out).Encode(protocol.Version(Version))
+			return a.writeProtocolRecord(protocol.Version(Version))
 		}}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print machine-readable protocol capabilities")
 	return cmd

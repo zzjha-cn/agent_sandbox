@@ -53,18 +53,15 @@ func (a *App) runCmd() *cobra.Command {
 			if envelopePath != "" {
 				env, err := readEnvelope(cmd, envelopePath)
 				if err != nil {
-					a.writeProtocolFailure(err)
-					return err
+					return a.writeProtocolFailure(err)
 				}
 				if len(args) != 0 || cmd.Flags().Changed("prompt") || cmd.Flags().Changed("base") || cmd.Flags().Changed("fresh") || cmd.Flags().Changed("jsonl") || cmd.Flags().Changed("detach") || cmd.Flags().Changed("net") || cmd.Flags().Changed("proxy") || cmd.Flags().Changed("cloud-mcp") || cmd.Flags().Changed("agent") {
 					err = &protocol.CodedError{Code: "invalid_envelope", Err: fmt.Errorf("--envelope cannot be combined with task arguments or run override flags")}
-					a.writeProtocolFailure(err)
-					return err
+					return a.writeProtocolFailure(err)
 				}
 				t, err := a.loadEnvelopeTask(env)
 				if err != nil {
-					a.writeProtocolFailure(err)
-					return err
+					return a.writeProtocolFailure(err)
 				}
 				runCtx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 				defer stop()
@@ -172,6 +169,9 @@ func (a *App) run(ctx context.Context, t task.Task, o runOpts) error {
 		defer cancel()
 	}
 	runApp := *a
+	if o.JSONL {
+		runApp.Out = a.Err
+	} // stdout is reserved for structured records
 	runApp.Docker = a.Docker.WithContext(ctx)
 	defer func() {
 		a.Cfg, a.Loaded = runApp.Cfg, runApp.Loaded
@@ -428,15 +428,12 @@ func (a *App) ensureVolumes(t task.Task, tag string, u *execution.Undo) (map[str
 		labels["sbx.kind"] = "dep"
 		labels["sbx.class"] = "dependencies"
 		labels["sbx.retention"] = "task"
-		created, err := a.Docker.VolumeCreate(vol, labels)
+		created, err := execution.CreateOwnedVolume(a.Docker, vol, labels, u)
 		if err != nil {
 			return nil, err
 		}
 		if created {
 			fresh[vol] = true
-			u.Add("volume", vol, true, func(ctx context.Context) error {
-				return a.Docker.WithContext(ctx).VolumeRm(vol)
-			})
 			if err := a.initVol(tag, vol, own); err != nil {
 				return nil, err
 			}

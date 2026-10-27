@@ -56,6 +56,8 @@ esac
 
 type resumeEgress struct{ proxy.Egress }
 
+func (resumeEgress) DetachTask(string, string) error           { return nil }
+func (resumeEgress) StopIfIdle() (bool, error)                 { return false, nil }
 func (resumeEgress) Ensure() error                             { return nil }
 func (resumeEgress) AttachTask(proxy.TaskSpec) (string, error) { return "", nil }
 

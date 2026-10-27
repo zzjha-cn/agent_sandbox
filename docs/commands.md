@@ -1061,6 +1061,9 @@ fix-login  idle    sbx/fix-login  3      5f +84 -12  0     svc:1 fwd:1  2m ago  
 
 > **改了配置什么时候生效**：增减 `[[services]]` / `[[forward]]` 在下次 `sbx run` 时生效，已经起着的伴生容器原样留着。`host` 字段是建 Task 容器时写进 `/etc/hosts` 的，改它要 `sbx done` 后重建。
 
+如果 Task 主容器已被外部删除、旧 forwarder 仍在，`run` 会拒绝先删掉旧 forwarder 再重建，避免重建失败破坏既有资源。确认旧 Task 不再需要后，执行 `sbx done <task>` 再 `sbx run <task>`。正常已有容器的 resume 保留原 forwarder。
+
+
 ---
 
 ## 用 API key 代替订阅登录（M2-13、design §7.1）

@@ -47,6 +47,9 @@ func (c *Client) WithContext(ctx context.Context) *Client {
 	return &clone
 }
 
+// Context exposes the command deadline to adapters that also take local locks.
+func (c *Client) Context() context.Context { return c.commandContext() }
+
 func (c *Client) commandContext() context.Context {
 	if c.ctx != nil {
 		return c.ctx
@@ -304,6 +307,20 @@ func (c *Client) NetworkExists(name string) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// NetworkConnected inspects only network names, never environment or credentials.
+func (c *Client) NetworkConnected(network, container string) (bool, error) {
+	out, err := c.Run("container", "inspect", "--format", "{{json .NetworkSettings.Networks}}", container)
+	if err != nil {
+		return false, err
+	}
+	var networks map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(out), &networks); err != nil {
+		return false, err
+	}
+	_, connected := networks[network]
+	return connected, nil
 }
 
 func (c *Client) NetworkConnect(network, ctr, alias string) error {

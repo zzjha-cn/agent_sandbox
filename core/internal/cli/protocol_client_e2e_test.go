@@ -84,6 +84,44 @@ func TestProtocolClientCLIEndToEnd(t *testing.T) {
 	if !admission.Admitted || admission.TaskID != "client-job" || admission.SchemaVersion != protocol.SchemaVersion {
 		t.Fatalf("unexpected admission response: %+v", admission)
 	}
+	// Inputs accepted by the advertised schema must match the real decoder;
+	// unknown spelling/null and filesystem failures stay machine-classified.
+	for _, suffix := range []string{`,"Fresh":true}`, `,"fresh":null}`, `,"base":null}`, `,"timeout_seconds":null}`} {
+		input := strings.TrimSuffix(string(envelope), "}") + suffix
+		out, _, err := run([]string{"run", "--envelope", "-"}, input)
+		var rejected *exec.ExitError
+		if !errors.As(err, &rejected) || rejected.ExitCode() != 2 {
+			t.Fatalf("schema-invalid input accepted: %s %v %s", input, err, out)
+		}
+	}
+	for _, literal := range []string{"1.0", "1e2", "0.01e2"} {
+		input := strings.TrimSuffix(string(envelope), "}") + `,"timeout_seconds":` + literal + "}"
+		if out, stderr, err := run([]string{"admit", "--envelope", "-"}, input); err != nil {
+			t.Fatalf("schema-valid integer rejected: %s %v %s %s", literal, err, stderr, out)
+		}
+	}
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "locks"), []byte("not a lock directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lockOutput, _, lockErr := run([]string{"run", "--envelope", "-"}, string(envelope))
+	var lockExit *exec.ExitError
+	if !errors.As(lockErr, &lockExit) || lockExit.ExitCode() != 4 {
+		t.Fatalf("lock storage error must exit 4: %v %s", lockErr, lockOutput)
+	}
+	var lockRecord struct {
+		Result struct {
+			State string `json:"state"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(bytes.TrimSpace(lockOutput), &lockRecord); err != nil || lockRecord.Result.State != "environment_failed" {
+		t.Fatalf("wrong lock terminal record: %s %v", lockOutput, err)
+	}
+	if err := os.Remove(filepath.Join(home, "locks")); err != nil {
+		t.Fatal(err)
+	}
 	// Unknown schema is rejected in a machine-readable form and with stable code 2.
 	bad := strings.Replace(string(envelope), protocol.SchemaVersion, "sbx.execution/v99", 1)
 	out, _, err = run([]string{"run", "--envelope", "-"}, bad)

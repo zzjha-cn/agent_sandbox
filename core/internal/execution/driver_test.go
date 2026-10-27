@@ -3,6 +3,8 @@ package execution
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"sandx/internal/config"
@@ -10,6 +12,19 @@ import (
 	"sandx/internal/isolation"
 	"sandx/internal/task"
 )
+
+func TestTaskLockFilesystemFailureIsEnvironmentFailure(t *testing.T) {
+	req := testRequest("synthetic")
+	req.Task.Home = filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(req.Task.Home, []byte("file"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result, err := NewService(&RuntimeDriver{}).Run(context.Background(), req)
+	var failure *ExecutionError
+	if !errors.As(err, &failure) || failure.Kind != EnvironmentFailed || result.State != EnvironmentErr {
+		t.Fatalf("filesystem failure mislabeled as admission: %+v %v", result, err)
+	}
+}
 
 func TestIsolationInfrastructureFailurePreservesEnvironmentClassification(t *testing.T) {
 	req := testRequest("synthetic")
@@ -80,6 +95,19 @@ func TestAdmissionRejectsProviderChangeBeforePreparingResources(t *testing.T) {
 				t.Fatal("provider mismatch reached resource admission")
 			}
 		})
+	}
+}
+
+func TestAdmissionRejectsProviderChangeWhenOnlyTaskStateRemains(t *testing.T) {
+	req := testRequest("synthetic")
+	req.Task.Home = t.TempDir()
+	req.Config = config.Default()
+	if err := req.Task.WriteMeta(task.Meta{Agent: "codex"}); err != nil {
+		t.Fatal(err)
+	}
+	d := &RuntimeDriver{CheckConcurrency: func(task.Task) error { t.Fatal("provider mismatch reached resource checks"); return nil }}
+	if err := d.Admit(context.Background(), req, false, false); err == nil {
+		t.Fatal("missing container allowed a silent provider switch")
 	}
 }
 

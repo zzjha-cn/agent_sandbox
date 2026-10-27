@@ -49,23 +49,22 @@ func (d *RuntimeDriver) Admit(ctx context.Context, req Request, exists, running 
 	if _, err := agent.ResolveProvider(req.Config.DefaultAgent); err != nil {
 		return err
 	}
-	if exists {
-		meta, ok, err := t.ReadMeta()
-		if err != nil {
-			return err
+	// Provider ownership belongs to the logical Task, even if its container was lost.
+	meta, ok, err := t.ReadMeta()
+	if err != nil {
+		return err
+	}
+	if ok {
+		previous := meta.Agent
+		if previous == "" {
+			previous = "claude"
 		}
-		if ok {
-			previous := meta.Agent
-			if previous == "" {
-				previous = "claude"
-			}
-			current := req.Config.DefaultAgent
-			if current == "" {
-				current = "claude"
-			}
-			if previous != current {
-				return fmt.Errorf("task %s uses %s; cannot resume with %s (create a new task)", t.Name, previous, current)
-			}
+		current := req.Config.DefaultAgent
+		if current == "" {
+			current = "claude"
+		}
+		if previous != current {
+			return fmt.Errorf("task %s uses %s; cannot resume with %s (create a new task)", t.Name, previous, current)
 		}
 	}
 	if req.Mode == Headless && exists && running {

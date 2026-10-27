@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"math/big"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -52,6 +55,73 @@ func TestDecodeRejectsInvalidOrAmbiguousEnvelope(t *testing.T) {
 				t.Fatal("expected invalid envelope")
 			}
 		})
+	}
+}
+
+func TestEnvelopeRejectsNonCanonicalAndNullFields(t *testing.T) {
+	base := `{"schema_version":"sbx.execution/v1","task_id":"ci","prompt":"x"`
+	for _, extra := range []string{`,"Fresh":true}`, `,"fresh":true,"Fresh":false}`, `,"fresh":null}`, `,"base":null}`, `,"timeout_seconds":null}`} {
+		if _, err := Decode(strings.NewReader(base + extra)); err == nil {
+			t.Fatal("accepted input outside advertised schema:", base+extra)
+		}
+	}
+	if _, err := Decode(bytes.NewReader(append([]byte(base+`,"base":"`), 0xff, '"', '}'))); err == nil {
+		t.Fatal("accepted non-UTF-8 envelope")
+	}
+}
+
+func TestEnvelopeSizeLimitAndUnicode(t *testing.T) {
+	env, err := Decode(strings.NewReader(`{"schema_version":"sbx.execution/v1","task_id":"ci","prompt":"测试"}`))
+	if err != nil || env.Prompt != "测试" {
+		t.Fatalf("valid UTF-8: %+v %v", env, err)
+	}
+	if _, err := Decode(strings.NewReader(strings.Repeat(" ", MaxEnvelopeBytes+1))); err == nil {
+		t.Fatal("oversized envelope accepted")
+	}
+}
+
+func TestTimeoutAcceptsExactlyBoundedJSONSchemaIntegers(t *testing.T) {
+	base := `{"schema_version":"sbx.execution/v1","task_id":"ci","prompt":"x","timeout_seconds":`
+	for literal, want := range map[string]int{"1.0": 1, "1e2": 100, "0.01e2": 1, "10e-1": 1, "86400.00": 86400, "0e99999999999999999999999": 0} {
+		env, err := Decode(strings.NewReader(base + literal + "}"))
+		if err != nil || env.TimeoutSeconds != want {
+			t.Fatalf("%s: %+v %v", literal, env, err)
+		}
+	}
+	for _, literal := range []string{"1.1", "1e-999999", "1.00000000000000000000001", "86401.0", "1e99999999999999999999999", "true", `"12"`, "-1"} {
+		if _, err := Decode(strings.NewReader(base + literal + "}")); err == nil {
+			t.Fatal("accepted invalid timeout", literal)
+		}
+	}
+}
+
+func TestTimeoutNormalizationMatchesExactRationalValues(t *testing.T) {
+	limit := big.NewRat(MaxTimeoutSeconds, 1)
+	for _, coefficient := range []int{0, 1, 10, 12, 99, 100, 1001, 86400, 86401} {
+		for fraction := 0; fraction <= 5; fraction++ {
+			mantissa := strconv.Itoa(coefficient)
+			if fraction > 0 {
+				if len(mantissa) <= fraction {
+					mantissa = strings.Repeat("0", fraction-len(mantissa)+1) + mantissa
+				}
+				i := len(mantissa) - fraction
+				mantissa = mantissa[:i] + "." + mantissa[i:]
+			}
+			for exponent := -6; exponent <= 6; exponent++ {
+				for _, sign := range []string{"", "-"} {
+					literal := fmt.Sprintf("%s%se%d", sign, mantissa, exponent)
+					exact, ok := new(big.Rat).SetString(literal)
+					if !ok {
+						t.Fatal("invalid test number", literal)
+					}
+					valid := exact.IsInt() && exact.Sign() >= 0 && exact.Cmp(limit) <= 0
+					value, err := timeoutInteger(json.RawMessage(literal))
+					if (err == nil) != valid || (valid && int64(value) != exact.Num().Int64()) {
+						t.Fatalf("%s: value=%d err=%v exact=%s", literal, value, err, exact)
+					}
+				}
+			}
+		}
 	}
 }
 

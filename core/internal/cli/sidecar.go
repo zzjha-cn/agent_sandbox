@@ -53,6 +53,7 @@ func (a *App) ensureServices(t task.Task, u *execution.Undo) error {
 		}
 		if exists {
 			if !st.Running {
+				u.Add("container_state", name, true, func(ctx context.Context) error { return a.Docker.WithContext(ctx).Stop(name) })
 				if err := a.Docker.Start(name); err != nil {
 					return err
 				}
@@ -73,14 +74,8 @@ func (a *App) ensureServices(t task.Task, u *execution.Undo) error {
 			// 的后果是启动即 OOM，比不限更糟。它和 Task 共享同一台 Docker VM 的预算。
 			LogMaxSize: "10m",
 		}
-		if _, err := a.Docker.RunContainer(spec); err != nil {
+		if err := execution.CreateOwnedContainer(a.Docker, spec, u); err != nil {
 			return fmt.Errorf("service %s (%s): %w", s.Name, s.Image, err)
-		}
-		if u != nil {
-			n := name
-			u.Add("service_container", n, true, func(ctx context.Context) error {
-				return a.Docker.WithContext(ctx).Rm(n)
-			})
 		}
 		fmt.Fprintf(a.Out, "service %s: %s, reachable in the task as %s:%d\n", s.Name, s.Image, s.Name, s.Port)
 	}
@@ -193,6 +188,7 @@ func (a *App) ensureForwards(t task.Task, u *execution.Undo, create bool) ([]str
 			}
 			if exists {
 				if !st.Running {
+					u.Add("container_state", name, true, func(ctx context.Context) error { return a.Docker.WithContext(ctx).Stop(name) })
 					if err := a.Docker.Start(name); err != nil {
 						return nil, nil, err
 					}
@@ -209,8 +205,10 @@ func (a *App) ensureForwards(t task.Task, u *execution.Undo, create bool) ([]str
 		if err != nil {
 			return nil, nil, err
 		}
-		if err := a.Docker.Rm(name); err != nil && !docker.IsNotFound(err) {
+		if _, exists, err := a.Docker.Inspect(name); err != nil {
 			return nil, nil, err
+		} else if exists {
+			return nil, nil, fmt.Errorf("forward %s already exists; preserve it until sbx done removes the previous task", f.Name)
 		}
 		labels := t.Labels()
 		labels["sbx.kind"] = "fwd"
@@ -232,14 +230,8 @@ func (a *App) ensureForwards(t task.Task, u *execution.Undo, create bool) ([]str
 			// 和 proxy/shared.go 同一写法：Linux 上 host.docker.internal 要自己给
 			spec.AddHosts = []string{hostAlias + ":host-gateway"}
 		}
-		if _, err := a.Docker.RunContainer(spec); err != nil {
+		if err := execution.CreateOwnedContainer(a.Docker, spec, u); err != nil {
 			return nil, nil, fmt.Errorf("forward %s: %w", f.Name, err)
-		}
-		n := name
-		if u != nil {
-			u.Add("forward_container", n, true, func(ctx context.Context) error {
-				return a.Docker.WithContext(ctx).Rm(n)
-			})
 		}
 		// 出网那张网卡接在这里。Task 容器永远不接这张网。
 		if err := a.Docker.NetworkConnect(proxy.EgressNet, name, ""); err != nil {

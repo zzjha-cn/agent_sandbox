@@ -167,6 +167,90 @@ func TestEventSinkFailureIsReportedAsDeliveryFailure(t *testing.T) {
 	}
 }
 
+type transientSink struct {
+	out     bytes.Buffer
+	failed  bool
+	failure error
+}
+
+func (s *transientSink) Emit(ctx context.Context, e Event) error {
+	if e.Type == EventPhaseStarted && !s.failed {
+		s.failed = true
+		return s.failure
+	}
+	return NewJSONLSink(&s.out).Emit(ctx, e)
+}
+
+func TestRecoveredWriterPublishesDeliveryFailureRatherThanSuccess(t *testing.T) {
+	sink := &transientSink{failure: errors.New("temporary writer failure")}
+	d := &testDriver{outcome: AgentOutcome{ExitCode: new(int)}}
+	result, err := NewService(d, sink).Run(context.Background(), testRequest("safe"))
+	if result.State != DeliveryFailed || !errors.Is(err, sink.failure) {
+		t.Fatalf("%+v %v", result, err)
+	}
+	lines := strings.Split(strings.TrimSpace(sink.out.String()), "\n")
+	var final Event
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &final); err != nil {
+		t.Fatal(err)
+	}
+	if final.Type != EventFailed || final.ErrorKind != DeliveryFailedKind || final.Result == nil || final.Result.State != DeliveryFailed {
+		t.Fatalf("false success on recovered stream: %s", lines[len(lines)-1])
+	}
+}
+
+func TestFailureStateVocabularyPreservesInternalAndDeliveryKinds(t *testing.T) {
+	for kind, want := range map[ErrorKind]State{InternalFailed: "internal_failed", DeliveryFailedKind: DeliveryFailed} {
+		if got := stateForError(kind); got != want {
+			t.Fatalf("%s => %s, want %s", kind, got, want)
+		}
+	}
+}
+
+func TestPrimaryFailureRetainsSecondaryWriterFailure(t *testing.T) {
+	primary, writer := errors.New("provider setup failure"), errors.New("writer failure")
+	result, err := NewService(&testDriver{err: primary}, failedSink{err: writer}).Run(context.Background(), testRequest("safe"))
+	if result.State != EnvironmentErr || !errors.Is(err, primary) || !errors.Is(err, writer) {
+		t.Fatalf("lost primary or secondary failure: %+v %v", result, err)
+	}
+}
+
+func TestMissingOutcomeStopsExecutionBeforeReportingFailure(t *testing.T) {
+	d := &testDriver{outcome: AgentOutcome{ContainerState: ContainerRunning}}
+	result, err := NewService(d).Run(context.Background(), testRequest("synthetic"))
+	if err == nil || result.State != EnvironmentErr || result.CleanupState != CleanupComplete {
+		t.Fatalf("%+v %v", result, err)
+	}
+	if d.steps[len(d.steps)-1] != "stop" {
+		t.Fatal("missing outcome left execution running", d.steps)
+	}
+}
+
+func TestExecutionServiceChoosesCreateResumeAttachAndDetach(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		mode           Mode
+		exists, detach bool
+		next           Disposition
+		state          State
+		steps          string
+	}{
+		{"interactive create", Interactive, false, false, Attach, Ready, "inspect,admit,create"},
+		{"interactive resume", Interactive, true, false, Attach, Ready, "inspect,admit,resume"},
+		{"interactive detach", Interactive, false, true, Detached, Running, "inspect,admit,create"},
+		{"headless detach", Headless, true, true, Detached, Running, "inspect,admit,resume"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := testRequest("synthetic")
+			req.Mode, req.Detach = tc.mode, tc.detach
+			d := &testDriver{exists: tc.exists}
+			r, err := NewService(d).Run(context.Background(), req)
+			if err != nil || r.Next != tc.next || r.State != tc.state || strings.Join(d.steps, ",") != tc.steps {
+				t.Fatalf("%+v %v %v", r, err, d.steps)
+			}
+		})
+	}
+}
+
 func (d *testDriver) Stop(context.Context, Request) error {
 	d.steps = append(d.steps, "stop")
 	return nil

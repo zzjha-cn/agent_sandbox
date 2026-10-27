@@ -124,24 +124,29 @@ func (p *Provisioner) Resume(ctx context.Context, req Request, state docker.Stat
 	}
 	h, t := p.host, req.Task
 	stopOnFailure := false
+	var undo Undo
+	step := "reading task metadata"
 	defer func() {
-		if err == nil || !stopOnFailure {
+		if err == nil {
 			return
 		}
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 		defer cancel()
-		stopErr := (&RuntimeDriver{Docker: h.DockerClientWithContext(cleanupCtx)}).Stop(cleanupCtx, req)
 		var cleanup []error
-		if stopErr != nil {
-			cleanup = append(cleanup, stopErr)
+		if stopOnFailure {
+			if stopErr := (&RuntimeDriver{Docker: h.DockerClientWithContext(cleanupCtx)}).Stop(cleanupCtx, req); stopErr != nil {
+				cleanup = append(cleanup, stopErr)
+			}
 		}
+		cleanup = append(cleanup, undo.Run(cleanupCtx)...)
+
 		kind := errorKind(err, EnvironmentFailed)
 		var original *ExecutionError
 		if errors.As(err, &original) {
 			kind = original.Kind
 			cleanup = append(original.Cleanup, cleanup...)
 		}
-		err = &ExecutionError{Kind: kind, Stage: "resuming task", Cause: err, Cleanup: cleanup, CleanupAttempted: true}
+		err = &ExecutionError{Kind: kind, Stage: step, Cause: fmt.Errorf("%s: %w", step, err), Cleanup: cleanup, CleanupAttempted: true}
 	}()
 	meta, ok, err := t.ReadMeta()
 	if err != nil {
@@ -150,35 +155,56 @@ func (p *Provisioner) Resume(ctx context.Context, req Request, state docker.Stat
 	if !ok {
 		return fmt.Errorf("container %s exists but %s/meta.json is missing; run sbx done %s first, then run again", t.Container(), t.StateDir(), t.Name)
 	}
+	step = "restoring prep allowlist"
 	if len(meta.PrepAllow) > 0 {
 		if err := h.MergePrepAllow(meta.PrepAllow); err != nil {
 			return err
 		}
 	}
+	step = "restoring the egress proxy"
 	egress := h.Egress(t)
 	if err := egress.Ensure(); err != nil {
 		return err
 	}
-	if _, err := egress.AttachTask(h.ProxySpec(t, meta.TaskID)); err != nil {
+	step = "restoring the proxy attachment"
+	specProxy := h.ProxySpec(t, meta.TaskID)
+	attachment, rollback, err := proxy.BeginAttachment(egress, specProxy)
+	if err != nil {
 		return err
 	}
-	if err := h.EnsureServices(t, nil); err != nil {
+	undo.Add("proxy_attachment", t.ID(), true, rollback)
+	if _, err := attachment.AttachTask(specProxy); err != nil {
 		return err
 	}
-	if _, _, err := h.EnsureForwards(t, nil, false); err != nil {
+	step = "restoring declared services"
+	if err := h.EnsureServices(t, &undo); err != nil {
+		return err
+	}
+	step = "restoring declared forwards"
+	if _, _, err := h.EnsureForwards(t, &undo, false); err != nil {
 		return err
 	}
 	h.WarnForwardExposure(meta.Forwards)
-	if err := agent.RenderGen(t.GenDir(), h.GenInput(h.HostClaude(), req)); err != nil {
+	step = "rendering generated files"
+	if err := preservePath(t.GenDir(), &undo); err != nil {
 		return err
 	}
 	stopOnFailure = true
+	if err := agent.RenderGen(t.GenDir(), h.GenInput(h.HostClaude(), req)); err != nil {
+		return err
+	}
+	step = "starting the task container"
 	if !state.Running {
 		h.Logf("starting stopped task %s ...", t.Name)
 		if err := h.DockerClient().Start(t.Container()); err != nil {
 			return err
 		}
 	}
+	step = "preserving agent launch state"
+	if err := preserveLaunchState(t, &undo); err != nil {
+		return err
+	}
+	step = "starting the agent"
 	if err := h.StartAgent(ctx, t, req); err != nil {
 		return &ExecutionError{Kind: errorKind(err, AgentStartFailed), Stage: "starting agent", Cause: err}
 	}
@@ -228,10 +254,21 @@ func (p *Provisioner) Create(ctx context.Context, req Request) (err error) {
 	// PrepLoad may merge its manifest into the effective config. Keep later
 	// resource construction aligned with the pre-refactor CLI order.
 	cfg := h.EffectiveConfig()
+	step = "preserving task state"
+	for _, path := range []string{t.GenDir(), filepath.Join(t.StateDir(), "meta.json")} {
+		if err := preservePath(path, &undo); err != nil {
+			return err
+		}
+	}
+	if err := preserveLaunchState(t, &undo); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(t.GenDir(), 0o755); err != nil {
 		return err
 	}
-	_ = os.Remove(filepath.Join(t.StateDir(), "status.json"))
+	if err := os.Remove(filepath.Join(t.StateDir(), "status.json")); err != nil && !os.IsNotExist(err) {
+		return err
+	}
 
 	step = "preparing the egress proxy"
 	egress := h.EgressOf(t, cfg.Network.Proxy)
@@ -240,27 +277,21 @@ func (p *Provisioner) Create(ctx context.Context, req Request) (err error) {
 	}
 	step = "creating the task network"
 	d := h.DockerClient()
-	if ok, err := d.NetworkExists(t.Network()); err != nil {
+	labels := t.Labels()
+	labels["sbx.kind"] = "net"
+	if err := CreateOwnedNetwork(d, t.Network(), true, labels, &undo); err != nil {
 		return err
-	} else if !ok {
-		labels := t.Labels()
-		labels["sbx.kind"] = "net"
-		if err := d.NetworkCreate(t.Network(), true, labels); err != nil {
-			return err
-		}
-		undo.Add("network", t.Network(), true, func(cleanupCtx context.Context) error {
-			return h.DockerClientWithContext(cleanupCtx).NetworkRm(t.Network())
-		})
 	}
+
 	step = "attaching to the egress proxy"
 	h.WarnSkippedNotifyHosts()
-	undo.Add("proxy_attachment", t.ID(), true, func(cleanupCtx context.Context) error {
-		cleanupEgress := h.EgressWithContext(cleanupCtx, t, cfg.Network.Proxy)
-		detachErr := cleanupEgress.DetachTask(t.ID(), t.Network())
-		_, stopErr := cleanupEgress.StopIfIdle()
-		return errors.Join(detachErr, stopErr)
-	})
-	proxyURL, err := egress.AttachTask(h.ProxySpec(t, t.ID()))
+	specProxy := h.ProxySpec(t, t.ID())
+	attachment, rollback, err := proxy.BeginAttachment(egress, specProxy)
+	if err != nil {
+		return err
+	}
+	undo.Add("proxy_attachment", t.ID(), true, rollback)
+	proxyURL, err := attachment.AttachTask(specProxy)
 	if err != nil {
 		return err
 	}
@@ -301,7 +332,7 @@ func (p *Provisioner) Create(ctx context.Context, req Request) (err error) {
 	if key.Env != "" {
 		h.Logf("starting with an API key (from %s), not subscription login", key.Source)
 	}
-	labels := t.Labels()
+	labels = t.Labels()
 	labels["sbx.role"] = "agent"
 	labels["sbx.proxy"] = cfg.Network.Proxy
 	spec := docker.RunSpec{
@@ -338,13 +369,6 @@ func (p *Provisioner) Create(ctx context.Context, req Request) (err error) {
 	}); err != nil {
 		return err
 	}
-	undo.Add("meta", filepath.Join(t.StateDir(), "meta.json"), true, func(context.Context) error {
-		err := os.Remove(filepath.Join(t.StateDir(), "meta.json"))
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	})
 	step = "starting the agent"
 	if err := h.StartAgent(ctx, t, req); err != nil {
 		return &ExecutionError{Kind: errorKind(err, AgentStartFailed), Stage: "starting agent", Cause: err}
@@ -367,27 +391,7 @@ func serviceNames(svcs []config.Service) []string {
 	return out
 }
 
-// Register ownership before issuing docker run: the daemon can create a
-// container even when the host CLI is interrupted before returning its ID.
+// Kept private for existing execution callers.
 func createOwnedContainer(d *docker.Client, spec docker.RunSpec, undo *Undo) error {
-	owner := newAttemptID()
-	if spec.Labels == nil {
-		spec.Labels = map[string]string{}
-	}
-	spec.Labels["sbx.provision"] = owner
-	undo.Add("container", spec.Name, true, func(ctx context.Context) error {
-		client := d.WithContext(ctx)
-		items, err := client.ListByLabel("container", "sbx.provision="+owner)
-		if err != nil {
-			return err
-		}
-		for _, item := range items {
-			if item.Str("Names") == spec.Name {
-				return client.Rm(spec.Name)
-			}
-		}
-		return nil
-	})
-	_, err := d.RunContainer(spec)
-	return err
+	return CreateOwnedContainer(d, spec, undo)
 }

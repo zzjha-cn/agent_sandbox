@@ -50,6 +50,7 @@ const (
 	Rejected       State = "admission_rejected"
 	EnvironmentErr State = "environment_failed"
 	AgentStartErr  State = "agent_start_failed"
+	InternalErr    State = "internal_failed"
 )
 
 type Disposition string
@@ -238,6 +239,27 @@ func (s *Service) eventDeliveryError(result *Result) error {
 	return &ExecutionError{Kind: DeliveryFailedKind, Stage: "writing execution events", Cause: s.eventErr}
 }
 
+// If an earlier event failed but the writer recovers, publish an honest final
+// record. A terminal write failure itself is detectable only through the exit
+// status/error: a broken transport cannot guarantee a replacement record.
+func (s *Service) deliverResult(ctx context.Context, result *Result, summary string) error {
+	if s.eventErr != nil {
+		s.emitFailure(ctx, result, DeliveryFailedKind, "event_delivery", "execution event delivery failed")
+	} else {
+		s.emitResult(ctx, *result, summary)
+	}
+	return s.eventDeliveryError(result)
+}
+
+// A failed execution remains the primary error even if its reporting also
+// fails. Preserve both causes without treating delivery as resource cleanup.
+func (s *Service) withDeliveryError(primary error) error {
+	if s.eventErr == nil {
+		return primary
+	}
+	return errors.Join(primary, &ExecutionError{Kind: DeliveryFailedKind, Stage: "writing execution events", Cause: s.eventErr})
+}
+
 func stateForError(kind ErrorKind) State {
 	switch kind {
 	case AdmissionRejected:
@@ -250,6 +272,10 @@ func stateForError(kind ErrorKind) State {
 		return TimedOut
 	case CancelledKind:
 		return Cancelled
+	case DeliveryFailedKind:
+		return DeliveryFailed
+	case InternalFailed:
+		return InternalErr
 	default:
 		return EnvironmentErr
 	}
@@ -278,8 +304,13 @@ func (s *Service) Run(ctx context.Context, req Request) (Result, error) {
 	if locker, ok := s.driver.(interface{ Lock(Request) (func(), error) }); ok {
 		unlock, err := locker.Lock(req)
 		if err != nil {
-			s.emitFailure(ctx, &result, AdmissionRejected, "admission", "task execution already owned")
-			return result, &ExecutionError{Kind: AdmissionRejected, Stage: "locking task", Cause: err}
+			kind := AdmissionRejected
+			var classified *ExecutionError
+			if errors.As(err, &classified) {
+				kind = classified.Kind
+			}
+			s.emitFailure(ctx, &result, kind, "admission", "task lock unavailable")
+			return result, s.withDeliveryError(&ExecutionError{Kind: kind, Stage: "locking task", Cause: err})
 		}
 		defer unlock()
 	}
@@ -288,7 +319,7 @@ func (s *Service) Run(ctx context.Context, req Request) (Result, error) {
 	if err != nil {
 		kind := errorKind(err, EnvironmentFailed)
 		s.emitFailure(ctx, &result, kind, "inspecting_task", "task inspection failed")
-		return result, &ExecutionError{Kind: kind, Stage: "inspecting task", Cause: err}
+		return result, s.withDeliveryError(&ExecutionError{Kind: kind, Stage: "inspecting task", Cause: err})
 	}
 	if err = s.driver.Admit(ctx, req, exists, running); err != nil {
 		kind := errorKind(err, AdmissionRejected)
@@ -297,7 +328,7 @@ func (s *Service) Run(ctx context.Context, req Request) (Result, error) {
 			kind = errorKind(err, classified.Kind)
 		}
 		s.emitFailure(ctx, &result, kind, "admission", "admission check failed")
-		return result, &ExecutionError{Kind: kind, Stage: "checking admission", Cause: err}
+		return result, s.withDeliveryError(&ExecutionError{Kind: kind, Stage: "checking admission", Cause: err})
 	}
 	s.emit(ctx, result, EventAdmitted, "admission", "task admitted")
 	s.emit(ctx, result, EventPhaseStarted, "provision", "preparing task environment")
@@ -326,14 +357,17 @@ func (s *Service) Run(ctx context.Context, req Request) (Result, error) {
 		s.emit(ctx, result, EventPhaseFinished, "provision", "task environment failed")
 		s.emitFailure(ctx, &result, kind, stage, "task execution failed")
 		if executionErr != nil {
-			return result, err
+			return result, s.withDeliveryError(err)
 		}
-		return result, &ExecutionError{Kind: kind, Stage: stage, Cause: err}
+		return result, s.withDeliveryError(&ExecutionError{Kind: kind, Stage: stage, Cause: err})
 	}
 	s.emit(ctx, result, EventPhaseFinished, "provision", "task environment ready")
 	s.emit(ctx, result, EventAgentStarted, "agent", "agent started")
 	if req.Mode == Headless && !req.Detach {
 		outcome, waitErr := s.driver.Wait(ctx, req)
+		if waitErr == nil && outcome.ExitCode == nil {
+			waitErr = errors.New("missing agent exit code")
+		}
 		if waitErr != nil {
 			kind := errorKind(waitErr, EnvironmentFailed)
 			result.ContainerState = string(outcome.ContainerState)
@@ -349,12 +383,7 @@ func (s *Service) Run(ctx context.Context, req Request) (Result, error) {
 				result.ContainerState = string(ContainerStopped)
 			}
 			s.emitFailure(ctx, &result, kind, "waiting_for_agent", "agent wait failed")
-			return result, &ExecutionError{Kind: kind, Stage: "waiting for agent", Cause: waitErr, Cleanup: cleanup}
-		}
-		if outcome.ExitCode == nil {
-			err := &ExecutionError{Kind: EnvironmentFailed, Stage: "waiting for agent", Cause: errors.New("missing agent exit code")}
-			s.emitFailure(ctx, &result, err.Kind, err.Stage, "agent completion unavailable")
-			return result, err
+			return result, s.withDeliveryError(&ExecutionError{Kind: kind, Stage: "waiting for agent", Cause: waitErr, Cleanup: cleanup})
 		}
 		result.State = Finished
 		result.Next = Completed
@@ -371,8 +400,7 @@ func (s *Service) Run(ctx context.Context, req Request) (Result, error) {
 			summary = "agent exited unsuccessfully"
 		}
 		s.emit(ctx, result, EventAgentExited, "agent", summary)
-		s.emitResult(ctx, result, summary)
-		if eventErr := s.eventDeliveryError(&result); eventErr != nil {
+		if eventErr := s.deliverResult(ctx, &result, summary); eventErr != nil {
 			return result, eventErr
 		}
 		return result, nil
@@ -387,8 +415,7 @@ func (s *Service) Run(ctx context.Context, req Request) (Result, error) {
 		result.Next = Attach
 		result.State = Ready
 	}
-	s.emitResult(ctx, result, "agent session ready")
-	if eventErr := s.eventDeliveryError(&result); eventErr != nil {
+	if eventErr := s.deliverResult(ctx, &result, "agent session ready"); eventErr != nil {
 		return result, eventErr
 	}
 	return result, nil

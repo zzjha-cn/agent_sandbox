@@ -8,7 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"sandx/internal/execution"
 	"sandx/internal/workspace"
@@ -48,10 +51,25 @@ func Decode(r io.Reader) (Envelope, error) {
 	if len(data) > MaxEnvelopeBytes {
 		return Envelope{}, invalid("envelope exceeds 1 MiB")
 	}
-	if err := rejectDuplicateTopLevelKeys(data); err != nil {
+	if !utf8.Valid(data) {
+		return Envelope{}, invalid("envelope must be UTF-8")
+	}
+	fields, err := envelopeFields(data)
+	if err != nil {
 		return Envelope{}, invalid("%v", err)
 	}
-	dec := json.NewDecoder(bytes.NewReader(data))
+	if raw, ok := fields["timeout_seconds"]; ok {
+		value, err := timeoutInteger(raw)
+		if err != nil {
+			return Envelope{}, invalid("timeout_seconds: %v", err)
+		}
+		fields["timeout_seconds"] = json.RawMessage(strconv.Itoa(value))
+	}
+	normalized, err := json.Marshal(fields)
+	if err != nil {
+		return Envelope{}, invalid("decode envelope: %v", err)
+	}
+	dec := json.NewDecoder(bytes.NewReader(normalized))
 	dec.DisallowUnknownFields()
 	var env Envelope
 	if err := dec.Decode(&env); err != nil {
@@ -70,43 +88,99 @@ func Decode(r io.Reader) (Envelope, error) {
 	return env, nil
 }
 
-func rejectDuplicateTopLevelKeys(data []byte) error {
+func envelopeFields(data []byte) (map[string]json.RawMessage, error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	first, err := dec.Token()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	delim, ok := first.(json.Delim)
 	if !ok || delim != '{' {
-		return fmt.Errorf("envelope must be a JSON object")
+		return nil, fmt.Errorf("envelope must be a JSON object")
 	}
-	seen := map[string]bool{}
+	fields := map[string]json.RawMessage{}
+	allowed := map[string]bool{"schema_version": true, "task_id": true, "prompt": true, "base": true, "fresh": true, "timeout_seconds": true}
 	for dec.More() {
 		tok, err := dec.Token()
 		if err != nil {
-			return err
+			return nil, err
 		}
 		key, ok := tok.(string)
 		if !ok {
-			return fmt.Errorf("object key is not a string")
+			return nil, fmt.Errorf("object key is not a string")
 		}
-		if seen[key] {
-			return fmt.Errorf("duplicate field %q", key)
+		if _, exists := fields[key]; exists {
+			return nil, fmt.Errorf("duplicate field %q", key)
 		}
-		seen[key] = true
+		if !allowed[key] {
+			return nil, fmt.Errorf("unknown field %q", key)
+		}
 		var value json.RawMessage
 		if err := dec.Decode(&value); err != nil {
-			return err
+			return nil, err
 		}
+		if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			return nil, fmt.Errorf("field %q must not be null", key)
+		}
+		fields[key] = value
 	}
 	if _, err := dec.Token(); err != nil {
-		return err
+		return nil, err
 	}
 	var extra any
 	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
-		return fmt.Errorf("trailing JSON data")
+		return nil, fmt.Errorf("trailing JSON data")
 	}
-	return nil
+	return fields, nil
+}
+
+// JSON Schema integers include 1.0 and 1e2. Normalize exactly, with bounded
+// string operations rather than floating-point rounding or huge big.Ints.
+func timeoutInteger(raw json.RawMessage) (int, error) {
+	number := strings.TrimSpace(string(raw))
+	if len(number) == 0 || (number[0] != '-' && (number[0] < '0' || number[0] > '9')) {
+		return 0, fmt.Errorf("must be an integer")
+	}
+	negative := strings.HasPrefix(number, "-")
+	number = strings.TrimPrefix(number, "-")
+	coefficient, exponent := number, "0"
+	if i := strings.IndexAny(number, "eE"); i >= 0 {
+		coefficient, exponent = number[:i], number[i+1:]
+	}
+	fraction := 0
+	if i := strings.IndexByte(coefficient, '.'); i >= 0 {
+		fraction = len(coefficient) - i - 1
+		coefficient = coefficient[:i] + coefficient[i+1:]
+	}
+	digits := strings.TrimLeft(coefficient, "0")
+	if digits == "" {
+		return 0, nil
+	}
+	exp, err := strconv.ParseInt(exponent, 10, 64)
+	if err != nil || exp > int64(len(raw))+6 || exp < -int64(len(raw))-6 {
+		return 0, fmt.Errorf("must be an integer between 0 and %d", MaxTimeoutSeconds)
+	}
+	scale := exp - int64(fraction)
+	if scale < 0 {
+		cut := -scale
+		if cut > int64(len(digits)) || strings.Trim(digits[int64(len(digits))-cut:], "0") != "" {
+			return 0, fmt.Errorf("must be an integer")
+		}
+		digits = digits[:int64(len(digits))-cut]
+	} else {
+		if int64(len(digits))+scale > int64(len(strconv.Itoa(MaxTimeoutSeconds))) {
+			return 0, fmt.Errorf("exceeds maximum timeout")
+		}
+		digits += strings.Repeat("0", int(scale))
+	}
+	if negative || len(digits) > len(strconv.Itoa(MaxTimeoutSeconds)) {
+		return 0, fmt.Errorf("must be between 0 and %d", MaxTimeoutSeconds)
+	}
+	value, err := strconv.Atoi(digits)
+	if err != nil || value > MaxTimeoutSeconds {
+		return 0, fmt.Errorf("must be between 0 and %d", MaxTimeoutSeconds)
+	}
+	return value, nil
 }
 
 func invalid(format string, args ...any) error {
