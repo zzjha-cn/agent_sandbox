@@ -5,6 +5,7 @@ FROM ${BASE}
 ARG UID=1000
 ARG GID=1000
 ARG CLAUDE_VERSION=latest
+ARG CODEX_VERSION=latest
 
 USER root
 ENV DEBIAN_FRONTEND=noninteractive
@@ -21,7 +22,7 @@ RUN if ! command -v npm >/dev/null 2>&1; then \
       && rm -rf /var/lib/apt/lists/*; \
     fi
 
-RUN npm i -g @anthropic-ai/claude-code@${CLAUDE_VERSION} && npm cache clean --force
+RUN npm i -g @anthropic-ai/claude-code@${CLAUDE_VERSION} @openai/codex@${CODEX_VERSION} && npm cache clean --force
 
 # agent 用户：UID 和宿主机一致；已有同 UID 用户（如 node 镜像的 node）则改名复用，
 # 已有同 GID 的组直接沿用。

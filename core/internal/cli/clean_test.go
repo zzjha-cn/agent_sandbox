@@ -151,7 +151,7 @@ func TestParseSeeds(t *testing.T) {
 // doctor 的"可回收"名单里不该出现三个共享 volume：没有 Task 在跑时它们必然是
 // 0 links，每次都上榜，而它们恰恰是最不该顺手删的。
 func TestNotSharedDropsTheSharedVolumes(t *testing.T) {
-	got := notShared([]string{"sbx-cache", "sbx-home", "sbx-mise", "sbx-shop-e76272-fix-login-deps-0"})
+	got := notShared([]string{"sbx-cache", "sbx-home", "sbx-mise", "sbx-daemon-ownership", "sbx-shop-e76272-fix-login-deps-0"})
 	if len(got) != 1 || got[0] != "sbx-shop-e76272-fix-login-deps-0" {
 		t.Fatalf("idle = %v", got)
 	}

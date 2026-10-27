@@ -24,6 +24,7 @@ type Inputs struct {
 	BaseImage     string // 直接用这个镜像当底，不构建 Profile 层
 	AgentFile     []byte // Agent 层 Dockerfile
 	Entrypoint    []byte
+	CodexVersion  string
 	ClaudeVersion string
 	UID, GID      int
 }
@@ -90,9 +91,16 @@ func (in Inputs) ProfileTag() string {
 	return "sbx/profile-" + in.Profile + ":" + hash12(in.ProfileFile)
 }
 
+func (in Inputs) codexVersion() string {
+	if in.CodexVersion == "" {
+		return "latest"
+	}
+	return in.CodexVersion
+}
+
 // Tag 是派生镜像的 tag。
 func (in Inputs) Tag() string {
-	h := hash12(in.ProfileFile, []byte(in.BaseImage), in.AgentFile, in.Entrypoint, []byte(in.ClaudeVersion),
+	h := hash12(in.ProfileFile, []byte(in.BaseImage), in.AgentFile, in.Entrypoint, []byte(in.ClaudeVersion), []byte(in.codexVersion()),
 		[]byte(strconv.Itoa(in.UID)), []byte(strconv.Itoa(in.GID)))
 	return "sbx/" + in.Profile + ":" + h
 }
@@ -121,6 +129,7 @@ func (b Builder) Ensure(in Inputs) (string, error) {
 		"UID":            strconv.Itoa(in.UID),
 		"GID":            strconv.Itoa(in.GID),
 		"CLAUDE_VERSION": in.ClaudeVersion,
+		"CODEX_VERSION":  in.codexVersion(),
 	}
 	if err := b.build(tag, files, args); err != nil {
 		return "", err

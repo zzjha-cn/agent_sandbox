@@ -88,15 +88,18 @@ func (t Task) Labels() map[string]string {
 
 // Meta 是创建 Task 时的参数，存在 state/meta.json。
 type Meta struct {
-	Task     string   `json:"task"`
-	WS       string   `json:"ws"`
-	Root     string   `json:"root"`
-	Base     string   `json:"base"`
-	Profile  string   `json:"profile"`
-	Image    string   `json:"image"`
-	Proxy    string   `json:"proxy"`
-	TaskID   string   `json:"task_id"`
-	DepMasks []string `json:"dep_masks"`
+	Namespace string   `json:"namespace,omitempty"`
+	Owner     string   `json:"owner,omitempty"`
+	Agent     string   `json:"agent,omitempty"`
+	Task      string   `json:"task"`
+	WS        string   `json:"ws"`
+	Root      string   `json:"root"`
+	Base      string   `json:"base"`
+	Profile   string   `json:"profile"`
+	Image     string   `json:"image"`
+	Proxy     string   `json:"proxy"`
+	TaskID    string   `json:"task_id"`
+	DepMasks  []string `json:"dep_masks"`
 	// Services 是跟这个 Task 一起起来的伴生容器名（M4-11）。
 	Services []string `json:"services,omitempty"`
 	// Forwards 记下这个 Task 接过哪些内部服务（M4-14、boundary.md §3.4）。

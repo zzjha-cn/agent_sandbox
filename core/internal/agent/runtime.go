@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -111,6 +113,19 @@ type Smoke struct {
 	Exited  func() bool // 异常退出判定；nil 时跳过
 }
 
+var ErrSmokeTimeout = errors.New("agent startup smoke check timed out")
+
+type SmokeTimeoutError struct {
+	Timeout time.Duration
+	Screen  string
+}
+
+func (e *SmokeTimeoutError) Error() string {
+	return fmt.Sprintf("agent readiness did not arrive within %s; last 20 lines of the screen:\n%s", e.Timeout, lastLines(e.Screen, 20))
+}
+
+func (e *SmokeTimeoutError) Is(target error) bool { return target == ErrSmokeTimeout }
+
 // DialogIn 返回画面上出现的首次启动对话框（没有就返回空）。
 // sbx doctor 和启动冒烟用的是同一份判据（R9）。
 func DialogIn(screen string) string { return dialogRe.FindString(screen) }
@@ -118,29 +133,54 @@ func DialogIn(screen string) string { return dialogRe.FindString(screen) }
 // SmokeCheck 轮询 tmux 画面和 status.json，确认 claude 已就绪且没有卡在对话框上。
 // 会话现在不会随 claude 退出而消失，所以"启动后就退出"要靠 SessionEnd 或画面上的提示来判断。
 func (r Runtime) SmokeCheck(sm Smoke) error {
+	return r.SmokeCheckContext(context.Background(), sm)
+}
+
+func (r Runtime) SmokeCheckContext(ctx context.Context, sm Smoke) error {
 	deadline := time.Now().Add(sm.Timeout)
 	var screen string
 	for time.Now().Before(deadline) {
-		time.Sleep(time.Second)
-		if !r.HasSession() {
+		wait := time.NewTimer(time.Second)
+		select {
+		case <-ctx.Done():
+			if !wait.Stop() {
+				select {
+				case <-wait.C:
+				default:
+				}
+			}
+			return ctx.Err()
+		case <-wait.C:
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		hasSession := r.HasSession()
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if !hasSession {
 			// headless 跑完会 kill 1 停掉容器，tmux 会话跟着消失：那是正常结束，不是启动失败
 			if sm.Exited == nil {
 				return nil
 			}
-			return fmt.Errorf("claude exited after starting (the tmux session has ended)")
+			return fmt.Errorf("agent exited after starting (the tmux session has ended)")
 		}
 		screen, _ = r.Capture()
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if sm.Exited != nil && (sm.Exited() || strings.Contains(screen, ExitNotice)) {
-			return fmt.Errorf("claude exited immediately after starting; last 20 lines of the screen:\n%s", lastLines(screen, 20))
+			return fmt.Errorf("agent exited immediately after starting; last 20 lines of the screen:\n%s", lastLines(screen, 20))
 		}
 		if m := DialogIn(screen); m != "" {
-			return fmt.Errorf("claude is stuck on a first-run dialog (%q); the preseeded fields may have changed between versions (R9):\n%s", m, lastLines(screen, 20))
+			return fmt.Errorf("agent is stuck on a first-run dialog (%q); the preseeded fields may have changed between versions (R9):\n%s", m, lastLines(screen, 20))
 		}
 		if sm.Ready() {
 			return nil
 		}
 	}
-	return fmt.Errorf("SessionStart did not arrive within %s; last 20 lines of the screen:\n%s", sm.Timeout, lastLines(screen, 20))
+	return &SmokeTimeoutError{Timeout: sm.Timeout, Screen: screen}
 }
 
 func lastLines(s string, n int) string {

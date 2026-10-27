@@ -4,6 +4,7 @@ package docker
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,10 +18,40 @@ type Client struct {
 	Bin     string
 	Verbose bool
 	Log     io.Writer
+	ctx     context.Context
+	// ResourceLabels are supplied by the validated daemon ownership scope.
+	// They apply to persistent resources, never credentials or environment.
+	ResourceLabels map[string]string
+}
+
+func (c *Client) resourceLabels(labels map[string]string) map[string]string {
+	out := make(map[string]string, len(labels)+len(c.ResourceLabels))
+	for k, v := range labels {
+		out[k] = v
+	}
+	for k, v := range c.ResourceLabels {
+		out[k] = v
+	}
+	return out
 }
 
 func New(verbose bool) *Client {
 	return &Client{Bin: "docker", Verbose: verbose, Log: os.Stderr}
+}
+
+// WithContext returns a shallow client copy whose commands use ctx. This lets
+// one command scope cancellation without mutating the shared CLI client.
+func (c *Client) WithContext(ctx context.Context) *Client {
+	clone := *c
+	clone.ctx = ctx
+	return &clone
+}
+
+func (c *Client) commandContext() context.Context {
+	if c.ctx != nil {
+		return c.ctx
+	}
+	return context.Background()
 }
 
 // Error 带上完整命令行和 stderr，便于排查。
@@ -47,13 +78,24 @@ func (c *Client) Run(args ...string) (string, error) {
 	return c.RunInput(nil, args...)
 }
 
+func (c *Client) RunContext(ctx context.Context, args ...string) (string, error) {
+	return c.RunInputContext(ctx, nil, args...)
+}
+
 // RunInput 同 Run，并把 stdin 传给命令。
 func (c *Client) RunInput(stdin io.Reader, args ...string) (string, error) {
+	return c.RunInputContext(c.commandContext(), stdin, args...)
+}
+
+func (c *Client) RunInputContext(ctx context.Context, stdin io.Reader, args ...string) (string, error) {
 	c.trace(args)
-	cmd := exec.Command(c.Bin, args...)
+	cmd := exec.CommandContext(ctx, c.Bin, args...)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr, cmd.Stdin = &out, &errb, stdin
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
 		return strings.TrimSpace(out.String()), &Error{Args: args, Stderr: errb.String(), Err: err}
 	}
 	return strings.TrimSpace(out.String()), nil
@@ -61,11 +103,18 @@ func (c *Client) RunInput(stdin io.Reader, args ...string) (string, error) {
 
 // RunBytes 执行命令并返回原始 stdout（不去空白，用于 tar 等二进制输出）。
 func (c *Client) RunBytes(stdin io.Reader, args ...string) ([]byte, error) {
+	return c.RunBytesContext(c.commandContext(), stdin, args...)
+}
+
+func (c *Client) RunBytesContext(ctx context.Context, stdin io.Reader, args ...string) ([]byte, error) {
 	c.trace(args)
-	cmd := exec.Command(c.Bin, args...)
+	cmd := exec.CommandContext(ctx, c.Bin, args...)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr, cmd.Stdin = &out, &errb, stdin
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
 		return out.Bytes(), &Error{Args: args, Stderr: errb.String(), Err: err}
 	}
 	return out.Bytes(), nil
@@ -79,7 +128,8 @@ func (c *Client) Stream(stdout, stderr io.Writer, args ...string) error {
 // StreamEnv 和 Stream 一样，另外把 extraEnv 追加到继承来的环境上（后者覆盖前者）。
 func (c *Client) StreamEnv(extraEnv []string, stdout, stderr io.Writer, args ...string) error {
 	c.trace(args)
-	cmd := exec.Command(c.Bin, args...)
+	ctx := c.commandContext()
+	cmd := exec.CommandContext(ctx, c.Bin, args...)
 	if len(extraEnv) > 0 {
 		cmd.Env = append(os.Environ(), extraEnv...)
 	}
@@ -87,6 +137,9 @@ func (c *Client) StreamEnv(extraEnv []string, stdout, stderr io.Writer, args ...
 	cmd.Stdout = stdout
 	cmd.Stderr = io.MultiWriter(stderr, &tailBuffer{buf: &errb, max: 4096})
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
 		return &Error{Args: args, Stderr: errb.String(), Err: err}
 	}
 	return nil
@@ -95,9 +148,13 @@ func (c *Client) StreamEnv(extraEnv []string, stdout, stderr io.Writer, args ...
 // Interactive 把终端直接交给 docker（attach、shell）。
 func (c *Client) Interactive(args ...string) error {
 	c.trace(args)
-	cmd := exec.Command(c.Bin, args...)
+	ctx := c.commandContext()
+	cmd := exec.CommandContext(ctx, c.Bin, args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
 		return &Error{Args: args, Err: err}
 	}
 	return nil
@@ -106,7 +163,18 @@ func (c *Client) Interactive(args ...string) error {
 // ---- 容器 ----
 
 func (c *Client) RunContainer(spec RunSpec) (string, error) {
+	spec.Labels = c.resourceLabels(spec.Labels)
 	return c.Run(spec.Args()...)
+}
+
+func (c *Client) CreateContainer(spec RunSpec) (string, error) {
+	spec.Labels = c.resourceLabels(spec.Labels)
+	return c.Run(spec.CreateArgs()...)
+}
+
+func (c *Client) RunContainerContext(ctx context.Context, spec RunSpec) (string, error) {
+	spec.Labels = c.resourceLabels(spec.Labels)
+	return c.RunContext(ctx, spec.Args()...)
 }
 
 func (c *Client) Start(name string) error { _, err := c.Run("start", name); return err }
@@ -158,7 +226,7 @@ func (c *Client) ExecInteractive(name string, o ExecOpts, cmd ...string) error {
 func (c *Client) Logs(name string, n int) string {
 	args := []string{"logs", "--tail", fmt.Sprint(n), name}
 	c.trace(args)
-	out, _ := exec.Command(c.Bin, args...).CombinedOutput()
+	out, _ := exec.CommandContext(c.commandContext(), c.Bin, args...).CombinedOutput()
 	return strings.TrimSpace(string(out))
 }
 
@@ -217,6 +285,7 @@ func (c *Client) ExtraHosts(name string) ([]string, error) {
 // ---- 网络 ----
 
 func (c *Client) NetworkCreate(name string, internal bool, labels map[string]string) error {
+	labels = c.resourceLabels(labels)
 	args := []string{"network", "create"}
 	if internal {
 		args = append(args, "--internal")
@@ -267,16 +336,72 @@ func (c *Client) NetworkRm(name string) error {
 
 // ---- volume ----
 
+// VolumeLabels reads only non-secret ownership metadata, never volume contents.
+func (c *Client) VolumeLabels(name string) (map[string]string, bool, error) {
+	out, err := c.Run("volume", "inspect", "--format", "{{json .Labels}}", name)
+	if err != nil {
+		if isNotFound(err) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	var labels map[string]string
+	if err := json.Unmarshal([]byte(out), &labels); err != nil {
+		return nil, true, fmt.Errorf("invalid volume labels: %w", err)
+	}
+	return labels, true, nil
+}
+
 // VolumeCreate 创建 volume，返回是否为新建。
 func (c *Client) VolumeCreate(name string, labels map[string]string) (created bool, err error) {
-	if _, err := c.Run("volume", "inspect", "--format", "{{.Name}}", name); err == nil {
-		return false, nil
-	} else if !isNotFound(err) {
-		return false, err
+	labels = c.resourceLabels(labels)
+	if len(c.ResourceLabels) > 0 {
+		existing, found, err := c.VolumeLabels(name)
+		if err != nil {
+			return false, err
+		}
+		if found {
+			return false, c.checkVolumeScope(name, existing)
+		}
+	} else {
+		if _, err := c.Run("volume", "inspect", "--format", "{{.Name}}", name); err == nil {
+			return false, nil
+		} else if !isNotFound(err) {
+			return false, err
+		}
 	}
 	args := append([]string{"volume", "create"}, labelArgs(labels)...)
 	_, err = c.Run(append(args, name)...)
+	if err == nil && len(c.ResourceLabels) > 0 {
+		var actual map[string]string
+		var found bool
+		actual, found, err = c.VolumeLabels(name)
+		if err == nil && !found {
+			err = fmt.Errorf("volume disappeared after creation: %s", name)
+		}
+		if err == nil {
+			err = c.checkVolumeScope(name, actual)
+		}
+	}
 	return err == nil, err
+}
+
+func (c *Client) checkVolumeScope(name string, labels map[string]string) error {
+	labeled := false
+	for k := range c.ResourceLabels {
+		labeled = labeled || labels[k] != ""
+	}
+	if !labeled {
+		return nil
+	}
+	for k, expected := range c.ResourceLabels {
+		// Legacy unlabeled volumes are retained under an explicitly adopted
+		// daemon. A partially labeled or foreign scope is never adopted.
+		if labels[k] != expected {
+			return fmt.Errorf("volume ownership mismatch: %s", name)
+		}
+	}
+	return nil
 }
 
 func (c *Client) VolumeRm(name string) error {

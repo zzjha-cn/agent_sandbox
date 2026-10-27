@@ -28,6 +28,16 @@ ln -sf "$PWD/bin/sbx" /usr/local/bin/sbx    # 可选，放进 PATH
 
 需要 Docker Desktop 已启动，内存建议 10GB。
 
+每位互不信任的用户使用独占 Docker daemon；rootless daemon 或独立 VM 可承载该边界。升级后若已有 `sbx-home/cache/mise` 但尚无归属记录，先查看并显式接管：
+
+```sh
+sbx isolation status --json   # 只读；未接管旧卷时退出 3
+sbx isolation adopt           # 声明这是当前用户独占的 daemon，保留旧卷和登录态
+sbx isolation status --json
+```
+
+空 daemon 首次操作自动登记归属。`admit` 不创建归属记录；错误 owner、跨 namespace 的 Task 和显式 `shared-daemon` 部署均被拒绝。daemon、旧卷与新对象的 namespace/owner、全局配置、回滚和恢复步骤见 [R6 隔离设计与验收](r6-isolation.md)。本轮开发环境已完成接管，现有 Codex 登录继续可用。
+
 需要宿主机代理时写 `~/.sbx/config.toml`（全部字段见下文「配置：四层」一节）：
 
 ```toml
@@ -42,7 +52,20 @@ sbx login            # 打开 claude 的登录流程：照它给的链接授权�
 sbx login --status   # 看看现在是哪个账号
 ```
 
-命令形式是 `sbx login [claude|codex]`，**省略时就是 claude**。Codex 的登录流程（`codex login --device-auth`）还没验证，推迟到 M3-6；现在写 `sbx login codex` 会明确告诉你这件事，和打错名字的报错分开。
+临时选择执行 provider 无需修改配置：`sbx run --agent codex codex-demo`，或 `sbx run --agent claude claude-demo`。`--agent` 覆盖本次的 `default_agent`，不写配置文件；恢复时仍检查 Task 原有 provider，不能用它切换已有 Task 的身份归属。协议模式 `--envelope` 保持从配置选择 provider，不接受此运行覆盖参数。
+
+命令形式是 `sbx login [claude|codex]`，**省略时就是 claude**。Codex 支持设备码登录，或者显式导入本机已有认证：
+
+```sh
+sbx login codex --import ~/.codex              # 从目录读取 auth.json
+sbx login codex --import /path/to/auth.json    # 也可直接指定文件
+sbx login codex --import ~/.codex --force      # 明确替换已有 Codex 凭据
+sbx login codex --status
+```
+
+导入只处理 `auth.json`，不会复制 config、sessions、skills 等其他内容。文件通过 stdin 传入无网络的临时容器，在私有暂存目录中用 Codex 检查可识别性，再原子安装到 `sbx-home/.codex/auth.json`，权限为 `0600`。默认保护已有凭据，`--force` 才替换；Claude 的身份保持不变。导入不需要在浏览器再次授权，也不会发起模型请求。
+
+源文件不被修改。导入是一次独立拷贝，后续刷新不与宿主机双向同步。若宿主机认证保存在系统钥匙串而没有 `auth.json`，命令会给出说明；不会自动读取钥匙串或改写本机 Codex 配置。可按 [Codex 官方说明](https://developers.openai.com/codex/auth) 配置文件凭据存储后再导入。`--import` 仅支持 Codex，不能与 `--status`、`--logout` 混用。
 
 它在一个临时容器里挂上 `sbx-home` 跑 `claude auth login`，凭据落在这个 volume 里。**这个容器没有 Task，也就不接 Task 网络和 `sbx-proxy`**：配了 `network.upstream` 就走上游代理，否则直连。第一次 `sbx run` 发现没凭据时会停下来让你先跑这条。
 
@@ -366,7 +389,7 @@ sbx trust             # 确认这个仓库的 .sbx/ 内容（见下）
 | | `--since <dur>` | 0（全部），例如 `2h`、`30m` |
 | `net allow <host>...` | `--project` | false（写个人全局；加上则写 `<repo>/.sbx/sandbox.toml`） |
 | `memory pull` | `-y, --yes` | false（先问） |
-| `login [claude\|codex]` | `--status` / `--logout` / `--force` | false |
+| `login [claude\|codex]` | `--status` / `--logout` / `--force`；Codex 可用 `--import <目录或文件>` | false |
 | | `--console`（claude） | false（Claude 订阅） |
 | | `--email <addr>`（claude） | 空 |
 | `trust` | `--show` | false（展示并询问；加上则只看不写） |

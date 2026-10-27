@@ -92,6 +92,12 @@ func (s RunSpec) Args() []string {
 	return append(args, s.Cmd...)
 }
 
+// CreateArgs prepares a stopped container with the same configuration. This
+// allows all networks to be connected before its process performs DNS/network IO.
+func (s RunSpec) CreateArgs() []string {
+	return append([]string{"create"}, s.Args()[2:]...)
+}
+
 func (m Mount) flag() string {
 	typ := "bind"
 	if m.Volume {

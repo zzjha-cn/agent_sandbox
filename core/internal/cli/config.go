@@ -43,7 +43,9 @@ func (a *App) configCmd() *cobra.Command {
 			// prep 镜像里的声明也是一层（M4-15）。读不到就说一句，别让 config show
 			// 因为一个可选的镜像而失败——但也不能静悄悄地少显示一层。
 			if wsErr == nil {
-				if m, err := a.prepDeclared(); err != nil {
+				if err := a.checkIsolation(cmd.Context(), false); err != nil {
+					fmt.Fprintln(a.Err, "note: prep declarations omitted because daemon isolation has not passed:", err)
+				} else if m, err := a.prepDeclared(); err != nil {
 					fmt.Fprintln(a.Err, "note: cannot read the prep image's declarations:", err)
 				} else if m != nil {
 					if err := a.Loaded.MergePrep(m.Allow, m.Env); err != nil {

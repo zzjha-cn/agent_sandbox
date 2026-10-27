@@ -100,6 +100,17 @@ func LoadLayers(layers []Layer) (Loaded, error) {
 		if err != nil {
 			return ld, fmt.Errorf("%s: %w", l.Path, err)
 		}
+		for _, key := range md.Keys() {
+			if len(key) == 0 || !strings.EqualFold(key[0], "isolation") {
+				continue
+			}
+			if l.Name != LayerGlobal {
+				return ld, fmt.Errorf("%s: isolation is administrator configuration and can only be set in the global layer", l.Path)
+			}
+			if key[0] != "isolation" || len(key) > 2 || (len(key) == 2 && key[1] != "boundary" && key[1] != "owner") {
+				return ld, fmt.Errorf("%s: isolation accepts only the exact keys isolation.boundary and isolation.owner", l.Path)
+			}
+		}
 		if l.Project {
 			if err := checkProject(string(data), l.Path); err != nil {
 				return ld, err
@@ -181,6 +192,8 @@ type binding struct {
 // agents.<name>.* 是 map，由 agentFields 单独处理。
 func bindings(c *Config) []binding {
 	return []binding{
+		{Key: "isolation.boundary", Str: &c.Isolation.Boundary},
+		{Key: "isolation.owner", Str: &c.Isolation.Owner},
 		{Key: "default_agent", Str: &c.DefaultAgent},
 		{Key: "profile", Str: &c.Profile},
 		{Key: "image", Str: &c.Image},

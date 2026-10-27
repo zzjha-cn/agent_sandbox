@@ -5,8 +5,6 @@ import (
 	"testing"
 
 	"sandx/internal/config"
-	"sandx/internal/task"
-	"sandx/internal/workspace"
 )
 
 func TestResolveAgent(t *testing.T) {
@@ -16,10 +14,8 @@ func TestResolveAgent(t *testing.T) {
 	if _, _, err := resolveAgent("claude"); err != nil {
 		t.Fatal(err)
 	}
-	// 设计里有、还没实现的 Agent：报错要说明原因，而不是"不认识"。
-	err := mustErr(t, "codex")
-	if !strings.Contains(err.Error(), "M3-6") {
-		t.Fatalf("codex 的报错应当指向 M3-6：%v", err)
+	if name, cli, err := resolveAgent("codex"); err != nil || name != "codex" || cli.bin != "codex" {
+		t.Fatalf("codex: %q %+v %v", name, cli, err)
 	}
 	if err := mustErr(t, "cluade"); !strings.Contains(err.Error(), "unknown agent") {
 		t.Fatalf("打错名字应当是「不认识」：%v", err)
@@ -57,14 +53,12 @@ func TestAuthArgs(t *testing.T) {
 	}
 }
 
-func TestLoginHelpPointsAtSbxLogin(t *testing.T) {
-	home := t.TempDir()
-	tk, err := task.New(home, workspace.Workspace{Root: "/r", ID: "r-abc123"}, "t1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	a := &App{Home: home, Cfg: config.Default()}
-	if s := a.loginHelp(tk); !strings.Contains(s, "sbx login") || !strings.Contains(s, "sbx run t1") {
-		t.Fatalf("should point at sbx login:\n%s", s)
+func TestCodexRejectsClaudeLoginOptionsBeforeInfrastructure(t *testing.T) {
+	for _, flag := range []string{"--console", "--console=false", "--email=a@b.c"} {
+		cmd := (&App{}).loginCmd()
+		cmd.SetArgs([]string{"codex", flag})
+		if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "only apply to Claude") {
+			t.Fatalf("%s: %v", flag, err)
+		}
 	}
 }

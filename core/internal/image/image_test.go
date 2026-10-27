@@ -16,6 +16,7 @@ func TestHashStability(t *testing.T) {
 		func(i *Inputs) { i.AgentFile = append([]byte{}, append(i.AgentFile, '#')...) },
 		func(i *Inputs) { i.Entrypoint = []byte("x") },
 		func(i *Inputs) { i.ClaudeVersion = "2.0.0" },
+		func(i *Inputs) { i.CodexVersion = "0.164.0" },
 		func(i *Inputs) { i.UID = 1000 },
 		func(i *Inputs) { i.GID = 1000 },
 	}

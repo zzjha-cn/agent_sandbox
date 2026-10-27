@@ -1,13 +1,16 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -15,35 +18,69 @@ import (
 	"sandx/internal/agent"
 	"sandx/internal/config"
 	"sandx/internal/docker"
+	"sandx/internal/execution"
+	"sandx/internal/isolation"
 	"sandx/internal/prep"
+	"sandx/internal/protocol"
 	"sandx/internal/proxy"
 	"sandx/internal/task"
 	"sandx/internal/workspace"
 )
 
-const smokeTimeout = 30 * time.Second
-
 // runOpts 是一次 sbx run 的选项。
 type runOpts struct {
-	Base   string
-	Detach bool
-	Fresh  bool
-	Prompt string // 非空 = headless（M3-7）
+	Base     string
+	Detach   bool
+	Fresh    bool
+	Prompt   string // 非空 = headless（M3-7）
+	JSONL    bool
+	Protocol bool
+	Timeout  time.Duration
+	TaskID   string
 }
 
 // headless 报告这次是不是 headless 运行。
 func (o runOpts) headless() bool { return o.Prompt != "" }
 
 func (a *App) runCmd() *cobra.Command {
-	var base, netMode, proxyMode, prompt string
-	var detach, fresh, cloudMCP bool
+	var base, netMode, proxyMode, prompt, envelopePath, agentName string
+	var detach, fresh, cloudMCP, jsonl bool
 	cmd := &cobra.Command{
 		Use:   "run [task]",
 		Short: "Create or resume a task and start the agent in its sandbox (omit task for main)",
-		Args:  cobra.MaximumNArgs(1),
+		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if envelopePath != "" {
+				env, err := readEnvelope(cmd, envelopePath)
+				if err != nil {
+					a.writeProtocolFailure(err)
+					return err
+				}
+				if len(args) != 0 || cmd.Flags().Changed("prompt") || cmd.Flags().Changed("base") || cmd.Flags().Changed("fresh") || cmd.Flags().Changed("jsonl") || cmd.Flags().Changed("detach") || cmd.Flags().Changed("net") || cmd.Flags().Changed("proxy") || cmd.Flags().Changed("cloud-mcp") || cmd.Flags().Changed("agent") {
+					err = &protocol.CodedError{Code: "invalid_envelope", Err: fmt.Errorf("--envelope cannot be combined with task arguments or run override flags")}
+					a.writeProtocolFailure(err)
+					return err
+				}
+				t, err := a.loadEnvelopeTask(env)
+				if err != nil {
+					a.writeProtocolFailure(err)
+					return err
+				}
+				runCtx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+				defer stop()
+				return a.run(runCtx, t, runOpts{Base: env.Base, Fresh: env.Fresh, Prompt: env.Prompt, JSONL: true, Protocol: true, Timeout: time.Duration(env.TimeoutSeconds) * time.Second, TaskID: env.TaskID})
+			}
+			if err := cobra.MaximumNArgs(1)(cmd, args); err != nil {
+				return err
+			}
+			if cmd.Flags().Changed("agent") && agentName != "claude" && agentName != "codex" {
+				return fmt.Errorf("--agent must be claude or codex")
+			}
 			if err := a.load(); err != nil {
 				return err
+			}
+			if cmd.Flags().Changed("agent") {
+				a.setRunAgent(agentName)
 			}
 			name := ""
 			if len(args) == 1 {
@@ -75,15 +112,18 @@ func (a *App) runCmd() *cobra.Command {
 			if err := a.requireTrust(); err != nil {
 				return err
 			}
-			o := runOpts{Base: base, Detach: detach, Fresh: fresh}
+			o := runOpts{Base: base, Detach: detach, Fresh: fresh, JSONL: jsonl}
 			if cmd.Flags().Changed("prompt") {
 				if o.Prompt, err = readPrompt(prompt, cmd.InOrStdin()); err != nil {
 					return err
 				}
 			}
-			return a.run(t, o)
+			runCtx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+			return a.run(runCtx, t, o)
 		},
 	}
+	cmd.Flags().StringVar(&agentName, "agent", "", "agent for this run: claude or codex (overrides default_agent without changing config files)")
 	cmd.Flags().StringVar(&base, "base", "", "starting point for the new branch (default: current HEAD)")
 	cmd.Flags().BoolVarP(&detach, "detach", "d", false, "start the task without attaching to it")
 	cmd.Flags().BoolVar(&fresh, "fresh", false, "start a new conversation instead of continuing this task's last one")
@@ -91,17 +131,16 @@ func (a *App) runCmd() *cobra.Command {
 	cmd.Flags().StringVar(&proxyMode, "proxy", "", "egress proxy for this task: shared (default, one squid for everyone) or dedicated (its own sidecar)")
 	cmd.Flags().StringVarP(&prompt, "prompt", "p", "", "headless: run this prompt and exit instead of opening the session (\"-\" reads stdin)")
 	cmd.Flags().BoolVar(&cloudMCP, "cloud-mcp", false, "let this task reach Claude's cloud connectors (off by default; see ADR 0015)")
+	cmd.Flags().BoolVar(&jsonl, "jsonl", false, "write machine-readable execution events and result to stdout (headless only)")
+	cmd.Flags().StringVar(&envelopePath, "envelope", "", "run a versioned JSON envelope from a file or '-' for stdin")
 	return cmd
 }
 
-// undo 记录本次新建的资源，失败时逆序清理。
-type undo []func()
-
-func (u *undo) add(f func()) { *u = append(*u, f) }
-func (u undo) run() {
-	for i := len(u) - 1; i >= 0; i-- {
-		u[i]()
-	}
+// Keep the effective config and later prep merges aligned. This changes only
+// in-memory configuration; no configuration layer is written to disk.
+func (a *App) setRunAgent(name string) {
+	a.Cfg.DefaultAgent = name
+	a.Loaded.Config.DefaultAgent = name
 }
 
 // readPrompt 取 -p 的值；"-" 表示从 stdin 读（喂长 prompt 用）。
@@ -119,101 +158,167 @@ func readPrompt(v string, stdin io.Reader) (string, error) {
 	return v, nil
 }
 
-func (a *App) run(t task.Task, o runOpts) error {
-	st, exists, err := a.Docker.Inspect(t.Container())
+func (a *App) run(ctx context.Context, t task.Task, o runOpts) error {
+	if o.JSONL && !o.headless() {
+		return fmt.Errorf("--jsonl requires --prompt")
+	}
+	req := execution.Request{Task: t, TaskID: o.TaskID, Mode: execution.Interactive, Prompt: o.Prompt, Base: o.Base, Fresh: o.Fresh, Detach: o.Detach, Config: a.Cfg}
+	if o.headless() {
+		req.Mode = execution.Headless
+	}
+	if o.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, o.Timeout)
+		defer cancel()
+	}
+	runApp := *a
+	runApp.Docker = a.Docker.WithContext(ctx)
+	defer func() {
+		a.Cfg, a.Loaded = runApp.Cfg, runApp.Loaded
+	}()
+	driver := runApp.executionDriver()
+	var service *execution.Service
+	if o.Protocol {
+		service = execution.NewService(driver, protocol.NewEventSink(a.Out))
+	} else if o.JSONL {
+		service = execution.NewService(driver, execution.NewJSONLSink(a.Out))
+	} else {
+		service = execution.NewService(driver)
+	}
+	result, err := service.Run(ctx, req)
 	if err != nil {
 		return err
 	}
-	// design §10.1 第 4 步：-p 不能插队到一个活着的会话里，两个 claude 会抢同一棵 worktree
-	if o.headless() && exists && st.Running {
-		s, _ := t.ReadStatus()
-		if d := task.Derive(st, exists, s, t.RunExit()); d == "running" || d == "idle" || d == "starting" {
-			return fmt.Errorf("task %s already has a session running (%s). Look at it with sbx attach %s, or sbx stop %s before using -p",
-				t.Name, d, t.Name, t.Name)
+	switch result.Next {
+	case execution.Completed:
+		if !o.JSONL {
+			if err := runApp.showHeadlessResult(t, result.AgentExitCode); err != nil {
+				return err
+			}
 		}
-	}
-	// 只有真要启动一个容器时才查并发和内存预算：attach 一个已经在跑的 Task 不新增占用
-	if !exists || !st.Running {
-		if err := a.checkConcurrency(t); err != nil {
-			return err
+		if result.State == execution.AgentFailed && result.AgentExitCode != nil {
+			if o.JSONL {
+				return &execution.ExecutionError{Kind: execution.AgentRunFailed, Stage: "agent exited", Cause: fmt.Errorf("agent exited with %d", *result.AgentExitCode)}
+			}
+			return fmt.Errorf("agent exited with %d (full output: sbx logs %s)", *result.AgentExitCode, t.Name)
 		}
-		a.warnMemoryBudget()
-	}
-	if exists {
-		if o.Base != "" {
-			a.logf("task %s already exists; ignoring --base", t.Name)
-		}
-		if err := a.resume(t, st, o); err != nil {
-			return err
-		}
-	} else if err := a.create(t, o); err != nil {
-		return err
-	}
-	if o.headless() {
-		return a.afterHeadless(t, o.Detach)
-	}
-	if o.Detach {
-		fmt.Fprintf(a.Out, "task %s is already running in the background. Enter it with: sbx attach %s\n", t.Name, t.Name)
 		return nil
+	case execution.Detached:
+		if o.JSONL {
+			return nil
+		}
+		if o.headless() {
+			fmt.Fprintf(a.Out, "task %s is running the prompt in the background. Follow it with: sbx logs -f %s\n", t.Name, t.Name)
+		} else {
+			fmt.Fprintf(a.Out, "task %s is already running in the background. Enter it with: sbx attach %s\n", t.Name, t.Name)
+		}
+		return nil
+	case execution.Attach:
+		if err := runApp.attach(t); err != nil {
+			return contextExecutionError(ctx, err)
+		}
+		return nil
+	default:
+		return fmt.Errorf("execution returned invalid next step %q", result.Next)
 	}
-	return a.attach(t)
 }
 
-// resume 处理容器已存在的情况：已停止就启动，claude 不在就补拉起。
-func (a *App) resume(t task.Task, st docker.State, o runOpts) error {
-	meta, ok, err := t.ReadMeta()
-	if err != nil {
+func contextExecutionError(ctx context.Context, err error) error {
+	switch ctx.Err() {
+	case context.Canceled:
+		return &execution.ExecutionError{Kind: execution.CancelledKind, Stage: "run cancelled", Cause: err}
+	case context.DeadlineExceeded:
+		return &execution.ExecutionError{Kind: execution.TimedOutKind, Stage: "run timed out", Cause: err}
+	default:
 		return err
 	}
-	if !ok {
-		return fmt.Errorf("container %s exists but %s/meta.json is missing; run sbx done %s first, then run again", t.Container(), t.StateDir(), t.Name)
-	}
-	// prep 声明过的放行域名在建 Task 时记进了 meta：这里直接用，不再去读镜像。
-	// 漏掉的话 resume 一次就会把那几条白名单悄悄撤掉（M4-15）。
-	if len(meta.PrepAllow) > 0 {
-		if err := a.Loaded.MergePrep(meta.PrepAllow, nil); err != nil {
-			return err
-		}
-		a.Cfg = a.Loaded.Config
-	}
-	p := a.egress(t)
-	if err := p.Ensure(); err != nil {
-		return err
-	}
-	// 重新写入配置（shared 下 token 复用），保证代理被重建过时也能恢复
-	if _, err := p.AttachTask(a.proxySpec(t, meta.TaskID)); err != nil {
-		return err
-	}
-	if err := a.ensureServices(t, nil); err != nil {
-		return err
-	}
-	if _, _, err := a.ensureForwards(t, nil, false); err != nil {
-		return err
-	}
-	// 接着内网资源这件事每次回到 Task 都要提一句，不是只在建的时候提一次——
-	// 真正危险的恰恰是第二天接着跑、已经忘了这条洞存在的那次（boundary.md §3.5）。
-	a.warnForwardExposure(meta.Forwards)
-	if err := agent.RenderGen(t.GenDir(), a.genInput(a.hostClaude(), o)); err != nil {
-		return err
-	}
-	if !st.Running {
-		a.logf("starting stopped task %s ...", t.Name)
-		if err := a.Docker.Start(t.Container()); err != nil {
-			return err
-		}
-	}
-	return a.startAgent(t, o)
 }
+
+// executionDriver is the composition root for the execution adapters.
+func (a *App) executionDriver() *execution.RuntimeDriver {
+	guard := isolation.New(a.Docker, a.Cfg.Isolation)
+	provisioner := execution.NewProvisioner(runHost{app: a})
+	provisioner.Isolation = guard
+	return &execution.RuntimeDriver{Docker: a.Docker, Isolation: guard, Provisioner: provisioner,
+		CheckConcurrency: a.checkConcurrency, WarnMemoryBudget: a.warnMemoryBudget, Logf: a.logf, PollInterval: followTick}
+}
+
+type runHost struct{ app *App }
+
+func (h runHost) DockerClient() *docker.Client { return h.app.Docker }
+func (h runHost) DockerClientWithContext(ctx context.Context) *docker.Client {
+	return h.app.Docker.WithContext(ctx)
+}
+func (h runHost) EffectiveConfig() config.Config  { return h.app.Cfg }
+func (h runHost) Logf(format string, args ...any) { h.app.logf(format, args...) }
+func (h runHost) PrepareWorktree(ctx context.Context, t task.Task, base string) (string, error) {
+	return h.app.prepareWorktree(ctx, t, base)
+}
+func (h runHost) AgentImage() (string, error) { return h.app.agentImage() }
+func (h runHost) PrepLoad(t task.Task) (string, *prep.Plan, error) {
+	return h.app.prepLoad(t)
+}
+func (h runHost) MergePrepAllow(allow []string) error {
+	a := h.app
+	if err := a.Loaded.MergePrep(allow, nil); err != nil {
+		return err
+	}
+	a.Cfg = a.Loaded.Config
+	return nil
+}
+func (h runHost) EgressOf(t task.Task, mode string) proxy.Egress { return h.app.egressOf(t, mode) }
+func (h runHost) Egress(t task.Task) proxy.Egress                { return h.app.egress(t) }
+func (h runHost) EgressWithContext(ctx context.Context, t task.Task, mode string) proxy.Egress {
+	app := *h.app
+	app.Docker = h.app.Docker.WithContext(ctx)
+	return app.egressOf(t, mode)
+}
+func (h runHost) ProxySpec(t task.Task, taskID string) proxy.TaskSpec {
+	return h.app.proxySpec(t, taskID)
+}
+func (h runHost) WarnSkippedNotifyHosts() {
+	a := h.app
+	if _, skipped := proxy.HostsIn(a.Cfg.OnIdle, a.Cfg.OnExit); len(skipped) > 0 {
+		a.logf("note: %s in the notify command contains a variable or is an IP and cannot be allowed automatically; run sbx net allow <host> if you need it", strings.Join(skipped, "、"))
+	}
+}
+func (h runHost) EnsureServices(t task.Task, u *execution.Undo) error {
+	return h.app.ensureServices(t, u)
+}
+func (h runHost) EnsureForwards(t task.Task, u *execution.Undo, create bool) ([]string, []task.Link, error) {
+	return h.app.ensureForwards(t, u, create)
+}
+func (h runHost) EnsureVolumes(t task.Task, tag string, u *execution.Undo) (map[string]bool, error) {
+	return h.app.ensureVolumes(t, tag, u)
+}
+func (h runHost) PrepSeed(t task.Task, tag string, plan *prep.Plan, fresh map[string]bool) error {
+	return h.app.prepSeed(t, tag, plan, fresh)
+}
+func (h runHost) HostClaude() agent.HostClaude { return h.app.hostClaude() }
+func (h runHost) GenInput(host agent.HostClaude, req execution.Request) agent.GenInput {
+	return h.app.genInput(host, req)
+}
+func (h runHost) APIKey() (execution.APIKey, error) {
+	key, err := h.app.apiKey("")
+	return execution.APIKey{Env: key.Env, Value: key.Value, Source: key.Source}, err
+}
+func (h runHost) InstallCAs(t task.Task, tag string, cas []string) error {
+	return h.app.installCAs(t, tag, cas)
+}
+func (h runHost) StartAgent(ctx context.Context, t task.Task, req execution.Request) error {
+	return h.app.startAgent(ctx, t, req)
+}
+func (h runHost) WarnForwardExposure(links []task.Link) { h.app.warnForwardExposure(links) }
 
 // genInput 把生效配置和本次运行的参数汇成 gen 目录的输入。
-func (a *App) genInput(host agent.HostClaude, o runOpts) agent.GenInput {
+func (a *App) genInput(host agent.HostClaude, req execution.Request) agent.GenInput {
 	return agent.GenInput{
 		Host:          host,
 		BlockCloudMCP: !a.Cfg.Network.CloudMCP,
 		OnIdle:        a.Cfg.OnIdle,
 		OnExit:        a.Cfg.OnExit,
 		Throttle:      a.Cfg.NotifyThrottle,
-		Prompt:        o.Prompt,
+		Prompt:        req.Prompt,
 	}
 }
 
@@ -243,204 +348,22 @@ func (a *App) proxySpec(t task.Task, taskID string) proxy.TaskSpec {
 	}
 }
 
-func (a *App) create(t task.Task, o runOpts) (err error) {
-	var u undo
-	step := "preparing the worktree"
-	defer func() {
-		if err != nil {
-			a.logf("failed at step [%s]; cleaning up what this run created (the worktree is kept) ...", step)
-			u.run()
-			err = fmt.Errorf("%s: %w", step, err)
-		}
-	}()
-
-	// 1. worktree
-	baseSHA, err := a.prepareWorktree(t, o.Base)
-	if err != nil {
-		return err
-	}
-
-	// 2. 镜像
-	step = "preparing the image"
-	tag, err := a.agentImage()
-	if err != nil {
-		return err
-	}
-
-	// 2.5 prep：先读镜像里的声明。它要并进配置，而 allow 必须赶在配 squid 之前（M4-15）
-	step = "reading the prep image"
-	prepTag, prepPlan, err := a.prepLoad(t)
-	if err != nil {
-		return err
-	}
-
-	// 3. state 目录
-	if err := os.MkdirAll(t.GenDir(), 0o755); err != nil {
-		return err
-	}
-	os.Remove(filepath.Join(t.StateDir(), "status.json"))
-
-	// 4. 网络与 proxy
-	step = "preparing the egress proxy"
-	p := a.egressOf(t, a.Cfg.Network.Proxy)
-	if err := p.Ensure(); err != nil {
-		return err
-	}
-	step = "creating the task network"
-	if ok, err := a.Docker.NetworkExists(t.Network()); err != nil {
-		return err
-	} else if !ok {
-		labels := t.Labels()
-		labels["sbx.kind"] = "net"
-		if err := a.Docker.NetworkCreate(t.Network(), true, labels); err != nil {
-			return err
-		}
-		u.add(func() { a.Docker.NetworkRm(t.Network()) })
-	}
-	step = "attaching to the egress proxy"
-	if _, skipped := proxy.HostsIn(a.Cfg.OnIdle, a.Cfg.OnExit); len(skipped) > 0 {
-		a.logf("note: %s in the notify command contains a variable or is an IP and cannot be allowed automatically; run sbx net allow <host> if you need it",
-			strings.Join(skipped, "、"))
-	}
-	u.add(func() { p.DetachTask(t.ID(), t.Network()); p.StopIfIdle() })
-	proxyURL, err := p.AttachTask(a.proxySpec(t, t.ID()))
-	if err != nil {
-		return err
-	}
-
-	// 5. 伴生容器：services 和 forward。都接在刚建好的 internal 网络上，
-	//    Task 容器自己仍然只有那一张没有默认路由的网卡（boundary.md §3.3.4）。
-	step = "starting the declared services"
-	u.add(func() { a.removeSidecars(t) })
-	if err := a.ensureServices(t, &u); err != nil {
-		return err
-	}
-	step = "opening the declared forwards"
-	addHosts, links, err := a.ensureForwards(t, &u, true)
-	if err != nil {
-		return err
-	}
-
-	// 6. volume
-	step = "preparing volumes"
-	fresh, err := a.ensureVolumes(t, tag, &u)
-	if err != nil {
-		return err
-	}
-	step = "seeding dependencies from the prep image"
-	if err := a.prepSeed(t, prepTag, prepPlan, fresh); err != nil {
-		return err
-	}
-
-	// 7. gen 目录
-	step = "rendering generated files"
-	host := a.hostClaude()
-	if err := agent.RenderGen(t.GenDir(), a.genInput(host, o)); err != nil {
-		return err
-	}
-
-	// 8. 容器
-	step = "creating the container"
-	gitDir := t.WS.GitDir
-	if t.IsMain() {
-		gitDir = ""
-	}
-	name, _ := workspace.Git(t.WS.Root, "config", "user.name")
-	mail, _ := workspace.Git(t.WS.Root, "config", "user.email")
-	key, err := a.apiKey("")
-	if err != nil {
-		return err
-	}
-	if key.Env != "" {
-		a.logf("starting with an API key (from %s), not subscription login", key.Source)
-	}
-	labels := t.Labels()
-	labels["sbx.role"] = "agent"
-	// 这个 label 是 Shared.StopIfIdle 数"还有没有 shared Task 在跑"的依据，
-	// dedicated 的 Task 不能混进去，否则共享代理永远停不掉
-	labels["sbx.proxy"] = a.Cfg.Network.Proxy
-	spec := docker.RunSpec{
-		Name:    t.Container(),
-		Image:   tag,
-		Labels:  labels,
-		Network: t.Network(),
-		Mounts: agent.Mounts(agent.MountInput{
-			Worktree: t.Worktree(), GitDir: gitDir,
-			DepMasks: a.Cfg.Deps.Mask, DepVolume: t.DepVolume,
-			StateDir: t.StateDir(), GenDir: t.GenDir(), Host: host,
-			GitCommon: t.WS.GitDir, GitProtect: a.Cfg.Git.Protect,
-		}),
-		Env:     agent.Env(agent.EnvInput{ProxyURL: proxyURL, GitName: name, GitMail: mail, WS: t.WS.ID, Task: t.Name, TZ: agent.HostTZ(), APIKeyEnv: key.Env, APIKey: key.Value, Extra: a.Cfg.Env}),
-		Workdir: t.Worktree(),
-		Resources: docker.Resources{
-			CPUs: a.Cfg.Resources.CPUs, Memory: a.Cfg.Resources.Memory, Pids: a.Cfg.Resources.Pids,
-		},
-		// agent 是跑最久、输出最多的容器，没有上限的话 json-file 日志会一直涨（M4-3）。
-		LogMaxSize: "10m",
-		// 配了 host 的 forward：容器里仍用真实域名访问，SNI 和证书照旧（M4-13）
-		AddHosts: addHosts,
-	}
-	if _, err := a.Docker.RunContainer(spec); err != nil {
-		return err
-	}
-	u.add(func() { a.Docker.Rm(t.Container()) })
-	if prepPlan != nil && prepPlan.Manifest != nil {
-		step = "installing the CA certificates declared by prep"
-		if err := a.installCAs(t, prepTag, prepPlan.Manifest.CA); err != nil {
-			return err
-		}
-	}
-
-	// 9. meta（先写，startAgent 失败时 resume 还能用）
-	step = "writing meta"
-	if err := t.WriteMeta(task.Meta{
-		Task: t.Name, WS: t.WS.ID, Root: t.WS.Root, Base: baseSHA, Profile: a.Cfg.Profile, Image: tag,
-		Proxy: a.Cfg.Network.Proxy, TaskID: t.ID(), DepMasks: a.Cfg.Deps.Mask, PrepTag: prepTag, PrepAllow: prepAllow(prepPlan), Services: serviceNames(a.Cfg.Services), Forwards: links,
-		CreatedAt: time.Now().UTC(),
-	}); err != nil {
-		return err
-	}
-	u.add(func() { os.Remove(filepath.Join(t.StateDir(), "meta.json")) })
-
-	// 10. 预置、登录检查、starting the agent
-	step = "starting the agent"
-	return a.startAgent(t, o)
-}
-
-// prepAllow 取镜像声明里的放行域名，记进 meta：resume 时就不必再起一个探测容器
-// 去把镜像读一遍，也不会因为镜像被删掉而悄悄少了几条放行。
-func prepAllow(p *prep.Plan) []string {
-	if p == nil || p.Manifest == nil {
-		return nil
-	}
-	return p.Manifest.Allow
-}
-
-// serviceNames 取声明里的服务名，记进 meta。
-func serviceNames(svcs []config.Service) []string {
-	var out []string
-	for _, s := range svcs {
-		out = append(out, s.Name)
-	}
-	return out
-}
-
-func (a *App) prepareWorktree(t task.Task, base string) (string, error) {
+func (a *App) prepareWorktree(ctx context.Context, t task.Task, base string) (string, error) {
 	if t.IsMain() {
 		if base != "" {
 			a.logf("the main task uses the repo root directly; ignoring --base")
 		}
-		return t.WS.HeadRef()
+		return t.WS.HeadRefContext(ctx)
 	}
 	ref := base
 	if ref == "" {
 		ref = "HEAD"
 	}
-	sha, err := workspace.Git(t.WS.Root, "rev-parse", "--verify", ref+"^{commit}")
+	sha, err := workspace.GitContext(ctx, t.WS.Root, "rev-parse", "--verify", ref+"^{commit}")
 	if err != nil {
 		return "", fmt.Errorf("--base %q is not a valid commit: %w", ref, err)
 	}
-	created, note, err := t.WS.EnsureWorktree(t.Worktree(), t.Branch(), sha)
+	created, note, err := t.WS.EnsureWorktreeContext(ctx, t.Worktree(), t.Branch(), sha)
 	if err != nil {
 		return "", err
 	}
@@ -452,7 +375,7 @@ func (a *App) prepareWorktree(t task.Task, base string) (string, error) {
 	}
 	if note != "" || !created {
 		// 分支是已有的：base 取它和 HEAD 的分叉点
-		if mb, err := workspace.Git(t.WS.Root, "merge-base", sha, t.Branch()); err == nil {
+		if mb, err := workspace.GitContext(ctx, t.WS.Root, "merge-base", sha, t.Branch()); err == nil {
 			sha = mb
 		}
 	}
@@ -476,7 +399,8 @@ func (a *App) ensureSharedVolumes(tag string, fresh map[string]bool) error {
 		"sbx-mise":  "chown " + uid + ":" + gid + " /v",
 	}
 	for _, vol := range []string{sharedHome, "sbx-cache", "sbx-mise"} {
-		created, err := a.Docker.VolumeCreate(vol, map[string]string{"sbx.kind": "shared"})
+		classes := map[string]string{sharedHome: "identity", "sbx-cache": "cache", "sbx-mise": "runtimes"}
+		created, err := a.Docker.VolumeCreate(vol, map[string]string{"sbx.kind": "shared", "sbx.class": classes[vol], "sbx.retention": "manual"})
 		if err != nil {
 			return err
 		}
@@ -492,7 +416,7 @@ func (a *App) ensureSharedVolumes(tag string, fresh map[string]bool) error {
 
 // ensureVolumes 准备共享 volume 和这个 Task 的依赖 volume，
 // 返回本次**新建**的 volume 名集合——prep 只播种它们，不覆盖已有内容（M4-8）。
-func (a *App) ensureVolumes(t task.Task, tag string, u *undo) (map[string]bool, error) {
+func (a *App) ensureVolumes(t task.Task, tag string, u *execution.Undo) (map[string]bool, error) {
 	fresh := map[string]bool{}
 	if err := a.ensureSharedVolumes(tag, fresh); err != nil {
 		return nil, err
@@ -502,13 +426,17 @@ func (a *App) ensureVolumes(t task.Task, tag string, u *undo) (map[string]bool, 
 		vol := t.DepVolume(i)
 		labels := t.Labels()
 		labels["sbx.kind"] = "dep"
+		labels["sbx.class"] = "dependencies"
+		labels["sbx.retention"] = "task"
 		created, err := a.Docker.VolumeCreate(vol, labels)
 		if err != nil {
 			return nil, err
 		}
 		if created {
 			fresh[vol] = true
-			u.add(func() { a.Docker.VolumeRm(vol) })
+			u.Add("volume", vol, true, func(ctx context.Context) error {
+				return a.Docker.WithContext(ctx).VolumeRm(vol)
+			})
 			if err := a.initVol(tag, vol, own); err != nil {
 				return nil, err
 			}
@@ -517,73 +445,14 @@ func (a *App) ensureVolumes(t task.Task, tag string, u *undo) (map[string]bool, 
 	return fresh, nil
 }
 
-// startAgent 预置首次启动状态、检查登录、在 tmux 里拉起 claude 并做冒烟检查。
-// 会话还在但 claude 已经退出时（Ctrl-D、/exit），在原会话里重新拉起。
-func (a *App) startAgent(t task.Task, o runOpts) error {
-	rt := agent.Runtime{Docker: a.Docker, Container: t.Container(), Worktree: t.Worktree()}
-	hasSession := rt.HasSession()
-	if hasSession && !agentExited(t) {
-		return nil
+// startAgent wires infrastructure adapters; execution owns launch policy.
+func (a *App) startAgent(ctx context.Context, t task.Task, req execution.Request) error {
+	starter := execution.AgentStarter{
+		Docker: a.Docker, APIKey: runHost{app: a}.APIKey,
+		ImportMemory: a.importMemory, InstallRuntimes: a.installRuntimes, Logf: a.logf,
+		RotateLog: func(path string) error { return rotateRunLog(path, runLogLimit) },
 	}
-	key, err := a.apiKey("")
-	if err != nil {
-		return err
-	}
-	if out, err := rt.Preseed(key.Value); err != nil {
-		return fmt.Errorf("failed to preseed the first-run state: %w", err)
-	} else if out != "" {
-		a.logf("%s", out)
-	}
-	if err := a.importMemory(t.Container()); err != nil {
-		a.logf("warning: failed to import project memory: %v", err)
-	}
-	a.installRuntimes(t, rt)
-	// 配了 API key 就不查订阅登录态：key 在建容器时注进了环境变量（design §7.1）
-	if err := a.checkAuth(t, rt, key); err != nil {
-		return err
-	}
-	cont := !o.Fresh && t.HasPriorSession()
-	os.Remove(filepath.Join(t.StateDir(), "status.json"))
-	os.Remove(filepath.Join(t.StateDir(), "run.exit"))
-	if o.headless() {
-		if err := rotateRunLog(filepath.Join(t.StateDir(), "run.log"), runLogLimit); err != nil {
-			return err
-		}
-	}
-	cmdOf := func() string {
-		if o.headless() {
-			return agent.HeadlessCmd(agent.HeadlessOpts{Continue: cont, Notify: a.Cfg.OnExit != ""})
-		}
-		return agent.ClaudeCmd(cont)
-	}
-	if hasSession {
-		a.logf("claude exited; bringing it back up in the same session ...")
-		if err := rt.Respawn(cmdOf()); err != nil {
-			return err
-		}
-	} else if _, err := rt.StartSession(cmdOf()); err != nil {
-		return err
-	}
-	if cont {
-		a.logf("resuming the last conversation of task %s (--continue; use --fresh to start a new one)", t.Name)
-	}
-	a.logf("waiting for claude to be ready ...")
-	sm := agent.Smoke{
-		Timeout: smokeTimeout,
-		Ready: func() bool {
-			s, err := t.ReadStatus()
-			return err == nil && s != nil && s.Event == "SessionStart"
-		},
-		Exited: func() bool { return agentExited(t) },
-	}
-	if o.headless() {
-		// headless 的任务可能几秒就跑完，正常结束不算启动失败；
-		// 跑完了也算"就绪"，别再等 SessionStart（那条可能已经被 SessionEnd 覆盖了）
-		sm.Exited = nil
-		ready := sm.Ready
-		sm.Ready = func() bool { return ready() || t.RunExit() != nil }
-	}
-	return rt.SmokeCheck(sm)
+	return starter.Start(ctx, t, req)
 }
 
 // installRuntimes 按项目里的版本文件装运行时（M3-3）。装不上只警告不拦：
@@ -612,56 +481,22 @@ func lastLines(s string, n int) string {
 	return strings.Join(lines, "\n")
 }
 
-// agentExited 报告 hooks 写下的状态是不是"claude 已退出"。
+// agentExited reports the provider status marker for an ended session.
 func agentExited(t task.Task) bool {
 	s, err := t.ReadStatus()
 	return err == nil && s != nil && s.State == "exited"
 }
 
-// checkAuth 在拉起 claude 前确认它拿得到凭据：配了 API key 就只核对容器里真有那个
-// 环境变量（容器是建的时候注入的，配置后来才改的话这里能提前说清楚），
-// 否则查 sbx-home 里的订阅登录态。
-func (a *App) checkAuth(t task.Task, rt agent.Runtime, key apiKey) error {
-	if key.Env != "" {
-		if has, err := a.Docker.HasEnv(t.Container(), key.Env); err == nil && !has {
-			return fmt.Errorf("an API key is configured, but container %s was created before that and does not have %s.\n"+
-				"environment variables can only be injected when the container is created: run sbx done %s, then run again", t.Container(), key.Env, t.Name)
-		}
-		return nil
-	}
-	ok, err := rt.LoggedIn()
-	if err != nil {
+// showHeadlessResult displays the completed headless output and summary.
+func (a *App) showHeadlessResult(t task.Task, code *int) error {
+	if err := a.showLogs(t, false, 0); err != nil {
 		return err
 	}
-	if !ok {
-		return errors.New(a.loginHelp(t))
+	exitCode := 0
+	if code != nil {
+		exitCode = *code
 	}
-	return nil
-}
-
-func (a *App) loginHelp(t task.Task) string {
-	return "claude is not logged in inside the sandbox (no credentials in sbx-home). Run this once:\n\n  sbx login\n\nThen run sbx run " + t.Name + "."
-}
-
-// afterHeadless 收尾 headless 这一次运行：前台就跟着 run.log 看到结束，
-// --detach 就只打一行怎么回来看。
-func (a *App) afterHeadless(t task.Task, detach bool) error {
-	if detach {
-		fmt.Fprintf(a.Out, "task %s is running the prompt in the background. Follow it with: sbx logs -f %s\n", t.Name, t.Name)
-		return nil
-	}
-	if err := a.showLogs(t, true, 0); err != nil {
-		return err
-	}
-	code := 0
-	if c := t.RunExit(); c != nil {
-		code = *c
-	}
-	fmt.Fprintf(a.Out, "\ntask %s finished (exit=%d) and its container is stopped.\n", t.Name, code)
+	fmt.Fprintf(a.Out, "\ntask %s finished (exit=%d) and its container is stopped.\n", t.Name, exitCode)
 	fmt.Fprintf(a.Out, "see changes: cd $(sbx path %s) | continue: sbx run %s | finish: sbx done %s\n", t.Name, t.Name, t.Name)
-	if code != 0 {
-		// claude 的退出码往上透，脚本里 sbx run -p ... && next 才有意义
-		return fmt.Errorf("claude exited with %d (full output: sbx logs %s)", code, t.Name)
-	}
 	return nil
 }

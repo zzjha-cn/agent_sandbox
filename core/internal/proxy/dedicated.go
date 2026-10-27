@@ -109,11 +109,17 @@ func (d Dedicated) AttachTask(t TaskSpec) (string, error) {
 		if runtime.GOOS == "linux" {
 			spec.AddHosts = []string{"host.docker.internal:host-gateway"}
 		}
-		if _, err := d.Docker.RunContainer(spec); err != nil {
+		// Squid resolves its cache_peer at startup. Starting on the internal
+		// network first can cache a failed upstream DNS lookup even after the
+		// egress network is attached, making every CONNECT return 500.
+		if _, err := d.Docker.CreateContainer(spec); err != nil {
 			return "", err
 		}
 		// Task 的网络是 internal 的，出网要靠 sbx-egress
 		if err := d.Docker.NetworkConnect(d.egress(), d.Name, ""); err != nil {
+			return "", err
+		}
+		if err := d.Docker.Start(d.Name); err != nil {
 			return "", err
 		}
 	case !st.Running:

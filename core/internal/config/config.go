@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+	"sandx/internal/isolation"
 )
 
 type Network struct {
@@ -88,8 +89,9 @@ type Agent struct {
 }
 
 type Config struct {
-	DefaultAgent string `toml:"default_agent"`
-	Profile      string `toml:"profile"`
+	Isolation    isolation.Policy `toml:"isolation"`
+	DefaultAgent string           `toml:"default_agent"`
+	Profile      string           `toml:"profile"`
 	// Image 直接指定一个现成镜像当底，覆盖 profile（M3-2、design §5.2）。
 	// design 原来写的是 profile.image，但 profile 是标量，TOML 里没法再当表用，
 	// 所以单开一个顶层键。
@@ -132,6 +134,7 @@ func ProfileMasks(profile string) []string {
 // Default 返回内置默认值（ADR 0012 修订后的 B 方案）。
 func Default() Config {
 	return Config{
+		Isolation:    isolation.Policy{Boundary: isolation.DedicatedDaemon},
 		DefaultAgent: "claude",
 		Profile:      "web-go",
 		MaxRunning:   3,
@@ -195,6 +198,12 @@ func fieldf(key, format string, args ...any) error {
 }
 
 func (c Config) Validate() error {
+	if err := c.Isolation.Validate(); err != nil {
+		return fieldf("isolation", "%s", err)
+	}
+	if c.DefaultAgent != "claude" && c.DefaultAgent != "codex" {
+		return fieldf("default_agent", "unsupported agent %q (supported: claude, codex)", c.DefaultAgent)
+	}
 	if !memRe.MatchString(c.Resources.Memory) {
 		return fieldf("resources.memory", "resources.memory is invalid: %q (examples: 3g, 512m)", c.Resources.Memory)
 	}
@@ -270,6 +279,14 @@ func (c Config) Secret() map[string]string { return c.Prep.Secret }
 // ClaudeVersion 返回 agents.claude.version，默认 latest。
 func (c Config) ClaudeVersion() string {
 	if a, ok := c.Agents["claude"]; ok && a.Version != "" {
+		return a.Version
+	}
+	return "latest"
+}
+
+// CodexVersion pins the Codex npm package used by the agent image.
+func (c Config) CodexVersion() string {
+	if a, ok := c.Agents["codex"]; ok && a.Version != "" {
 		return a.Version
 	}
 	return "latest"

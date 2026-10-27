@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net"
 	"runtime"
@@ -10,6 +12,7 @@ import (
 
 	"sandx/internal/config"
 	"sandx/internal/docker"
+	"sandx/internal/execution"
 	"sandx/internal/proxy"
 	"sandx/internal/task"
 )
@@ -41,7 +44,7 @@ func envArgs(m map[string]string) []string {
 // 容器内用服务名当主机名访问（network alias），不是 localhost：localhost 指的是
 // Task 容器自己，别的容器不可能出现在那上面。boundary.md §3.2 的 "localhost:5432"
 // 是示意，实际地址是 db:5432——sbx run 会逐条打出来。
-func (a *App) ensureServices(t task.Task, u *undo) error {
+func (a *App) ensureServices(t task.Task, u *execution.Undo) error {
 	for _, s := range a.Cfg.Services {
 		name := sidecarOf(t, "svc", s.Name)
 		st, exists, err := a.Docker.Inspect(name)
@@ -75,7 +78,9 @@ func (a *App) ensureServices(t task.Task, u *undo) error {
 		}
 		if u != nil {
 			n := name
-			u.add(func() { a.Docker.Rm(n) })
+			u.Add("service_container", n, true, func(ctx context.Context) error {
+				return a.Docker.WithContext(ctx).Rm(n)
+			})
 		}
 		fmt.Fprintf(a.Out, "service %s: %s, reachable in the task as %s:%d\n", s.Name, s.Image, s.Name, s.Port)
 	}
@@ -176,7 +181,7 @@ func pickIP(ips []net.IP) net.IP {
 // create 为 true 时是新建 Task：每条都重建，目标重新解析一次。resume 时相反——
 // 已经在跑的 forwarder 原样留着，因为 Task 容器的 /etc/hosts 里记的是它当时的 IP，
 // 重建会把那条记录变成陈的（--add-host 只能在建容器时给）。
-func (a *App) ensureForwards(t task.Task, u *undo, create bool) ([]string, []task.Link, error) {
+func (a *App) ensureForwards(t task.Task, u *execution.Undo, create bool) ([]string, []task.Link, error) {
 	var addHosts []string
 	var links []task.Link
 	for _, f := range a.Cfg.Forward {
@@ -232,11 +237,12 @@ func (a *App) ensureForwards(t task.Task, u *undo, create bool) ([]string, []tas
 		}
 		n := name
 		if u != nil {
-			u.add(func() { a.Docker.Rm(n) })
+			u.Add("forward_container", n, true, func(ctx context.Context) error {
+				return a.Docker.WithContext(ctx).Rm(n)
+			})
 		}
 		// 出网那张网卡接在这里。Task 容器永远不接这张网。
 		if err := a.Docker.NetworkConnect(proxy.EgressNet, name, ""); err != nil {
-			a.Docker.Rm(name)
 			return nil, nil, fmt.Errorf("forward %s: %w", f.Name, err)
 		}
 		link := task.Link{Name: f.Name, Port: f.Port, To: r.Addr + ":" + portOf(r.Target), Host: f.Host, Internal: !r.ToHost}
@@ -340,18 +346,20 @@ func (a *App) warnForwardExposure(links []task.Link) {
 // removeSidecars 回收这个 Task 的 services 和 forwarder 容器。
 // 必须排在删网络之前：它们接在 Task 网络上，不先删就删不动网络（和 M3-11 的端口转发同理）。
 func (a *App) removeSidecars(t task.Task) error {
+	var failures []error
 	for _, kind := range []string{"svc", "fwd"} {
 		items, err := a.Docker.ListByLabel("container", "sbx.ws="+t.WS.ID, "sbx.task="+t.Name, "sbx.kind="+kind)
 		if err != nil {
-			return err
+			failures = append(failures, fmt.Errorf("list %s sidecars: %w", kind, err))
+			continue
 		}
 		for _, it := range items {
 			if err := a.Docker.Rm(it.Str("Names")); err != nil && !docker.IsNotFound(err) {
-				return err
+				failures = append(failures, fmt.Errorf("remove sidecar %s: %w", it.Str("Names"), err))
 			}
 		}
 	}
-	return nil
+	return errors.Join(failures...)
 }
 
 // countSidecars 数这个 Task 挂着的伴生容器，给 sbx ls 的 LINKS 列用。

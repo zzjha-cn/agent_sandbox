@@ -2,6 +2,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +12,8 @@ import (
 
 	"sandx/internal/config"
 	"sandx/internal/docker"
+	"sandx/internal/execution"
+	"sandx/internal/protocol"
 	"sandx/internal/proxy"
 	"sandx/internal/task"
 	"sandx/internal/workspace"
@@ -50,21 +53,73 @@ func Execute() int {
 		Version:       Version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			app.Docker = docker.New(app.Verbose)
 			app.Docker.Log = app.Err
 			if app.Verbose {
 				workspace.Trace = app.Err
 			}
+			top := cmd
+			for top.Parent() != nil && top.Parent() != rootCommand(cmd) {
+				top = top.Parent()
+			}
+			switch top.Name() {
+			case "run", "admit", "version", "config", "trust", "isolation", "doctor", "completion", "help", "sbx":
+				// Run/admit validate the envelope first and perform the same
+				// ownership check in execution admission; inspection stays read-only.
+				return nil
+			}
+			if err := app.loadConfig(); err != nil {
+				return err
+			}
+			readOnly := top.Name() == "ls" || top.Name() == "path" || top.Name() == "logs"
+			return app.checkIsolation(cmd.Context(), !readOnly)
 		},
 	}
 	root.PersistentFlags().BoolVarP(&app.Verbose, "verbose", "v", false, "print every docker and git command sbx runs")
-	root.AddCommand(app.runCmd(), app.attachCmd(), app.shellCmd(), app.stopCmd(), app.lsCmd(), app.pathCmd(), app.doneCmd(), app.dropCmd(), app.portCmd(), app.logsCmd(), app.memoryCmd(), app.loginCmd(), app.configCmd(), app.trustCmd(), app.upgradeCmd(), app.netCmd(), app.prepCmd(), app.forwardCmd(), app.cleanCmd(), app.doctorCmd())
+	root.AddCommand(app.runCmd(), app.admitCmd(), app.versionCmd(), app.isolationCmd(), app.attachCmd(), app.shellCmd(), app.stopCmd(), app.lsCmd(), app.pathCmd(), app.doneCmd(), app.dropCmd(), app.portCmd(), app.logsCmd(), app.memoryCmd(), app.loginCmd(), app.configCmd(), app.trustCmd(), app.upgradeCmd(), app.netCmd(), app.prepCmd(), app.forwardCmd(), app.cleanCmd(), app.doctorCmd())
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(app.Err, "sbx:", err)
-		return 1
+		return exitCode(err)
 	}
 	return 0
+}
+
+func rootCommand(cmd *cobra.Command) *cobra.Command {
+	for cmd.Parent() != nil {
+		cmd = cmd.Parent()
+	}
+	return cmd
+}
+
+func exitCode(err error) int {
+	var coded *protocol.CodedError
+	if errors.As(err, &coded) {
+		if coded.Code == "runner_error" {
+			return 4
+		}
+		return 2
+	}
+	var runErr *execution.ExecutionError
+	if errors.As(err, &runErr) {
+		switch runErr.Kind {
+		case execution.AdmissionRejected:
+			return 3
+		case execution.AgentRunFailed:
+			return 5
+		case execution.DeliveryFailedKind:
+			return 6
+		case execution.CancelledKind:
+			return 130
+		case execution.TimedOutKind:
+			return 124
+		case execution.AgentStartFailed, execution.EnvironmentFailed:
+			return 4
+		case execution.InternalFailed:
+			return 7
+		}
+	}
+	return 1
 }
 
 // load 解析 Workspace，然后按四层合并配置（design §9.1）。
@@ -137,7 +192,20 @@ func (a *App) task(name string) (task.Task, error) {
 	if name == "" {
 		name = "main"
 	}
-	return task.New(a.Home, a.WS, name)
+	t, err := task.New(a.Home, a.WS, name)
+	if err != nil {
+		return t, err
+	}
+	if a.Docker != nil && len(a.Docker.ResourceLabels) > 0 {
+		meta, ok, err := t.ReadMeta()
+		if err != nil {
+			return t, err
+		}
+		if ok && ((meta.Namespace != "" && meta.Namespace != a.Docker.ResourceLabels["sbx.namespace"]) || (meta.Owner != "" && meta.Owner != a.Docker.ResourceLabels["sbx.owner"])) {
+			return t, &execution.ExecutionError{Kind: execution.AdmissionRejected, Stage: "task isolation", Cause: fmt.Errorf("task ownership does not match this daemon/operator")}
+		}
+	}
+	return t, nil
 }
 
 func (a *App) proxy() proxy.Shared {

@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -13,7 +12,7 @@ import (
 )
 
 // sharedHome 是放登录态和 Agent 配置的全局 volume（design §7.1、ADR 0006）。
-// claude 的凭据在它的 .claude/ 下，codex 将来在 .codex/ 下，同一个 volume。
+// claude 的凭据在它的 .claude/ 下，codex 在 .codex/ 下，同一个 volume。
 const sharedHome = "sbx-home"
 
 // authCLI 描述一个 Agent CLI 的登录流程。各家 CLI 的子命令和输出格式都不一样，
@@ -46,11 +45,11 @@ var authCLIs = map[string]authCLI{
 		logout: []string{"auth", "logout"},
 		parse:  agent.ParseStatus,
 	},
-}
-
-// pendingAgents 是设计里有、但还没实现的 Agent：和打错名字区分开，报错里给出原因。
-var pendingAgents = map[string]string{
-	"codex": "Codex login (codex login --device-auth) is not verified yet; deferred to M3-6",
+	"codex": {
+		bin: "codex", keyEnv: "CODEX_API_KEY", status: []string{"login", "status"},
+		login:  func(bool, string) []string { return []string{"login", "--device-auth"} },
+		logout: []string{"logout"}, parse: agent.ParseCodexStatus,
+	},
 }
 
 // resolveAgent 把命令行上的 Agent 名解析成一条 authCLI。
@@ -61,9 +60,7 @@ func resolveAgent(name string) (string, authCLI, error) {
 	if cli, ok := authCLIs[name]; ok {
 		return name, cli, nil
 	}
-	if why, ok := pendingAgents[name]; ok {
-		return "", authCLI{}, errors.New(why + "; currently only " + strings.Join(knownAgents(), ", "))
-	}
+
 	return "", authCLI{}, fmt.Errorf("unknown agent %q; currently only %s", name, strings.Join(knownAgents(), ", "))
 }
 
@@ -78,7 +75,7 @@ func knownAgents() []string {
 
 func (a *App) loginCmd() *cobra.Command {
 	var status, logout, force, console bool
-	var email string
+	var email, importSource string
 	cmd := &cobra.Command{
 		Use:   "login [claude|codex]",
 		Short: "Log in to an agent inside the sandbox (default claude; credentials live in sbx-home, shared by every task)",
@@ -92,6 +89,25 @@ func (a *App) loginCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if name != "claude" && (cmd.Flags().Changed("console") || cmd.Flags().Changed("email")) {
+				return fmt.Errorf("--console and --email only apply to Claude")
+			}
+			var imported []byte
+			if cmd.Flags().Changed("import") {
+				if name != "codex" {
+					return fmt.Errorf("--import currently supports Codex only")
+				}
+				if importSource == "" {
+					return fmt.Errorf("--import requires a Codex directory or auth.json path")
+				}
+				if status || logout {
+					return fmt.Errorf("--import cannot be combined with --status or --logout")
+				}
+				imported, err = readCodexAuth(importSource)
+				if err != nil {
+					return err
+				}
+			}
 			if err := a.loadConfig(); err != nil {
 				return err
 			}
@@ -101,6 +117,9 @@ func (a *App) loginCmd() *cobra.Command {
 			}
 			if err := a.ensureSharedVolumes(tag, map[string]bool{}); err != nil {
 				return err
+			}
+			if imported != nil {
+				return a.importCodexAuth(tag, imported, force)
 			}
 			st, err := a.authStatus(tag, cli)
 			if err != nil {
@@ -141,9 +160,10 @@ func (a *App) loginCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&importSource, "import", "", "codex: import credentials from a local Codex directory or auth.json (use --force to replace existing credentials)")
 	cmd.Flags().BoolVar(&status, "status", false, "only print who is logged in, do not log in")
 	cmd.Flags().BoolVar(&logout, "logout", false, "log out, clearing the credentials in sbx-home")
-	cmd.Flags().BoolVar(&force, "force", false, "run the login flow again even when already logged in")
+	cmd.Flags().BoolVar(&force, "force", false, "run the login flow again, or replace existing credentials when importing")
 	cmd.Flags().BoolVar(&console, "console", false, "claude: use an Anthropic Console account (usage billing) instead of a Claude subscription")
 	cmd.Flags().StringVar(&email, "email", "", "claude: pre-fill this email address on the login page")
 	return cmd

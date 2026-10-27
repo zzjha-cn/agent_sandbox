@@ -3,6 +3,7 @@ package workspace
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
@@ -26,15 +27,22 @@ type Workspace struct {
 
 // Git 在 dir 下执行 git，返回去掉首尾空白的 stdout。
 func Git(dir string, args ...string) (string, error) {
+	return GitContext(context.Background(), dir, args...)
+}
+
+func GitContext(ctx context.Context, dir string, args ...string) (string, error) {
 	full := append([]string{"-C", dir}, args...)
 	if Trace != nil {
 		fmt.Fprintf(Trace, "+ git %s\n", strings.Join(full, " "))
 	}
-	cmd := exec.Command("git", full...)
+	cmd := exec.CommandContext(ctx, "git", full...)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("git %s: %v: %s", strings.Join(full, " "), err, strings.TrimSpace(errb.String()))
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
+		return "", fmt.Errorf("git %s: %w: %s", strings.Join(full, " "), err, strings.TrimSpace(errb.String()))
 	}
 	return strings.TrimSpace(out.String()), nil
 }
@@ -90,15 +98,28 @@ func (w Workspace) HeadRef() (string, error) {
 	return Git(w.Root, "rev-parse", "HEAD")
 }
 
+func (w Workspace) HeadRefContext(ctx context.Context) (string, error) {
+	return GitContext(ctx, w.Root, "rev-parse", "HEAD")
+}
+
 // BranchExists 报告本地分支是否存在。
 func (w Workspace) BranchExists(branch string) bool {
 	_, err := Git(w.Root, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch)
 	return err == nil
 }
 
+func (w Workspace) branchExistsContext(ctx context.Context, branch string) bool {
+	_, err := GitContext(ctx, w.Root, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch)
+	return err == nil
+}
+
 // isWorktree 报告 path 是否是本仓库已登记的 worktree。
 func (w Workspace) isWorktree(path string) (bool, error) {
-	out, err := Git(w.Root, "worktree", "list", "--porcelain")
+	return w.isWorktreeContext(context.Background(), path)
+}
+
+func (w Workspace) isWorktreeContext(ctx context.Context, path string) (bool, error) {
+	out, err := GitContext(ctx, w.Root, "worktree", "list", "--porcelain")
 	if err != nil {
 		return false, err
 	}
@@ -119,7 +140,11 @@ func (w Workspace) isWorktree(path string) (bool, error) {
 //   - 分支已存在但 worktree 不存在：挂上已有分支，note 给出提示；
 //   - 都不存在：从 base 新建分支。
 func (w Workspace) EnsureWorktree(path, branch, base string) (created bool, note string, err error) {
-	ok, err := w.isWorktree(path)
+	return w.EnsureWorktreeContext(context.Background(), path, branch, base)
+}
+
+func (w Workspace) EnsureWorktreeContext(ctx context.Context, path, branch, base string) (created bool, note string, err error) {
+	ok, err := w.isWorktreeContext(ctx, path)
 	if err != nil {
 		return false, "", err
 	}
@@ -132,8 +157,8 @@ func (w Workspace) EnsureWorktree(path, branch, base string) (created bool, note
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return false, "", err
 	}
-	if w.BranchExists(branch) {
-		if _, err := Git(w.Root, "worktree", "add", path, branch); err != nil {
+	if w.branchExistsContext(ctx, branch) {
+		if _, err := GitContext(ctx, w.Root, "worktree", "add", path, branch); err != nil {
 			return false, "", err
 		}
 		return true, fmt.Sprintf("branch %s already exists and has been attached to the new worktree (--base ignored)", branch), nil
@@ -141,7 +166,7 @@ func (w Workspace) EnsureWorktree(path, branch, base string) (created bool, note
 	if base == "" {
 		base = "HEAD"
 	}
-	if _, err := Git(w.Root, "worktree", "add", "-b", branch, path, base); err != nil {
+	if _, err := GitContext(ctx, w.Root, "worktree", "add", "-b", branch, path, base); err != nil {
 		return false, "", err
 	}
 	return true, "", nil
@@ -149,7 +174,11 @@ func (w Workspace) EnsureWorktree(path, branch, base string) (created bool, note
 
 // RemoveWorktree 删除 worktree（保留分支）。
 func (w Workspace) RemoveWorktree(path string, force bool) error {
-	ok, err := w.isWorktree(path)
+	return w.RemoveWorktreeContext(context.Background(), path, force)
+}
+
+func (w Workspace) RemoveWorktreeContext(ctx context.Context, path string, force bool) error {
+	ok, err := w.isWorktreeContext(ctx, path)
 	if err != nil || !ok {
 		return err
 	}
@@ -157,7 +186,7 @@ func (w Workspace) RemoveWorktree(path string, force bool) error {
 	if force {
 		args = append(args, "--force")
 	}
-	_, err = Git(w.Root, append(args, path)...)
+	_, err = GitContext(ctx, w.Root, append(args, path)...)
 	return err
 }
 

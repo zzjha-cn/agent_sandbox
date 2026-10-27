@@ -35,6 +35,7 @@ var safetyKeys = map[string]bool{
 // prep.secret 装的是宿主机上的凭据文件路径；写成相对路径时 absPath 拦不住它，
 // 所以这里按位置挡，不按形状挡。
 var projectDenyPrefixes = []string{
+	"isolation.",
 	"prep.secret.",
 	// forward 开的是真实的洞：它决定你这台机器往哪儿连。跟着仓库走的配置
 	// 不该有这个决定权，所以整棵子树只能写在全局层或工作区层（boundary.md §3.3.2）。

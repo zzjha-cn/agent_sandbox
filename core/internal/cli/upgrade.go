@@ -39,7 +39,8 @@ func (a *App) claudeVersion() string {
 // 配置里的 image > <repo>/.sbx/Dockerfile > 内置 Profile。
 // .sbx/Dockerfile 在信任确认的覆盖范围内，所以"项目自带 Dockerfile"这件事
 // 天然要先过 sbx trust。
-func (a *App) imageInputs() (image.Inputs, error) {
+func (a *App) imageInputs() (in image.Inputs, err error) {
+	defer func() { in.CodexVersion = a.Cfg.CodexVersion() }()
 	uid, gid := os.Getuid(), os.Getgid()
 	if ref := strings.TrimSpace(a.Cfg.Image); ref != "" {
 		return image.ImageInputs(ref, a.claudeVersion(), uid, gid), nil

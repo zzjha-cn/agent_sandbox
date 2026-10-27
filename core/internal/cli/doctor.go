@@ -8,6 +8,7 @@ import (
 
 	"sandx/internal/agent"
 	"sandx/internal/docker"
+	"sandx/internal/isolation"
 	"sandx/internal/proxy"
 )
 
@@ -57,14 +58,16 @@ type checker struct {
 
 // docEnv 是这次 doctor 跑在什么环境里。docker info 只取一次，几项检查共用。
 type docEnv struct {
-	Docker bool // docker is reachable
-	Repo   bool // 当前在一个 git 仓库里，配置已经合并了四层
-	Info   docker.Item
+	IsolationError error
+	Docker         bool // docker is reachable
+	Repo           bool // 当前在一个 git 仓库里，配置已经合并了四层
+	Info           docker.Item
 }
 
 // checks 的顺序就是输出顺序：先是跑不起来就什么都别谈的，再是具体功能。
 var checks = []checker{
 	{Name: "docker", Run: checkDocker},
+	{Name: "isolation", NeedDocker: true, Run: checkIsolation},
 	{Name: "vm-memory", NeedDocker: true, Run: checkVMMemory},
 	{Name: "disk", NeedDocker: true, Run: checkDisk},
 	{Name: "upstream", NeedDocker: true, Run: checkUpstream},
@@ -79,6 +82,13 @@ var checks = []checker{
 	// 归到 Slow：每个目标四级 × 两个位置，--quick 时跳过。
 	{Name: "reach", NeedDocker: true, NeedRepo: true, Slow: true, Run: checkReach},
 	{Name: "smoke", NeedDocker: true, Slow: true, Run: checkSmoke},
+}
+
+func checkIsolation(a *App, env docEnv) Check {
+	if env.IsolationError != nil {
+		return fail("isolation", env.IsolationError.Error(), "sbx isolation status")
+	}
+	return ok("isolation", "dedicated daemon ownership validated")
 }
 
 func (a *App) doctorCmd() *cobra.Command {
@@ -98,6 +108,9 @@ func (a *App) doctorCmd() *cobra.Command {
 			}
 			info, err := a.Docker.Info()
 			env.Docker, env.Info = err == nil, info
+			if env.Docker {
+				env.IsolationError = a.checkIsolation(cmd.Context(), false)
+			}
 			results := a.runChecks(env, quick)
 			return a.printChecks(results, strict)
 		},
@@ -111,6 +124,8 @@ func (a *App) runChecks(env docEnv, quick bool) []Check {
 	var out []Check
 	for _, c := range checks {
 		switch {
+		case c.NeedDocker && c.Name != "isolation" && env.IsolationError != nil:
+			out = append(out, skip(c.Name, "daemon isolation has not passed; no runtime probes performed"))
 		case c.NeedDocker && !env.Docker:
 			out = append(out, skip(c.Name, "docker is unavailable, skipping this check"))
 		case c.NeedRepo && !env.Repo:
@@ -347,7 +362,7 @@ func notShared(vols []string) []string {
 	var out []string
 	for _, v := range vols {
 		switch v {
-		case sharedHome, "sbx-cache", "sbx-mise":
+		case sharedHome, "sbx-cache", "sbx-mise", isolation.MarkerVolume:
 		default:
 			out = append(out, v)
 		}
