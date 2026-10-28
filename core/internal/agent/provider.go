@@ -18,10 +18,11 @@ type Provider interface {
 }
 
 type Launch struct {
-	Headless  bool
-	Continue  bool
-	Notify    bool
-	SessionID string
+	Headless     bool
+	Continue     bool
+	Notify       bool
+	SessionID    string
+	NoRepository bool
 }
 
 func ResolveProvider(name string) (Provider, error) {
@@ -92,6 +93,9 @@ export CODEX_HOME=/home/agent/.codex
 		cmd += " exec"
 		if o.Continue {
 			cmd += " resume " + o.SessionID
+		}
+		if o.NoRepository {
+			cmd += " --skip-git-repo-check"
 		}
 		cmd += " --json --dangerously-bypass-approvals-and-sandbox - < " + PromptFile
 		// jq runs synchronously in the pipeline, so the session is persisted

@@ -22,6 +22,8 @@
 
 你同时还得到：几个任务**真正并行**跑而不互相踩脚；装一堆依赖不污染宿主机；出网全程走代理，**事后查得到它访问过什么**。
 
+文件处理和自动化任务可使用 [`sbx task`](docs/general-tasks.md)：从已注册输入准备副本，固化产物，独立验证，并交付到本地目录或 Git 本地分支；人工审核与交付重试不会重新提交 prompt。
+
 ```console
 $ cd ~/code/shop
 $ sbx run fix-login          # 建分支 + 建容器 + 进 Claude Code，一条命令
@@ -305,7 +307,7 @@ profile = "web-go"                    # 3. 内置 Profile（默认）
 
 **Claude Code、Codex、执行层重构和 v1 机器协议已实现。** 可用命令：`run / admit / version / isolation / attach / shell / stop / ls / path / done / drop / logs / port / net / memory / login / config / trust / prep / doctor / upgrade`。
 
-已知边界：没有 `sbx merge`；不自动交付产物，也不支持同 daemon 上的不互信多用户隔离；上游代理只支持 http（只有 SOCKS 的话要自己加一层转发）；底层镜像必须是 Debian/Ubuntu 系；伴生服务和 forward 都按名字访问，不是 `localhost`。另见[明确不提供](#明确不提供)。
+已知边界：没有 `sbx merge` 或远端产物发布；本地交付使用独立的 `sbx task` 入口。不支持同 daemon 上的不互信多用户隔离；上游代理只支持 http（只有 SOCKS 的话要自己加一层转发）；底层镜像必须是 Debian/Ubuntu 系；伴生服务和 forward 都按名字访问，不是 `localhost`。另见[明确不提供](#明确不提供)。
 
 路线图见 [implementation-checklist.md](docs/implementation-checklist.md)。
 

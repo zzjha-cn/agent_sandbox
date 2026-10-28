@@ -35,8 +35,9 @@ type StageProgress struct {
 	State ProgressState `json:"state"`
 }
 
-// Requirements is the capability selection at the application boundary. The
-// complete general TaskSpec is not a published or executable v2 input yet.
+// Requirements guards the legacy execution path. General tasks select their
+// implemented Source/artifact/validation/Sink adapters through PipelinePlan;
+// legacy callers cannot opt into them implicitly with these flags.
 type Requirements struct {
 	SourceKind string
 	Collect    bool
@@ -80,6 +81,12 @@ func (r TaskRecord) Recovery() string {
 		}
 	}
 	for _, a := range r.Attempts {
+		if a.Pipeline != nil && a.Pipeline.Prepared != nil && a.Pipeline.InputSnapshot == "" {
+			return "reconcile_prepare"
+		}
+		if a.Pipeline != nil && a.Pipeline.Artifact != nil && a.Pipeline.Artifact.Retention == "pruning" {
+			return "reconcile_retention"
+		}
 		for _, stage := range a.Result.Stages {
 			if stage.Phase == PreparePhase && (stage.State == ProgressRunning || stage.State == ProgressUnknown) {
 				return "reconcile_prepare"
@@ -93,6 +100,28 @@ func (r TaskRecord) Recovery() string {
 		return "not_recorded"
 	}
 	last := r.Attempts[len(r.Attempts)-1]
+	if r.SchemaVersion == GeneralRecordSchema && last.Pipeline != nil {
+		if last.Pipeline.Artifact != nil && last.Pipeline.Artifact.Retention == "pruning" {
+			return "reconcile_retention"
+		}
+		if last.Pipeline.Outputs != nil && last.Pipeline.Artifact == nil && last.Result.ExecutionState == Finished {
+			return "continue_completion"
+		}
+		if last.Pipeline.Validation != nil && last.Pipeline.Validation.State == "needs_review" {
+			return "continue_verification"
+		}
+		if last.Pipeline.Receipt != nil && last.Pipeline.Receipt.State != "delivered" {
+			return "retry_delivery"
+		}
+		if last.Pipeline.Sink != nil && last.Pipeline.Artifact != nil && last.Pipeline.Validation != nil && last.Pipeline.Validation.State == "passed" && last.Result.ProductDeliveryState != "delivered" {
+			return "retry_delivery"
+		}
+		for _, stage := range last.Result.Stages {
+			if (stage.Phase == CollectPhase || stage.Phase == EvaluatePhase || stage.Phase == DeliverPhase) && stage.State == ProgressRunning {
+				return "continue_completion"
+			}
+		}
+	}
 	if !last.Closed {
 		return "inspect_runtime"
 	}

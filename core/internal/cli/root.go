@@ -64,7 +64,7 @@ func Execute() int {
 				top = top.Parent()
 			}
 			switch top.Name() {
-			case "run", "admit", "version", "execution", "config", "trust", "isolation", "doctor", "completion", "help", "sbx":
+			case "run", "admit", "version", "execution", "task", "config", "trust", "isolation", "doctor", "completion", "help", "sbx":
 				// Run/admit validate the envelope first and perform the same
 				// ownership check in execution admission; inspection stays read-only.
 				return nil
@@ -77,7 +77,7 @@ func Execute() int {
 		},
 	}
 	root.PersistentFlags().BoolVarP(&app.Verbose, "verbose", "v", false, "print every docker and git command sbx runs")
-	root.AddCommand(app.runCmd(), app.admitCmd(), app.versionCmd(), app.executionCmd(), app.isolationCmd(), app.attachCmd(), app.shellCmd(), app.stopCmd(), app.lsCmd(), app.pathCmd(), app.doneCmd(), app.dropCmd(), app.portCmd(), app.logsCmd(), app.memoryCmd(), app.loginCmd(), app.configCmd(), app.trustCmd(), app.upgradeCmd(), app.netCmd(), app.prepCmd(), app.forwardCmd(), app.cleanCmd(), app.doctorCmd())
+	root.AddCommand(app.runCmd(), app.admitCmd(), app.versionCmd(), app.executionCmd(), app.taskCmd(), app.isolationCmd(), app.attachCmd(), app.shellCmd(), app.stopCmd(), app.lsCmd(), app.pathCmd(), app.doneCmd(), app.dropCmd(), app.portCmd(), app.logsCmd(), app.memoryCmd(), app.loginCmd(), app.configCmd(), app.trustCmd(), app.upgradeCmd(), app.netCmd(), app.prepCmd(), app.forwardCmd(), app.cleanCmd(), app.doctorCmd())
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(app.Err, "sbx:", err)
 		return exitCode(err)
@@ -117,6 +117,14 @@ func exitCode(err error) int {
 			return 4
 		case execution.InternalFailed:
 			return 7
+		case execution.VerificationFailed:
+			return 8
+		case execution.ReviewRequired:
+			return 9
+		case execution.ProductDeliveryFailed:
+			return 10
+		case execution.ProductOutcomeUnknown:
+			return 11
 		}
 	}
 	return 1

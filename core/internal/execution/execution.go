@@ -36,22 +36,27 @@ type Request struct {
 	Detach       bool
 	Config       config.Config
 	Requirements Requirements
+	Pipeline     *PipelinePlan
 }
 
 type State string
 
 const (
-	Ready          State = "ready"
-	Running        State = "running"
-	Finished       State = "finished"
-	AgentFailed    State = "agent_failed"
-	TimedOut       State = "timed_out"
-	Cancelled      State = "cancelled"
-	DeliveryFailed State = "delivery_failed"
-	Rejected       State = "admission_rejected"
-	EnvironmentErr State = "environment_failed"
-	AgentStartErr  State = "agent_start_failed"
-	InternalErr    State = "internal_failed"
+	Ready               State = "ready"
+	Running             State = "running"
+	Finished            State = "finished"
+	AgentFailed         State = "agent_failed"
+	TimedOut            State = "timed_out"
+	Cancelled           State = "cancelled"
+	DeliveryFailed      State = "delivery_failed"
+	Rejected            State = "admission_rejected"
+	EnvironmentErr      State = "environment_failed"
+	AgentStartErr       State = "agent_start_failed"
+	InternalErr         State = "internal_failed"
+	VerificationErr     State = "verification_failed"
+	ReviewPending       State = "needs_review"
+	ArtifactDeliveryErr State = "product_delivery_failed"
+	OutcomeUnknown      State = "product_outcome_unknown"
 )
 
 type Disposition string
@@ -83,6 +88,7 @@ type ArtifactState string
 const (
 	ArtifactNotProduced ArtifactState = "not_produced"
 	ArtifactPending     ArtifactState = "pending"
+	ArtifactCollected   ArtifactState = "collected"
 	ArtifactDelivered   ArtifactState = "delivered"
 	ArtifactFailed      ArtifactState = "failed"
 )
@@ -219,6 +225,7 @@ type Service struct {
 	failureNotice *Event
 	persistFailed bool
 	started       bool
+	facts         *PipelineFacts
 }
 
 func NewService(driver Driver, sinks ...EventSink) *Service {
@@ -292,6 +299,14 @@ func stateForError(kind ErrorKind) State {
 		return DeliveryFailed
 	case InternalFailed:
 		return InternalErr
+	case VerificationFailed:
+		return VerificationErr
+	case ReviewRequired:
+		return ReviewPending
+	case ProductDeliveryFailed:
+		return ArtifactDeliveryErr
+	case ProductOutcomeUnknown:
+		return OutcomeUnknown
 	default:
 		return EnvironmentErr
 	}
@@ -335,6 +350,14 @@ func (s *Service) run(ctx context.Context, req Request, result Result) (Result, 
 	}
 	if err := s.checkpoint(ctx, &result, PreparePhase, ProgressRunning); err != nil {
 		return result, err
+	}
+	if req.Pipeline != nil {
+		if err := s.preparePipeline(ctx, req, &result); err != nil {
+			return result, err
+		}
+		if err := s.authorizePrepared(req); err != nil {
+			return result, pipelineError(AdmissionRejected, PreparePhase, err)
+		}
 	}
 	s.emit(ctx, result, EventAdmitted, "admission", "task admitted")
 	s.emit(ctx, result, EventPhaseStarted, "provision", "preparing task environment")
@@ -420,6 +443,11 @@ func (s *Service) run(ctx context.Context, req Request, result Result) (Result, 
 		}
 		if err := s.checkpoint(ctx, &result, ExecutePhase, progress); err != nil {
 			return result, err
+		}
+		if req.Pipeline != nil && result.ExecutionState == Finished {
+			if err := s.finishPipeline(ctx, req, &result); err != nil {
+				return result, err
+			}
 		}
 		return result, nil
 	}

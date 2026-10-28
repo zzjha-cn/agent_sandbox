@@ -34,6 +34,22 @@ type Task struct {
 	Name string
 	WS   workspace.Workspace
 	Home string
+	// ExecutionDir is set only by the general-task application adapter. Legacy
+	// repository tasks keep their original main/worktree path rules.
+	ExecutionDir string
+}
+
+// NewExecution names a general task without discovering or initializing Git.
+func NewExecution(home, name string) (Task, error) {
+	if err := workspace.ValidateTaskName(name); err != nil {
+		return Task{}, err
+	}
+	abs, err := filepath.Abs(home)
+	if err != nil {
+		return Task{}, err
+	}
+	dir := filepath.Join(abs, "workspaces", "tasks", name)
+	return Task{Name: name, Home: abs, WS: workspace.Workspace{ID: "tasks", Root: dir}, ExecutionDir: dir}, nil
 }
 
 func New(home string, ws workspace.Workspace, name string) (Task, error) {
@@ -44,7 +60,7 @@ func New(home string, ws workspace.Workspace, name string) (Task, error) {
 }
 
 // IsMain 报告是否是直接使用仓库根的 main Task。
-func (t Task) IsMain() bool { return t.Name == "main" }
+func (t Task) IsMain() bool { return t.Name == "main" && t.ExecutionDir == "" }
 
 func (t Task) prefix() string { return "sbx-" + t.WS.ID + "-" + t.Name }
 
@@ -65,7 +81,7 @@ func (t Task) ID() string { return t.WS.ID + "." + t.Name }
 
 // Branch 是 Task 的分支；main Task 没有专属分支。
 func (t Task) Branch() string {
-	if t.IsMain() {
+	if t.IsMain() || t.ExecutionDir != "" {
 		return ""
 	}
 	return "sbx/" + t.Name
@@ -73,6 +89,9 @@ func (t Task) Branch() string {
 
 // Worktree 返回 Task 的工作目录。
 func (t Task) Worktree() string {
+	if t.ExecutionDir != "" {
+		return t.ExecutionDir
+	}
 	if t.IsMain() {
 		return t.WS.Root
 	}

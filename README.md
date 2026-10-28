@@ -27,6 +27,8 @@ A coding agent only gets out of your way once you turn the permission prompts of
 
 You also get tasks that **actually run in parallel** without stepping on each other, dependency installs that never touch your host, and every outbound request through a proxy — so you can **ask afterwards what it talked to**.
 
+For file processing and automation, [`sbx task`](docs/general-tasks.md) adds registered inputs, immutable artifacts, independent validation, and local directory or Git delivery. Review and delivery retries reuse the recorded attempt.
+
 ```console
 $ cd ~/code/shop
 $ sbx run fix-login          # branch + container + Claude Code, in one command
@@ -316,7 +318,7 @@ What *cannot* be in that file, by design: anything that looks like a credential,
 
 **Claude Code and Codex are supported.** The execution refactor and v1 machine protocol are implemented. Available commands: `run / admit / version / isolation / attach / shell / stop / ls / path / done / drop / logs / port / net / memory / login / config / trust / prep / doctor / upgrade`.
 
-Known limits: there is no `sbx merge`, automatic artifact delivery or multi-user isolation on a shared daemon; a host proxy has to speak HTTP (SOCKS-only needs a shim of your own); base images have to be Debian or Ubuntu; a service or a forward is reached by its name, not `localhost`. See also [Deliberately not provided](#deliberately-not-provided).
+Known limits: there is no `sbx merge`, remote artifact publishing or multi-user isolation on a shared daemon; local artifact delivery uses the separate `sbx task` entrypoint. A host proxy has to speak HTTP (SOCKS-only needs a shim of your own); base images have to be Debian or Ubuntu; a service or a forward is reached by its name, not `localhost`. See also [Deliberately not provided](#deliberately-not-provided).
 
 Roadmap: [implementation-checklist.md](docs/implementation-checklist.md).
 

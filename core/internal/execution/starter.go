@@ -75,7 +75,7 @@ func (s AgentStarter) Start(ctx context.Context, t task.Task, o Request) error {
 			sessionID = ""
 		}
 	}
-	command, err := provider.Command(agent.Launch{Headless: o.Mode == Headless, Continue: cont, Notify: o.Config.OnExit != "", SessionID: sessionID})
+	command, err := provider.Command(agent.Launch{Headless: o.Mode == Headless, Continue: cont, Notify: o.Config.OnExit != "", SessionID: sessionID, NoRepository: t.ExecutionDir != ""})
 	if err != nil {
 		return err
 	}

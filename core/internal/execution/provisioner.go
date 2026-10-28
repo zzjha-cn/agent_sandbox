@@ -323,8 +323,11 @@ func (p *Provisioner) Create(ctx context.Context, req Request) (err error) {
 	if t.IsMain() {
 		gitDir = ""
 	}
-	name, _ := workspace.GitContext(ctx, t.WS.Root, "config", "user.name")
-	mail, _ := workspace.GitContext(ctx, t.WS.Root, "config", "user.email")
+	var name, mail string
+	if t.ExecutionDir == "" {
+		name, _ = workspace.GitContext(ctx, t.WS.Root, "config", "user.name")
+		mail, _ = workspace.GitContext(ctx, t.WS.Root, "config", "user.email")
+	}
 	key, err := h.APIKey()
 	if err != nil {
 		return err

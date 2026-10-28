@@ -1,5 +1,7 @@
 # sbx 设计文档：AI 编码 Agent 沙箱运行时
 
+G2–G4 的通用任务执行闭环及当前范围见 [通用任务手册](general-tasks.md)、[编码前实施与验收清单](g2-g4-implementation.md)。本篇原有 Git/v1 运行时设计保持兼容；工具和组织策略仍按 [执行内核 Roadmap](execution-roadmap.md) 后续阶段推进。
+
 | 项 | 内容 |
 |---|---|
 | 状态 | v1.3 —— 2026-10-27：Claude/Codex、执行内核及 sbx.execution/v1 已实现。本文是运行时的整体设计；边界与前置依赖（prep / services / forward）的完整口径在 [boundary.md](boundary.md) |

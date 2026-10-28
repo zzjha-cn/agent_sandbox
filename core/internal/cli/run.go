@@ -23,8 +23,8 @@ import (
 	"sandx/internal/prep"
 	"sandx/internal/protocol"
 	"sandx/internal/proxy"
+	"sandx/internal/source"
 	"sandx/internal/task"
-	"sandx/internal/workspace"
 )
 
 // runOpts 是一次 sbx run 的选项。
@@ -252,10 +252,23 @@ func (h runHost) DockerClientWithContext(ctx context.Context) *docker.Client {
 func (h runHost) EffectiveConfig() config.Config  { return h.app.Cfg }
 func (h runHost) Logf(format string, args ...any) { h.app.logf(format, args...) }
 func (h runHost) PrepareWorktree(ctx context.Context, t task.Task, base string) (string, error) {
+	if t.ExecutionDir != "" {
+		info, err := os.Stat(t.Worktree())
+		if err != nil {
+			return "", err
+		}
+		if !info.IsDir() {
+			return "", fmt.Errorf("prepared execution workspace is not a directory")
+		}
+		return "", nil
+	}
 	return h.app.prepareWorktree(ctx, t, base)
 }
 func (h runHost) AgentImage() (string, error) { return h.app.agentImage() }
 func (h runHost) PrepLoad(t task.Task) (string, *prep.Plan, error) {
+	if t.ExecutionDir != "" {
+		return "", nil, nil
+	}
 	return h.app.prepLoad(t)
 }
 func (h runHost) MergePrepAllow(allow []string) error {
@@ -349,37 +362,7 @@ func (a *App) proxySpec(t task.Task, taskID string) proxy.TaskSpec {
 }
 
 func (a *App) prepareWorktree(ctx context.Context, t task.Task, base string) (string, error) {
-	if t.IsMain() {
-		if base != "" {
-			a.logf("the main task uses the repo root directly; ignoring --base")
-		}
-		return t.WS.HeadRefContext(ctx)
-	}
-	ref := base
-	if ref == "" {
-		ref = "HEAD"
-	}
-	sha, err := workspace.GitContext(ctx, t.WS.Root, "rev-parse", "--verify", ref+"^{commit}")
-	if err != nil {
-		return "", fmt.Errorf("--base %q is not a valid commit: %w", ref, err)
-	}
-	created, note, err := t.WS.EnsureWorktreeContext(ctx, t.Worktree(), t.Branch(), sha)
-	if err != nil {
-		return "", err
-	}
-	if note != "" {
-		a.logf("%s", note)
-	}
-	if created {
-		a.logf("worktree: %s (branch %s)", t.Worktree(), t.Branch())
-	}
-	if note != "" || !created {
-		// 分支是已有的：base 取它和 HEAD 的分叉点
-		if mb, err := workspace.GitContext(ctx, t.WS.Root, "merge-base", sha, t.Branch()); err == nil {
-			sha = mb
-		}
-	}
-	return sha, nil
+	return source.PrepareLegacy(ctx, t, base, a.logf)
 }
 
 // initVol 在一个临时容器里以 root 初始化 volume 的内容和属主。

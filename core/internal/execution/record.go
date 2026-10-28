@@ -28,12 +28,13 @@ var (
 )
 
 type AttemptRecord struct {
-	Result          Result      `json:"result"`
-	StartedAt       time.Time   `json:"started_at"`
-	UpdatedAt       time.Time   `json:"updated_at"`
-	Closed          bool        `json:"closed"`
-	ErrorKind       ErrorKind   `json:"error_kind,omitempty"`
-	SecondaryErrors []ErrorKind `json:"secondary_errors,omitempty"`
+	Result          Result         `json:"result"`
+	StartedAt       time.Time      `json:"started_at"`
+	UpdatedAt       time.Time      `json:"updated_at"`
+	Closed          bool           `json:"closed"`
+	ErrorKind       ErrorKind      `json:"error_kind,omitempty"`
+	SecondaryErrors []ErrorKind    `json:"secondary_errors,omitempty"`
+	Pipeline        *PipelineFacts `json:"pipeline,omitempty"`
 }
 
 // OperationRecord stores safe references, never a tool payload or credentials.
@@ -64,7 +65,33 @@ type RecordStore interface {
 	Save(context.Context, *TaskRecord) error
 }
 
-type FileStore struct{ dir, key string }
+type FileStore struct{ dir, key, version string }
+
+func (s *FileStore) schema() string {
+	if s.version != "" {
+		return s.version
+	}
+	return RecordSchema
+}
+
+func NewGeneralFileStore(t task.Task) (*FileStore, error) {
+	if t.ExecutionDir == "" || t.WS.ID != "tasks" {
+		return nil, errors.New("general record requires a general execution task")
+	}
+	expected, err := task.NewExecution(t.Home, t.Name)
+	if err != nil {
+		return nil, err
+	}
+	if t.Worktree() != expected.Worktree() || t.WS.Root != expected.WS.Root || t.WS.GitDir != "" {
+		return nil, errors.New("general workspace identity does not match its task")
+	}
+	s, err := NewFileStore(t)
+	if err != nil {
+		return nil, err
+	}
+	s.version = GeneralRecordSchema
+	return s, nil
+}
 
 func NewFileStore(t task.Task) (*FileStore, error) {
 	if t.Home == "" || t.WS.ID == "" {
@@ -200,7 +227,7 @@ func (s *FileStore) Load() (*TaskRecord, error) {
 		return nil, fmt.Errorf("%w: cannot read record", ErrRecordInvalid)
 	}
 	marker, err := readRegular(filepath.Join(s.dir, "initialized"))
-	if err != nil || string(marker) != RecordSchema+"\n" {
+	if err != nil || string(marker) != s.schema()+"\n" {
 		return nil, ErrRecordInvalid
 	}
 	var disk diskRecord
@@ -222,11 +249,14 @@ func (s *FileStore) Load() (*TaskRecord, error) {
 }
 
 func (s *FileStore) validate(r *TaskRecord) error {
-	if r.SchemaVersion != RecordSchema || r.TaskKey != s.key || r.Sequence == 0 || len(r.Attempts) == 0 {
+	if r.SchemaVersion != s.schema() || r.TaskKey != s.key || r.Sequence == 0 || len(r.Attempts) == 0 {
 		return ErrRecordInvalid
 	}
 	seen := map[string]bool{}
 	for _, a := range r.Attempts {
+		if a.Pipeline != nil && r.SchemaVersion != GeneralRecordSchema {
+			return ErrRecordInvalid
+		}
 		if a.Result.AttemptID == "" || seen[a.Result.AttemptID] || a.Result.TaskID == "" || a.StartedAt.IsZero() || a.UpdatedAt.Before(a.StartedAt) || len(a.Result.Stages) != len(initialStages()) {
 			return ErrRecordInvalid
 		}
@@ -300,7 +330,7 @@ func (s *FileStore) Save(ctx context.Context, r *TaskRecord) error {
 		if err != nil {
 			return err
 		}
-		_, writeErr := f.WriteString(RecordSchema + "\n")
+		_, writeErr := f.WriteString(s.schema() + "\n")
 		err = errors.Join(writeErr, f.Sync(), f.Close(), syncDirectory(s.dir))
 		if err != nil {
 			return err

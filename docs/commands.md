@@ -1,5 +1,7 @@
 # sbx 命令手册
 
+通用文件任务、稳定产物、独立验证与交付重试使用新的 `sbx task` 入口，见 [通用任务手册](general-tasks.md)。本页的 `run` / `execution status` 仍描述 Git/v1 路径。
+
 > 按"你会在什么时候用到它"递进排列：装一次 → 日常回路 → 会话控制 → 观察 → 网络 → 维护，最后是参数、配置和环境变量的速查。
 > 不想要 worktree、想让改动直接落在仓库目录里，看[「我想直接在仓库目录里干活」](#我想直接在仓库目录里干活main-task)。
 > 还不知道 sbx 是什么、为什么这么设计，先看[项目主页](https://zzjha-cn.github.io/agent_sandbox/)；想看一个连续场景从头到尾发生了什么，去 [walkthrough.md](walkthrough.md)；想看组件怎么拼的，去 [architecture.md](architecture.md)。

@@ -11,6 +11,9 @@ import (
 func (s *Service) WithStore(store RecordStore) *Service { s.store = store; return s }
 
 func (d *RuntimeDriver) ExecutionStore(req Request) (RecordStore, error) {
+	if req.Pipeline != nil {
+		return NewGeneralFileStore(req.Task)
+	}
 	return NewFileStore(req.Task)
 }
 
@@ -18,6 +21,7 @@ func (s *Service) Run(ctx context.Context, req Request) (Result, error) {
 	s.eventErr, s.record = nil, nil
 	s.failureNotice = nil
 	s.persistFailed, s.started = false, false
+	s.facts = nil
 	id := req.TaskID
 	if id == "" {
 		id = req.Task.ID()
@@ -33,6 +37,18 @@ func (s *Service) Run(ctx context.Context, req Request) (Result, error) {
 	}
 	if err := req.Requirements.check(); err != nil {
 		return reject(AdmissionRejected, "admission", err)
+	}
+	if req.Pipeline != nil {
+		if _, err := NewGeneralFileStore(req.Task); err != nil {
+			return reject(AdmissionRejected, "task_spec", err)
+		}
+		if err := req.Pipeline.refresh(); err != nil {
+			return reject(AdmissionRejected, "task_spec", err)
+		}
+		if req.Task.ExecutionDir == "" || req.Task.WS.ID != "tasks" || req.Task.Name != req.Pipeline.Spec.TaskID || req.TaskID != "" && req.TaskID != req.Pipeline.Spec.TaskID || req.Mode != Headless || req.Detach || req.Prompt != req.Pipeline.Spec.Prompt || req.Config.DefaultAgent != req.Pipeline.Spec.Agent.Provider {
+			return reject(AdmissionRejected, "task_spec", errors.New("general execution request does not match its task specification"))
+		}
+		s.facts = &PipelineFacts{Outputs: req.Pipeline.Spec.Outputs, Criteria: req.Pipeline.Spec.Criteria, Sink: req.Pipeline.Spec.Sink}
 	}
 	if locker, ok := s.driver.(interface{ Lock(Request) (func(), error) }); ok {
 		unlock, err := locker.Lock(req)
@@ -74,14 +90,23 @@ func (s *Service) Run(ctx context.Context, req Request) (Result, error) {
 		}
 		if r == nil {
 			r = &TaskRecord{SchemaVersion: RecordSchema, TaskKey: req.Task.ID()}
+			if req.Pipeline != nil {
+				r.SchemaVersion = GeneralRecordSchema
+			}
+		}
+		if req.Pipeline != nil && r.SchemaVersion != GeneralRecordSchema {
+			return reject(AdmissionRejected, "execution_record", ErrRecordInvalid)
 		}
 		switch r.Recovery() {
-		case "reconcile_prepare", "reconcile_cleanup", "reconcile_operations":
+		case "reconcile_prepare", "reconcile_cleanup", "reconcile_operations", "continue_verification", "retry_delivery", "continue_completion", "reconcile_retention":
 			return reject(AdmissionRejected, "execution_record", ErrRecoveryRequired)
 		}
 		now := time.Now().UTC()
 		r.Attempts = append(r.Attempts, AttemptRecord{Result: result, StartedAt: now, UpdatedAt: now})
 		s.record = r
+	}
+	if req.Pipeline != nil && store == nil {
+		return reject(AdmissionRejected, "execution_record", errors.New("general tasks require durable records"))
 	}
 	// The effective store is local to this run; an explicitly supplied test store
 	// remains reusable, while RuntimeDriver resolves a fresh per-task FileStore.
@@ -115,6 +140,7 @@ func (s *Service) runWithStore(ctx context.Context, req Request, result Result, 
 		}
 	}
 	// A skipped phase means it was not requested, not that it succeeded.
+	s.normalizeArtifactState(&result)
 	for i := range result.Stages {
 		if result.Stages[i].State == ProgressPending && result.Stages[i].Phase != FinalizePhase {
 			result.Stages[i].State = ProgressSkipped
@@ -188,6 +214,14 @@ func (s *Service) checkpoint(ctx context.Context, r *Result, phase Phase, state 
 	if err != nil && ctx.Err() != nil && phase != FinalizePhase {
 		return &ExecutionError{Kind: errorKind(ctx.Err(), InternalFailed), Stage: string(phase), Cause: errors.Join(ctx.Err(), err)}
 	}
+	if err == nil && s.facts != nil {
+		switch state {
+		case ProgressRunning:
+			s.emit(ctx, *r, EventPhaseStarted, string(phase), "task phase started")
+		case ProgressSucceeded, ProgressFailed:
+			s.emit(ctx, *r, EventPhaseFinished, string(phase), "task phase finished")
+		}
+	}
 	return err
 }
 
@@ -214,6 +248,9 @@ func (s *Service) save(ctx context.Context, result Result, primary error, closed
 	}
 	a := &s.record.Attempts[len(s.record.Attempts)-1]
 	a.Result, a.UpdatedAt, a.Closed = result, time.Now().UTC(), closed
+	a.Pipeline = s.facts
+	a.ErrorKind = ""
+	a.SecondaryErrors = nil
 	if primary != nil {
 		a.ErrorKind = errorKind(primary, InternalFailed)
 		var ee *ExecutionError
