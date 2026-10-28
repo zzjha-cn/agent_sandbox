@@ -58,7 +58,11 @@ func TestRealDockerCancellationTerminatesTask(t *testing.T) {
 				want = TimedOut
 				cause = context.DeadlineExceeded
 			}
-			result, err := NewService(d).Run(ctx, req)
+			store, err := NewFileStore(req.Task)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := NewService(d).WithStore(store).Run(ctx, req)
 			if !errors.Is(err, cause) || result.State != want || result.CleanupState != CleanupComplete {
 				t.Fatalf("%+v %v", result, err)
 			}
@@ -68,6 +72,10 @@ func TestRealDockerCancellationTerminatesTask(t *testing.T) {
 			}
 			if _, err := os.Stat(req.Task.Worktree()); !os.IsNotExist(err) {
 				t.Fatalf("test unexpectedly created a worktree: %v", err)
+			}
+			record, err := store.Load()
+			if err != nil || len(record.Attempts) != 1 || !record.Attempts[0].Closed || record.Attempts[0].Result.AttemptID != result.AttemptID || record.Attempts[0].Result.CleanupState != CleanupComplete {
+				t.Fatalf("container outcome was not durably recorded: %+v %v", record, err)
 			}
 		})
 	}

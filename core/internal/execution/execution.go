@@ -27,14 +27,15 @@ const (
 )
 
 type Request struct {
-	Task   task.Task
-	TaskID string // optional caller-owned stable task identifier for protocol requests
-	Mode   Mode
-	Prompt string
-	Base   string
-	Fresh  bool
-	Detach bool
-	Config config.Config
+	Task         task.Task
+	TaskID       string // optional caller-owned stable task identifier for protocol requests
+	Mode         Mode
+	Prompt       string
+	Base         string
+	Fresh        bool
+	Detach       bool
+	Config       config.Config
+	Requirements Requirements
 }
 
 type State string
@@ -62,14 +63,19 @@ const (
 )
 
 type Result struct {
-	TaskID         string        `json:"task_id"`
-	AttemptID      string        `json:"attempt_id"`
-	State          State         `json:"state"`
-	Next           Disposition   `json:"next,omitempty"`
-	AgentExitCode  *int          `json:"agent_exit_code,omitempty"`
-	ContainerState string        `json:"container_state,omitempty"`
-	ArtifactState  ArtifactState `json:"artifact_state"`
-	CleanupState   CleanupState  `json:"cleanup_state"`
+	TaskID               string          `json:"task_id"`
+	AttemptID            string          `json:"attempt_id"`
+	State                State           `json:"state"`
+	Next                 Disposition     `json:"next,omitempty"`
+	AgentExitCode        *int            `json:"agent_exit_code,omitempty"`
+	ContainerState       string          `json:"container_state,omitempty"`
+	ArtifactState        ArtifactState   `json:"artifact_state"`
+	CleanupState         CleanupState    `json:"cleanup_state"`
+	ExecutionState       State           `json:"execution_state"`
+	ValidationState      string          `json:"validation_state"`
+	ProductDeliveryState string          `json:"product_delivery_state"`
+	EventDeliveryState   string          `json:"event_delivery_state"`
+	Stages               []StageProgress `json:"stages"`
 }
 
 type ArtifactState string
@@ -205,9 +211,14 @@ type Driver interface {
 }
 
 type Service struct {
-	driver   Driver
-	events   EventSink
-	eventErr error
+	driver        Driver
+	events        EventSink
+	eventErr      error
+	store         RecordStore
+	record        *TaskRecord
+	failureNotice *Event
+	persistFailed bool
+	started       bool
 }
 
 func NewService(driver Driver, sinks ...EventSink) *Service {
@@ -229,6 +240,11 @@ func (s *Service) emitResult(ctx context.Context, result Result, summary string)
 func (s *Service) emitFailure(ctx context.Context, result *Result, kind ErrorKind, stage, summary string) {
 	result.State = stateForError(kind)
 	s.eventErr = errors.Join(s.eventErr, s.events.Emit(ctx, Event{Type: EventFailed, TaskID: result.TaskID, AttemptID: result.AttemptID, Time: time.Now().UTC(), Phase: stage, Summary: summary, ErrorKind: kind, Stage: stage, Result: result}))
+}
+
+func (s *Service) deferFailure(result *Result, kind ErrorKind, stage, summary string) {
+	result.State = stateForError(kind)
+	s.failureNotice = &Event{ErrorKind: kind, Stage: stage, Summary: summary}
 }
 
 func (s *Service) eventDeliveryError(result *Result) error {
@@ -294,32 +310,16 @@ func errorKind(err error, fallback ErrorKind) ErrorKind {
 	return fallback
 }
 
-func (s *Service) Run(ctx context.Context, req Request) (Result, error) {
-	s.eventErr = nil
-	taskID := req.TaskID
-	if taskID == "" {
-		taskID = req.Task.ID()
-	}
-	result := Result{TaskID: taskID, AttemptID: newAttemptID(), ArtifactState: ArtifactNotProduced, CleanupState: CleanupNotNeeded}
-	if locker, ok := s.driver.(interface{ Lock(Request) (func(), error) }); ok {
-		unlock, err := locker.Lock(req)
-		if err != nil {
-			kind := AdmissionRejected
-			var classified *ExecutionError
-			if errors.As(err, &classified) {
-				kind = classified.Kind
-			}
-			s.emitFailure(ctx, &result, kind, "admission", "task lock unavailable")
-			return result, s.withDeliveryError(&ExecutionError{Kind: kind, Stage: "locking task", Cause: err})
-		}
-		defer unlock()
+func (s *Service) run(ctx context.Context, req Request, result Result) (Result, error) {
+	if err := s.checkpoint(ctx, &result, AdmissionPhase, ProgressRunning); err != nil {
+		return result, err
 	}
 
 	exists, running, err := s.driver.Inspect(ctx, req)
 	if err != nil {
 		kind := errorKind(err, EnvironmentFailed)
-		s.emitFailure(ctx, &result, kind, "inspecting_task", "task inspection failed")
-		return result, s.withDeliveryError(&ExecutionError{Kind: kind, Stage: "inspecting task", Cause: err})
+		s.deferFailure(&result, kind, "inspecting_task", "task inspection failed")
+		return result, &ExecutionError{Kind: kind, Stage: "inspecting task", Cause: err}
 	}
 	if err = s.driver.Admit(ctx, req, exists, running); err != nil {
 		kind := errorKind(err, AdmissionRejected)
@@ -327,8 +327,14 @@ func (s *Service) Run(ctx context.Context, req Request) (Result, error) {
 		if errors.As(err, &classified) {
 			kind = errorKind(err, classified.Kind)
 		}
-		s.emitFailure(ctx, &result, kind, "admission", "admission check failed")
-		return result, s.withDeliveryError(&ExecutionError{Kind: kind, Stage: "checking admission", Cause: err})
+		s.deferFailure(&result, kind, "admission", "admission check failed")
+		return result, &ExecutionError{Kind: kind, Stage: "checking admission", Cause: err}
+	}
+	if err := s.checkpoint(ctx, &result, AdmissionPhase, ProgressSucceeded); err != nil {
+		return result, err
+	}
+	if err := s.checkpoint(ctx, &result, PreparePhase, ProgressRunning); err != nil {
+		return result, err
 	}
 	s.emit(ctx, result, EventAdmitted, "admission", "task admitted")
 	s.emit(ctx, result, EventPhaseStarted, "provision", "preparing task environment")
@@ -355,11 +361,18 @@ func (s *Service) Run(ctx context.Context, req Request) (Result, error) {
 			stage = "resuming task"
 		}
 		s.emit(ctx, result, EventPhaseFinished, "provision", "task environment failed")
-		s.emitFailure(ctx, &result, kind, stage, "task execution failed")
+		s.deferFailure(&result, kind, stage, "task execution failed")
 		if executionErr != nil {
-			return result, s.withDeliveryError(err)
+			return result, err
 		}
-		return result, s.withDeliveryError(&ExecutionError{Kind: kind, Stage: stage, Cause: err})
+		return result, &ExecutionError{Kind: kind, Stage: stage, Cause: err}
+	}
+	s.started = !exists || !running
+	if err := s.checkpoint(ctx, &result, PreparePhase, ProgressSucceeded); err != nil {
+		return result, err
+	}
+	if err := s.checkpoint(ctx, &result, ExecutePhase, ProgressRunning); err != nil {
+		return result, err
 	}
 	s.emit(ctx, result, EventPhaseFinished, "provision", "task environment ready")
 	s.emit(ctx, result, EventAgentStarted, "agent", "agent started")
@@ -371,7 +384,7 @@ func (s *Service) Run(ctx context.Context, req Request) (Result, error) {
 		if waitErr != nil {
 			kind := errorKind(waitErr, EnvironmentFailed)
 			result.ContainerState = string(outcome.ContainerState)
-			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), CleanupTimeout)
 			stopErr := s.driver.Stop(cleanupCtx, req)
 			cancel()
 			result.CleanupState = CleanupComplete
@@ -382,8 +395,8 @@ func (s *Service) Run(ctx context.Context, req Request) (Result, error) {
 			} else {
 				result.ContainerState = string(ContainerStopped)
 			}
-			s.emitFailure(ctx, &result, kind, "waiting_for_agent", "agent wait failed")
-			return result, s.withDeliveryError(&ExecutionError{Kind: kind, Stage: "waiting for agent", Cause: waitErr, Cleanup: cleanup})
+			s.deferFailure(&result, kind, "waiting_for_agent", "agent wait failed")
+			return result, &ExecutionError{Kind: kind, Stage: "waiting for agent", Cause: waitErr, Cleanup: cleanup}
 		}
 		result.State = Finished
 		result.Next = Completed
@@ -400,8 +413,13 @@ func (s *Service) Run(ctx context.Context, req Request) (Result, error) {
 			summary = "agent exited unsuccessfully"
 		}
 		s.emit(ctx, result, EventAgentExited, "agent", summary)
-		if eventErr := s.deliverResult(ctx, &result, summary); eventErr != nil {
-			return result, eventErr
+		result.ExecutionState = result.State
+		progress := ProgressSucceeded
+		if result.State == AgentFailed {
+			progress = ProgressFailed
+		}
+		if err := s.checkpoint(ctx, &result, ExecutePhase, progress); err != nil {
+			return result, err
 		}
 		return result, nil
 	}
@@ -415,8 +433,9 @@ func (s *Service) Run(ctx context.Context, req Request) (Result, error) {
 		result.Next = Attach
 		result.State = Ready
 	}
-	if eventErr := s.deliverResult(ctx, &result, "agent session ready"); eventErr != nil {
-		return result, eventErr
+	result.ExecutionState = result.State
+	if err := s.checkpoint(ctx, &result, ExecutePhase, ProgressHandedOff); err != nil {
+		return result, err
 	}
 	return result, nil
 }

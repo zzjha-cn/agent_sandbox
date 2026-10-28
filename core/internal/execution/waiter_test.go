@@ -67,11 +67,15 @@ func TestWaitAgentRequiresCompletionEvidence(t *testing.T) {
 
 type interruptedDriver struct {
 	testDriver
+	interrupt      context.CancelFunc
 	stopErr        error
 	stopContextErr error
 }
 
 func (d *interruptedDriver) Wait(ctx context.Context, _ Request) (AgentOutcome, error) {
+	if d.interrupt != nil {
+		d.interrupt()
+	}
 	<-ctx.Done()
 	return AgentOutcome{}, ctx.Err()
 }
@@ -84,12 +88,12 @@ func (d *interruptedDriver) Stop(ctx context.Context, _ Request) error {
 func TestCancellationStopsExecutionWithIndependentContext(t *testing.T) {
 	for _, fail := range []bool{false, true} {
 		ctx, cancel := context.WithCancel(context.Background())
-		d := &interruptedDriver{}
+		d := &interruptedDriver{interrupt: cancel}
 		if fail {
 			d.stopErr = errors.New("stop failed")
 		}
-		cancel()
 		result, err := NewService(d).Run(ctx, testRequest("test"))
+		cancel()
 		if !errors.Is(err, context.Canceled) || result.State != Cancelled {
 			t.Fatalf("%+v %v", result, err)
 		}

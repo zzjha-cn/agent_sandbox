@@ -125,6 +125,26 @@ git branch -D sbx/fix-login
 
 `--base` 用在从某个历史提交或另一分支起步：`sbx run hotfix --base v1.2.0`。分支已存在时，`ls` 里的 AHEAD/DIFF 基准自动取它和 HEAD 的分叉点（merge-base）。
 
+### `sbx execution status <task>`
+
+```bash
+sbx execution status fix-login
+sbx execution status fix-login --json
+```
+
+在当前仓库读取历次执行的持久化阶段、执行/清理/事件输出结果和恢复判断，不访问 Docker，不加载项目配置，也不要求 trust。JSON 使用独立的 `sbx.execution-status/v1`，不是 v1 任务事件。记录存于 `$SBX_HOME/executions/<repo-id>/<task>/`；`done/drop` 保留这些记录。阶段完成不表示测试或交付已完成，当前未实现阶段明确跳过。
+
+| recovery | 含义与后续动作 |
+|---|---|
+| `not_recorded` | 旧任务或尚无执行记录；查询不创建文件 |
+| `new_attempt_allowed` | 记录无未决门禁；再次 run 仍要通过当前 runtime 准入，不保证业务幂等 |
+| `inspect_runtime` | 上次中断或交互/后台交接；需检查实际容器状态，新 run 会重新 inspect/admit |
+| `reconcile_prepare` / `reconcile_cleanup` | 准备阶段未确认或清理失败；先按资源归属核对，禁止自动重建 |
+| `reconcile_operations` | 存在未决外部操作意图/未知结果；禁止盲目再次执行 |
+| `record_invalid` | 记录缺失、损坏或不兼容；JSON 查询退出 7，正常 run 同样拒绝 |
+
+G1 尚无自动资源核对/记录修复命令。遇到门禁时先保留记录、检查 `sbx ls`、容器/网络/卷归属与 worktree；需要继续独立工作可使用新任务名。不要通过删除记录绕过门禁。记录和初始化标记同时被人为删除无法与旧任务无记录区分；本机制不对抗拥有本机文件或 Docker API 权限的操作者。实现与验收见 [G1](g1-implementation.md)。
+
 ### 无人值守：`sbx run -p` 和 `sbx logs`（M3-7）
 
 ```bash

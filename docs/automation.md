@@ -103,3 +103,9 @@ v1 声明 `artifact_delivery = "none"`、`artifact_state = "not_produced"`：成
 - 调用方并发排空 stdout/stderr，设置比 sbx 截止时间更长的外部 watchdog。watchdog 先发 SIGTERM，等待退出和清理，最后才考虑强制终止；仅杀死宿主 CLI 不能证明容器和工具已经停止。
 - 完全关闭 stdout 管道可能得到 OS SIGPIPE，无法保证还能补发 JSON 或固定退出 6；缺失终态记录应归为交付未确认，并检查 Task 实际状态。
 - 保存请求、二进制版本、配置摘要、完整 stdout/stderr、进程码、最终结果及 `sbx ls`/分支检查。prompt、provider 日志和诊断可能包含业务内容，应按业务数据保存；不要导出认证文件或完整容器环境。
+
+## 中断后的持久化状态
+
+`sbx execution status <task> --json` 提供独立的 `sbx.execution-status/v1` 查询。G1 为现有 Git 路径保存阶段意图、结果与历次 attempt，不保存 prompt、凭据或原始错误；事件输出失败不会抹去已记录的执行事实。它不改变 v1 的产物承诺，也不发布尚未实现的 v2。
+
+上次进程在准备资源时被强制终止、清理失败或关键记录损坏，会阻断新 run，需先核对。执行阶段中断或交互/后台交接会提示检查 runtime；显式新 run 仍走 inspect/admit，不能把它当作自动重放旧 prompt。状态查询及各 recovery 值见 [命令手册](commands.md)。记录在 `done/drop` 后保留，单任务历史文件上限 32 MiB；达到上限时拒绝追加，保留原历史，可使用新任务名继续独立工作。

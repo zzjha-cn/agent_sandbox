@@ -1,6 +1,6 @@
 # 术语表
 
-> 状态：**随讨论演进**（起草 2026-10-22，按 2026-10-27 实现更新）。标记 ✅ 的是代码里已经成立的定义，🚧 的是提案中、尚未确定的词。
+> 状态：**随讨论演进**（起草 2026-10-22，按 2026-10-28 讨论更新）。标记 ✅ 的是代码里已经成立的定义，🚧 的是尚未实现或仍有待定细节的词；职责方向已确认不等于能力已实现。
 >
 > 新词在这里定下来之前不要进别的文档——[maturity.md](maturity.md) 和 [boundary.md](boundary.md) 的论证都依赖术语是稳定的。
 
@@ -15,10 +15,12 @@
 | **委托人（principal）** | 对 agent 行为负责的主体。今天的前提是 **机器的主人 = 委托人** | `maturity.md` §0 |
 | **daemon** | 一个 Docker daemon。**sbx 的隔离单位**——不变量守的是 Task 与外界，不守同一 daemon 上 Task 之间 | `commands.md` 的 daemon 归属说明 |
 | **Provider** | Claude/Codex 的启动、认证和会话适配；Task 创建后不能借 --agent 切换 | `internal/agent/provider.go` |
-| **Execution Service** | 一次性 CLI 中的生命周期服务，负责准入、创建/恢复、等待/停止和结果；不是常驻 daemon | `internal/execution` |
+| **Execution Service** | 一次性 CLI 中的生命周期服务，负责准入、创建/恢复、等待/停止、阶段记录和结果；通用产物与工具适配器尚未实现 | `internal/execution` |
 | **任务信封（envelope）** | 公开 sbx.execution/v1 输入：schema_version/task_id/prompt 及可选 base/fresh/timeout_seconds；仓库与策略来自当前目录和本地配置 | `automation.md` |
 | **Attempt** | 同一逻辑 Task 的一次执行，每次生成独立 attempt_id；重试不代表幂等重放 | `automation.md` |
 | **Runner** | 可被外部脚本/调度器调用的本地执行入口；底层调用执行服务，不要求常驻 worker | `automation.md` |
+| **执行记录（Execution Record）** | 独立于 Task StateDir 的版本化阶段事实与 attempt 历史；用于中断查询和恢复门禁，不是 stdout 事件日志或业务产物 | `internal/execution/record.go`、[G1](g1-implementation.md) |
+| **RepositoryContext** | G0 对当前 `workspace.Workspace` 仓库上下文的概念名；保留现有 Go 名称和路径派生 id | [G0](g0-contract.md) |
 
 ## 提案中的词 🚧
 
@@ -37,9 +39,17 @@
 | 词 | 候选定义 | 状态 |
 |---|---|---|
 | **通用 runner 类型** | 当前公开入口只承诺 agent 执行；未来非 agent 程序是否需独立能力模型由真实场景决定 | 未实现；不与已成立的 Runner/provider 混用 |
-| **source / workspace** | 任务的输入。今天硬编码为 git worktree，而它同时也是 sink——**两者不是两端，是同一个工作区的两个视角** | 待拆 |
-| **sink** | 产物的交付通道。git sink（分支 + push，push 由宿主机侧做，见 ADR 0019（本地 ADR））、文件夹 / volume sink | 入场取决于非代码场景，**是「能否走出代码场景」的开关** |
-| **完成判据** | sink 定义的「这个任务算做完了」。git sink = 有 commit；文件夹 sink = ？**没有判据的 sink 只是一个挂载点** | 未定，抽象能否立住的关键 |
+| **TaskSpec** | 通用任务声明，描述输入、agent、输出、完成要求、交付和工具需求；与可信授权分开 | G0 字段职责与 v2 迁移已定；完整 schema/适配器未实现 |
+| **Source / ExecutionWorkspace** | Source 准备输入，ExecutionWorkspace 承载执行；与 RepositoryContext 区分，当前具体实现仍为 Git worktree | G0 命名与职责已定，通用工作区在 G2 实现 |
+| **ArtifactSet** | 按明确输出范围收集的稳定产物快照及清单，带摘要与来源；区别于当前失败回滚用的状态快照 | 方向已确认，待实现 |
+| **产物 Sink / DeliveryReceipt** | Sink 将选定产物交付到目标并返回回执；独立于内部 EventSink，当前 v1 不提供 artifact delivery | 职责已确认，交付与重试契约待定稿 |
+| **完成判据 / Evaluator** | 任务声明完成要求，独立验证器给出结论和证据；执行成功、存在 commit 或目标写入成功都不能直接证明业务完成 | 职责已确认，待实现 |
+| **Tool Gateway / GrantRef** | 工具调用入口按可信授权引用约束操作、目标和数据范围，代用凭据并记录副作用回执；项目或模型不能自行授予权限 | 方向已确认，授权生命周期与部署方式待定稿 |
+
+上述通用执行概念的实施顺序与退出条件见 [执行内核 Roadmap](execution-roadmap.md)。
+
+| 词 | 候选定义 | 状态 |
+|---|---|---|
 | **builder** | 沙箱初始化行为 | ❌ **不入场**：`prep` 已是唯一实现，改名无收益 |
 | **edge** | **前一个 task 的 sink 成为后一个 task 的 source**——编排期的数据依赖，**不是运行期的网络通道**。两个 task 不同时活着，不需要在 internal 网络上打洞 | 形态已定，优先级未定 |
 

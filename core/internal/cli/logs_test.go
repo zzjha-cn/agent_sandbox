@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -30,16 +31,16 @@ func TestFollowFileReadsFinalWrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	done := false
+	var done atomic.Bool
 	go func() {
 		time.Sleep(30 * time.Millisecond)
 		f, _ := os.OpenFile(p, os.O_APPEND|os.O_WRONLY, 0o644)
 		f.WriteString("two\n")
 		f.Close()
-		done = true
+		done.Store(true)
 	}()
 	// offset 从 4 开始：第一行当作"已经打印过"的部分
-	if err := followFile(p, &out, 4, func() bool { return done }, 10*time.Millisecond); err != nil {
+	if err := followFile(p, &out, 4, done.Load, 10*time.Millisecond); err != nil {
 		t.Fatal(err)
 	}
 	if out.String() != "two\n" {
