@@ -11,8 +11,10 @@ import (
 
 	"sandx/internal/artifact"
 	"sandx/internal/completion"
+	"sandx/internal/external"
 	"sandx/internal/sink"
 	"sandx/internal/source"
+	"sandx/internal/toolgate"
 	"sandx/internal/workspace"
 )
 
@@ -29,10 +31,12 @@ type TaskSpec struct {
 	Agent         struct {
 		Provider string `json:"provider"`
 	} `json:"agent"`
-	Outputs  *OutputSelection       `json:"outputs,omitempty"`
-	Criteria []completion.Criterion `json:"criteria"`
-	Sink     *SinkSelection         `json:"sink,omitempty"`
-	Limits   struct {
+	Tools      []toolgate.Selection   `json:"tools,omitempty"`
+	Operations []external.Call        `json:"operations,omitempty"`
+	Outputs    *OutputSelection       `json:"outputs,omitempty"`
+	Criteria   []completion.Criterion `json:"criteria"`
+	Sink       *SinkSelection         `json:"sink,omitempty"`
+	Limits     struct {
 		TimeoutSeconds int `json:"timeout_seconds"`
 	} `json:"limits"`
 }
@@ -49,6 +53,8 @@ type SinkGrant = sink.Grant
 // PipelinePolicy is loaded exclusively from the operator-owned registry.
 // Absence/revocation of a reference denies both new and resumed operations.
 type PipelinePolicy struct {
+	ToolGateway     toolgate.Policy            `toml:"tool_gateway"`
+	Tools           map[string]external.Grant  `toml:"tools"`
 	Sources         map[string]source.Grant    `toml:"sources"`
 	Sinks           map[string]SinkGrant       `toml:"sinks"`
 	Criteria        map[string]completion.Rule `toml:"criteria"`
@@ -107,9 +113,12 @@ type PipelineFacts struct {
 	Review        *ReviewRecord      `json:"review,omitempty"`
 	Receipt       *ProductReceipt    `json:"receipt,omitempty"`
 	// Selection excludes prompt and physical grant paths from status records.
-	Outputs  *OutputSelection       `json:"outputs,omitempty"`
-	Criteria []completion.Criterion `json:"criteria"`
-	Sink     *SinkSelection         `json:"sink,omitempty"`
+	ToolsDigest      string                 `json:"tools_digest,omitempty"`
+	ToolJournal      string                 `json:"tool_journal,omitempty"`
+	OperationsDigest string                 `json:"operations_digest,omitempty"`
+	Outputs          *OutputSelection       `json:"outputs,omitempty"`
+	Criteria         []completion.Criterion `json:"criteria"`
+	Sink             *SinkSelection         `json:"sink,omitempty"`
 }
 
 func contentBinding(value any) string {
@@ -156,16 +165,42 @@ func (spec TaskSpec) ValidateInput() error {
 			return err
 		}
 	}
+	if len(spec.Tools) > 16 {
+		return errors.New("at most 16 tools are allowed")
+	}
+	toolIDs := map[string]bool{}
+	for _, tool := range spec.Tools {
+		if err := tool.Validate(); err != nil {
+			return err
+		}
+		if toolIDs[tool.ID] {
+			return errors.New("duplicate tool id")
+		}
+		toolIDs[tool.ID] = true
+	}
+	if len(spec.Operations) > 32 {
+		return errors.New("at most 32 external operations are allowed")
+	}
+	seenOps := map[string]bool{}
+	for _, call := range spec.Operations {
+		if err := call.Validate(); err != nil {
+			return err
+		}
+		if seenOps[call.ID] {
+			return errors.New("duplicate operation id")
+		}
+		seenOps[call.ID] = true
+	}
 	seen := map[string]bool{}
 	for _, criterion := range spec.Criteria {
 		if criterion.ID == "" || criterion.Ref == "" || seen[criterion.ID] {
 			return errors.New("criteria require distinct ids and logical refs")
 		}
 		seen[criterion.ID] = true
-		if criterion.Kind != "files" && criterion.Kind != "tests" && criterion.Kind != "manual" {
+		if criterion.Kind != "files" && criterion.Kind != "tests" && criterion.Kind != "manual" && criterion.Kind != "external_state" {
 			return errors.New("unsupported criterion kind")
 		}
-		if spec.Outputs == nil {
+		if spec.Outputs == nil && criterion.Kind != "external_state" {
 			return errors.New("file/test/manual criteria require outputs")
 		}
 	}
@@ -232,8 +267,51 @@ func (p PipelinePlan) Validate() error {
 	if _, err := completion.Binding(spec.Criteria, p.Policy.Criteria); err != nil {
 		return err
 	}
-	if len(spec.Criteria) > 0 && spec.Outputs == nil {
-		return errors.New("file/test/manual criteria require artifact collection")
+	for _, tool := range spec.Tools {
+		g, ok := p.Policy.Tools[tool.GrantRef]
+		if !ok {
+			return external.ErrDenied
+		}
+		if err := tool.Authorize(g, tool.Targets[0]); err != nil {
+			return err
+		}
+	}
+	for _, c := range spec.Criteria {
+		for _, id := range p.Policy.Criteria[c.Ref].RequiredTools {
+			found := false
+			for _, tool := range spec.Tools {
+				if tool.ID == id {
+					found = true
+				}
+			}
+			if !found {
+				return errors.New("required tool evidence must select a declared tool")
+			}
+		}
+	}
+	for _, call := range spec.Operations {
+		g, ok := p.Policy.Tools[call.GrantRef]
+		if !ok {
+			return external.ErrDenied
+		}
+		// Admission validates connector configuration and scope; permission is checked
+		// per call, allowing lookup-only recovery after writes are revoked.
+		if err := g.Authorize(call, "lookup"); err != nil {
+			return err
+		}
+	}
+	for _, c := range spec.Criteria {
+		if c.Kind == "external_state" {
+			found := false
+			for _, call := range spec.Operations {
+				if call.ID == p.Policy.Criteria[c.Ref].Operation {
+					found = true
+				}
+			}
+			if !found {
+				return errors.New("external criterion must select a declared operation")
+			}
+		}
 	}
 	if spec.Sink != nil {
 		s := spec.Sink

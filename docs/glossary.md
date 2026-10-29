@@ -15,7 +15,7 @@
 | **委托人（principal）** | 对 agent 行为负责的主体。今天的前提是 **机器的主人 = 委托人** | `maturity.md` §0 |
 | **daemon** | 一个 Docker daemon。**sbx 的隔离单位**——不变量守的是 Task 与外界，不守同一 daemon 上 Task 之间 | `commands.md` 的 daemon 归属说明 |
 | **Provider** | Claude/Codex 的启动、认证和会话适配；Task 创建后不能借 --agent 切换 | `internal/agent/provider.go` |
-| **Execution Service** | 一次性 CLI 中的生命周期服务，统一编排准入、准备、运行/停止、产物收集、独立验证、本地交付、阶段记录与恢复；运行期工具授权待 G5/G6 | `internal/execution` |
+| **Execution Service** | 一次性 CLI 中的生命周期服务，统一编排准入、准备、运行/停止、产物收集、独立验证、本地交付、阶段记录与恢复；已含 G6 声明式外部操作、授权与核对；已含 G5 运行期只读 MCP 工具及安全日志 | `internal/execution` |
 | **任务信封（envelope）** | 公开 sbx.execution/v1 输入：schema_version/task_id/prompt 及可选 base/fresh/timeout_seconds；仓库与策略来自当前目录和本地配置 | `automation.md` |
 | **Attempt** | 同一逻辑 Task 的一次执行，每次生成独立 attempt_id；重试不代表幂等重放 | `automation.md` |
 | **Runner** | 可被外部脚本/调度器调用的本地执行入口；底层调用执行服务，不要求常驻 worker | `automation.md` |
@@ -39,12 +39,12 @@
 | 词 | 候选定义 | 状态 |
 |---|---|---|
 | **通用 runner 类型** | 当前公开入口只承诺 agent 执行；未来非 agent 程序是否需独立能力模型由真实场景决定 | 未实现；不与已成立的 Runner/provider 混用 |
-| **TaskSpec** | 通用任务声明，描述输入、agent、输出、完成要求和交付；与可信注册表分开 | ✅ `sbx task` 已接入阶段性 v2；工具字段及 G7 完整发布待后续 |
+| **TaskSpec** | 通用任务声明，描述输入、agent、输出、完成要求和交付；与可信注册表分开 | ✅ `sbx task` 已接入阶段性 v2；已含 G6 operations；已含 G5 tools/required_tools；G7 完整发布待后续 |
 | **Source / ExecutionWorkspace** | Source 准备输入，ExecutionWorkspace 承载执行；与 RepositoryContext 区分 | ✅ files / Git revision / empty 副本；旧 Git CLI 保留 worktree |
 | **ArtifactSet** | 按明确输出范围收集的稳定产物快照及清单，带摘要与来源；区别于失败回滚用的状态快照 | ✅ 完整工作区/选定输出快照、patch、内容摘要与显式回收 |
 | **产物 Sink / DeliveryReceipt** | Sink 将通过验证的产物交付到目标并返回回执；独立于内部 EventSink | ✅ 目录/Git 本地交付、持久化意图、查询与独立重试；v1 仍无 artifact delivery，远端发布待后续 |
-| **完成判据 / Evaluator** | 任务声明完成要求，独立验证器给出结论和证据 | ✅ 文件/范围/格式/结构、受限容器测试和人工判断；外部业务状态验证待 G6 |
-| **Tool Gateway / GrantRef** | 工具调用入口按可信授权引用约束操作、目标和数据范围，代用凭据并记录副作用回执；项目或模型不能自行授予权限 | 方向已确认，授权生命周期与部署方式待定稿 |
+| **完成判据 / Evaluator** | 任务声明完成要求，独立验证器给出结论和证据 | ✅ 文件/范围/格式/结构、受限容器测试和人工判断；G6 已含回执与外部业务状态独立验证 |
+| **Tool Gateway / GrantRef** | 工具调用入口按可信授权引用约束操作、目标和数据范围，代用凭据并记录副作用回执；项目或模型不能自行授予权限 | G6 声明式调用已有可信 grant、有效期/撤销、凭据代用与持久回执；G5 provider MCP HTTP 只读调用已实现（同步 headless、dedicated proxy） |
 
 上述通用执行概念的实施顺序与退出条件见 [执行内核 Roadmap](execution-roadmap.md)。
 

@@ -18,6 +18,9 @@ func (d *RuntimeDriver) ExecutionStore(req Request) (RecordStore, error) {
 }
 
 func (s *Service) Run(ctx context.Context, req Request) (Result, error) {
+	req.ToolGateway = false
+	req.ToolEndpoint = ""
+	s.closeTools = nil
 	s.eventErr, s.record = nil, nil
 	s.failureNotice = nil
 	s.persistFailed, s.started = false, false
@@ -39,6 +42,11 @@ func (s *Service) Run(ctx context.Context, req Request) (Result, error) {
 		return reject(AdmissionRejected, "admission", err)
 	}
 	if req.Pipeline != nil {
+		if len(req.Pipeline.Spec.Tools) > 0 {
+			if err := validateToolProvider(req); err != nil {
+				return reject(AdmissionRejected, "tool_capability", err)
+			}
+		}
 		if _, err := NewGeneralFileStore(req.Task); err != nil {
 			return reject(AdmissionRejected, "task_spec", err)
 		}
@@ -48,7 +56,7 @@ func (s *Service) Run(ctx context.Context, req Request) (Result, error) {
 		if req.Task.ExecutionDir == "" || req.Task.WS.ID != "tasks" || req.Task.Name != req.Pipeline.Spec.TaskID || req.TaskID != "" && req.TaskID != req.Pipeline.Spec.TaskID || req.Mode != Headless || req.Detach || req.Prompt != req.Pipeline.Spec.Prompt || req.Config.DefaultAgent != req.Pipeline.Spec.Agent.Provider {
 			return reject(AdmissionRejected, "task_spec", errors.New("general execution request does not match its task specification"))
 		}
-		s.facts = &PipelineFacts{Outputs: req.Pipeline.Spec.Outputs, Criteria: req.Pipeline.Spec.Criteria, Sink: req.Pipeline.Spec.Sink}
+		s.facts = &PipelineFacts{Outputs: req.Pipeline.Spec.Outputs, Criteria: req.Pipeline.Spec.Criteria, Sink: req.Pipeline.Spec.Sink, OperationsDigest: contentBinding(req.Pipeline.Spec.Operations), ToolsDigest: contentBinding(req.Pipeline.Spec.Tools)}
 	}
 	if locker, ok := s.driver.(interface{ Lock(Request) (func(), error) }); ok {
 		unlock, err := locker.Lock(req)

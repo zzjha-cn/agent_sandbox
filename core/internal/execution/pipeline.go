@@ -8,6 +8,7 @@ import (
 
 	"sandx/internal/artifact"
 	"sandx/internal/completion"
+	"sandx/internal/external"
 	"sandx/internal/sink"
 	"sandx/internal/source"
 )
@@ -97,8 +98,21 @@ func (s *Service) preparePipeline(ctx context.Context, req Request, result *Resu
 
 func (s *Service) finishPipeline(ctx context.Context, req Request, result *Result) error {
 	p := req.Pipeline
+	if len(p.Spec.Operations) > 0 {
+		if err := s.driver.Stop(ctx, req); err != nil {
+			return pipelineError(EnvironmentFailed, ExecutePhase, err)
+		}
+		_, running, err := s.driver.Inspect(ctx, req)
+		if err != nil || running {
+			return pipelineError(EnvironmentFailed, ExecutePhase, errors.New("runtime isolation must be stopped before external submission"))
+		}
+		result.ContainerState = string(ContainerStopped)
+		if err := s.executeExternal(ctx, req, result); err != nil {
+			return err
+		}
+	}
 	if p.Spec.Outputs == nil {
-		return nil
+		return s.evaluateExternalOnly(ctx, req, result)
 	}
 	result.ArtifactState = ArtifactPending
 	if err := s.checkpoint(ctx, result, CollectPhase, ProgressRunning); err != nil {
@@ -160,10 +174,11 @@ func (s *Service) finishPipeline(ctx context.Context, req Request, result *Resul
 		if err := p.refresh(); err != nil {
 			return pipelineError(AdmissionRejected, EvaluatePhase, err)
 		}
-		validation, err := completion.EvaluateBundle(ctx, filepath.Join(root, "outputs"), filepath.Join(root, "workspace"), outputs, all, artifact.Filter(s.facts.Prepared.Baseline, p.Policy.Exclude), p.Spec.Criteria, p.Policy.Criteria, p.Verifier)
+		validation, err := completion.EvaluateBundle(ctx, filepath.Join(root, "outputs"), filepath.Join(root, "workspace"), outputs, all, artifact.Filter(s.facts.Prepared.Baseline, p.Policy.Exclude), p.Spec.Criteria, p.Policy.Criteria, p.Verifier, externalEvaluator{s, req, result})
 		if err != nil {
 			return pipelineError(EnvironmentFailed, EvaluatePhase, err)
 		}
+		s.guardExternalCompletion(req, &validation)
 		validation.ArtifactDigest = ref.Digest
 		s.facts.Validation = &validation
 		result.ValidationState = validation.State
@@ -178,6 +193,8 @@ func (s *Service) finishPipeline(ctx context.Context, req Request, result *Resul
 			return err
 		}
 		switch validation.State {
+		case "unknown":
+			return pipelineError(ProductOutcomeUnknown, EvaluatePhase, errors.New("external operation requires reconciliation"))
 		case "failed":
 			return pipelineError(VerificationFailed, EvaluatePhase, errors.New("completion requirements failed"))
 		case "needs_review":
@@ -222,9 +239,47 @@ func (s *Service) deliverPipeline(ctx context.Context, req Request, result *Resu
 			return pipelineError(AdmissionRejected, DeliverPhase, errors.New("source authorization changed since execution"))
 		}
 	}
+	for _, op := range s.record.Operations {
+		if op.Kind == "tool" && (op.State == "intent" || op.State == "unknown") {
+			return pipelineError(ProductOutcomeUnknown, DeliverPhase, errors.New("external operations must be reconciled before delivery"))
+		}
+	}
+	for _, call := range p.Spec.Operations {
+		found := false
+		for _, op := range s.record.Operations {
+			if op.Kind == "tool" && op.Key == external.Key(externalTaskKey(req), call.ID) {
+				found = true
+				if op.External == nil || op.State != "completed" || op.ObjectRef != external.Digest(call) || op.TargetRef != p.Policy.Tools[call.GrantRef].Binding() {
+					return pipelineError(AdmissionRejected, DeliverPhase, errors.New("external operation evidence or service binding changed; verify again"))
+				}
+				break
+			}
+		}
+		if !found {
+			return pipelineError(ProductOutcomeUnknown, DeliverPhase, errors.New("external operation has not been submitted"))
+		}
+	}
 	validation := s.facts.Validation
 	if validation == nil || validation.ArtifactDigest != ref.Digest || validation.State != "passed" {
 		return pipelineError(VerificationFailed, DeliverPhase, errors.New("delivery requires valid completion evidence"))
+	}
+	for _, criterion := range p.Spec.Criteria {
+		rule := p.Policy.Criteria[criterion.Ref]
+		if len(rule.RequiredTools) > 0 {
+			digest, err := (externalEvaluator{s, req, result}).ToolEvidence(ctx, rule.RequiredTools)
+			if err != nil {
+				return pipelineError(AdmissionRejected, DeliverPhase, errors.New("tool evidence no longer matches current service authorization"))
+			}
+			found := false
+			for _, evidence := range validation.Evidence {
+				if evidence.ID == criterion.ID && evidence.ToolDigest == digest {
+					found = true
+				}
+			}
+			if !found {
+				return pipelineError(AdmissionRejected, DeliverPhase, errors.New("tool evidence binding changed; verify again"))
+			}
+		}
 	}
 	currentBinding, err := completion.Binding(p.Spec.Criteria, p.Policy.Criteria)
 	if err != nil || currentBinding != validation.CriteriaDigest {

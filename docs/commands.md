@@ -1,6 +1,6 @@
 # sbx 命令手册
 
-通用文件任务、稳定产物、独立验证与交付重试使用新的 `sbx task` 入口，见 [通用任务手册](general-tasks.md)。本页的 `run` / `execution status` 仍描述 Git/v1 路径。
+通用文件任务、稳定产物、独立验证与交付重试使用新的 `sbx task` 入口，见 [通用任务手册](general-tasks.md)。G5 运行期只读 MCP 与工具证据见 [动态工具规范](dynamic-tools.md)。G6 的 `task reconcile/apply` 与外部状态验证见 [外部操作规范](external-operations.md)。本页的 `run` / `execution status` 仍描述 Git/v1 路径。
 
 > 按"你会在什么时候用到它"递进排列：装一次 → 日常回路 → 会话控制 → 观察 → 网络 → 维护，最后是参数、配置和环境变量的速查。
 > 不想要 worktree、想让改动直接落在仓库目录里，看[「我想直接在仓库目录里干活」](#我想直接在仓库目录里干活main-task)。

@@ -119,3 +119,17 @@ func TestApr1MatchesOpenSSL(t *testing.T) {
 		}
 	}
 }
+
+func TestDedicatedGatewayRouteIsSpecificAndDirect(t *testing.T) {
+	text := string(RenderDedicated("task", true, false, "upstream.invalid", "8080", "http://host.docker.internal:54321/mcp"))
+	for _, part := range []string{"http_port 3129 accel no-vhost name=sbx_tools defaultsite=host.docker.internal", "acl sbx_tool_listener myportname sbx_tools", "acl sbx_tool_path urlpath_regex ^/mcp$", "http_access allow sbx_tool_listener sbx_tool_path sbx_tool_method", "http_access deny sbx_tool_listener", "cache_peer host.docker.internal parent 54321 0 no-query originserver login=PASSTHRU name=sbx_tool_peer", "cache_peer_access sbx_tool_peer deny all", "cache_peer_access upstream.invalid deny sbx_tool_listener"} {
+		if !strings.Contains(text, part) {
+			t.Fatal("missing gateway restriction", part)
+		}
+	}
+	for _, endpoint := range []string{"http://host/x", "http://host:123/mcp?x=y", "http://user@host:123/mcp", "http://host:0/mcp", "http://host:123/mcp#x"} {
+		if _, _, err := toolGatewayRoute(endpoint); err == nil {
+			t.Fatal("unsafe route", endpoint)
+		}
+	}
+}

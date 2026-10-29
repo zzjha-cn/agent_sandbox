@@ -15,6 +15,7 @@ const (
 
 // HeadlessOpts 是一次 headless 运行的参数（M3-7）。
 type HeadlessOpts struct {
+	Tools    bool
 	Continue bool // 接上这个 Task 的上次对话
 	Notify   bool // 配了 on_exit：收尾时同步调一次通知
 }
@@ -31,11 +32,17 @@ type HeadlessOpts struct {
 //   - on_exit 必须在 kill 1 之前**同步**跑完，否则通知进程会被连带杀掉。
 func HeadlessCmd(o HeadlessOpts) string {
 	claude := "claude -p \"$(cat " + PromptFile + ")\" --dangerously-skip-permissions --settings /sbx/gen/settings.sbx.json"
+	if o.Tools {
+		claude += " --strict-mcp-config --mcp-config /sbx/gen/tools-claude.json"
+	}
 	if o.Continue {
 		claude += " --continue"
 	}
 	var b strings.Builder
 	b.WriteString("set -o pipefail\n")
+	if o.Tools {
+		b.WriteString("export NO_PROXY=\"${NO_PROXY},proxy\"\nexport no_proxy=\"${no_proxy},proxy\"\n")
+	}
 	fmt.Fprintf(&b, "printf '\\n===== sbx run -p @ %%s =====\\n' \"$(date '+%%F %%T %%z')\" >> %s\n", RunLog)
 	fmt.Fprintf(&b, "%s 2>&1 | tee -a %s\n", claude, RunLog)
 	b.WriteString("code=${PIPESTATUS[0]}\n")

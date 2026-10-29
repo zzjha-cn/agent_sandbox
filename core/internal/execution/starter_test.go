@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"sandx/internal/agent"
 	"sandx/internal/config"
@@ -58,5 +59,35 @@ esac
 				t.Fatalf("wrong fresh/resume: %s", data)
 			}
 		})
+	}
+}
+
+func TestStarterAcceptsReadyHookOverwrittenByPromptHook(t *testing.T) {
+	req := testRequest("ready")
+	req.Task.Home = t.TempDir()
+	req.Config = config.Default()
+	req.Config.DefaultAgent = "codex"
+	req.Mode = Headless
+	if err := os.MkdirAll(req.Task.StateDir(), 0700); err != nil {
+		t.Fatal(err)
+	}
+	shim := filepath.Join(t.TempDir(), "docker")
+	t.Setenv("TEST_STATE", req.Task.StateDir())
+	script := `#!/bin/sh
+case "$*" in
+ *"tmux has-session"*) test -f "$TEST_STATE/launched"; exit $? ;;
+ *"codex login status"*) exit 0 ;;
+ *"tmux new-session"*) touch "$TEST_STATE/launched"; printf '{"state":"running","event":"UserPromptSubmit"}' > "$TEST_STATE/status.json"; exit 0 ;;
+ *) exit 2 ;;
+esac
+`
+	if err := os.WriteFile(shim, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	starter := AgentStarter{Docker: &docker.Client{Bin: shim}, APIKey: func() (APIKey, error) { return APIKey{}, nil }, InstallRuntimes: func(task.Task, agent.Runtime) {}, Logf: func(string, ...any) {}, RotateLog: func(string) error { return nil }}
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	if err := starter.Start(ctx, req.Task, req); err != nil {
+		t.Fatal("newer hook hid successful startup", err)
 	}
 }

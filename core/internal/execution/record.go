@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"sandx/internal/external"
 	"sandx/internal/task"
 	"sandx/internal/workspace"
 )
@@ -40,13 +41,14 @@ type AttemptRecord struct {
 // OperationRecord stores safe references, never a tool payload or credentials.
 // G1 guards unresolved intents; concrete operation writers arrive with sinks/tools.
 type OperationRecord struct {
-	Key        string `json:"key"`
-	AttemptID  string `json:"attempt_id"`
-	Kind       string `json:"kind"`
-	State      string `json:"state"`
-	ObjectRef  string `json:"object_ref,omitempty"`
-	TargetRef  string `json:"target_ref,omitempty"`
-	ReceiptRef string `json:"receipt_ref,omitempty"`
+	External   *external.Record `json:"external,omitempty"`
+	Key        string           `json:"key"`
+	AttemptID  string           `json:"attempt_id"`
+	Kind       string           `json:"kind"`
+	State      string           `json:"state"`
+	ObjectRef  string           `json:"object_ref,omitempty"`
+	TargetRef  string           `json:"target_ref,omitempty"`
+	ReceiptRef string           `json:"receipt_ref,omitempty"`
 }
 
 type TaskRecord struct {
@@ -273,6 +275,24 @@ func (s *FileStore) validate(r *TaskRecord) error {
 		}
 	}
 	for _, op := range r.Operations {
+		if op.External != nil {
+			e := op.External
+			if r.SchemaVersion != GeneralRecordSchema || op.Kind != "tool" || e.Validate() != nil || e.OperationID != op.Key || e.RequestDigest != op.ObjectRef || e.GrantBinding != op.TargetRef || e.OperationID != op.ReceiptRef {
+				return ErrRecordInvalid
+			}
+			state := "unknown"
+			switch e.State {
+			case "intent":
+				state = "intent"
+			case "completed":
+				state = "completed"
+			case "rejected", "not_found":
+				state = "failed"
+			}
+			if op.State != state {
+				return ErrRecordInvalid
+			}
+		}
 		if op.Key == "" || !seen[op.AttemptID] || (op.Kind != "tool" && op.Kind != "delivery") {
 			return ErrRecordInvalid
 		}

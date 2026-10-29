@@ -1,6 +1,6 @@
 # 通用任务：输入、验证与本地交付
 
-G2–G4 的入口是 `sbx task`，在 Git 仓库之外也能使用。旧 `sbx run`、`sbx run --envelope` 继续采用原有 Git/v1 契约。通用入口当前只支持同步 headless、Claude/Codex、Git revision/文件副本/空输入、文件与测试及人工判据、本地目录与 Git 本地交付。工具调用、远端发布、组织策略与 G7 的完整发布验收仍在后续阶段。
+`sbx task` 是通用任务的显式 v2 入口，在 Git 仓库之外也能使用。支持同步 headless Claude/Codex、Git revision/文件副本/空输入、稳定产物、独立验证与本地目录/Git 交付。G5 的运行期只读工具见 [动态工具规范](dynamic-tools.md)，G6 的预先声明写操作、回执核对与业务状态验证见 [外部操作规范](external-operations.md)。旧 `sbx run`、`sbx run --envelope` 继续采用原有 Git/v1 契约。远端产物发布、组织策略与 G7 完整协议发布仍在后续阶段。
 
 ## 1. 可信注册表与任务声明
 

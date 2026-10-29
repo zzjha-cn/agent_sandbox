@@ -27,6 +27,9 @@ type Criterion struct {
 
 // Rule comes only from trusted configuration, never from model output.
 type Rule struct {
+	RequiredTools  []string            `toml:"required_tools" json:"required_tools,omitempty"`
+	Operation      string              `toml:"operation" json:"operation,omitempty"`
+	Expected       map[string]string   `toml:"expected" json:"expected,omitempty"`
 	Kind           string              `toml:"kind" json:"kind"`
 	Version        string              `toml:"version" json:"version"`
 	AllowedChanges []string            `toml:"allowed_changes" json:"allowed_changes,omitempty"`
@@ -40,12 +43,16 @@ type Rule struct {
 }
 
 type Evidence struct {
-	ID         string `json:"id"`
-	Kind       string `json:"kind"`
-	RuleDigest string `json:"rule_digest"`
-	State      string `json:"state"`
-	Reason     string `json:"reason,omitempty"`
-	ExitCode   *int   `json:"exit_code,omitempty"`
+	ID            string `json:"id"`
+	Kind          string `json:"kind"`
+	RuleDigest    string `json:"rule_digest"`
+	State         string `json:"state"`
+	Reason        string `json:"reason,omitempty"`
+	ToolDigest    string `json:"tool_digest,omitempty"`
+	OperationID   string `json:"operation_id,omitempty"`
+	ReceiptDigest string `json:"receipt_digest,omitempty"`
+	StateDigest   string `json:"state_digest,omitempty"`
+	ExitCode      *int   `json:"exit_code,omitempty"`
 }
 
 type Result struct {
@@ -58,6 +65,14 @@ type Result struct {
 
 // TestRunner must use a disposable, restricted execution environment. A
 // nonzero exit is a business failure; a runtime/transport error is a fault.
+type ExternalEvidence struct{ State, Reason, OperationID, ReceiptDigest, StateDigest string }
+type ToolEvidenceRunner interface {
+	ToolEvidence(context.Context, []string) (string, error)
+}
+type ExternalRunner interface {
+	VerifyExternal(context.Context, Rule) (ExternalEvidence, error)
+}
+
 type TestRunner interface {
 	Test(context.Context, string, Rule) (int, error)
 }
@@ -78,7 +93,7 @@ func Binding(criteria []Criterion, rules map[string]Rule) (string, error) {
 		}
 		seen[c.ID] = true
 		switch c.Kind {
-		case "files", "tests", "manual":
+		case "files", "tests", "manual", "external_state":
 			if err := r.Validate(); err != nil {
 				return "", err
 			}
@@ -93,9 +108,21 @@ func Binding(criteria []Criterion, rules map[string]Rule) (string, error) {
 	return digest(bound), nil
 }
 
+var toolRefName = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_]{0,47}$`)
 var immutableImage = regexp.MustCompile(`^(sha256:[a-f0-9]{64}|[a-z0-9][a-z0-9._:/-]*@sha256:[a-f0-9]{64})$`)
 
 func (r Rule) Validate() error {
+	if len(r.RequiredTools) > 16 || len(r.RequiredTools) > 0 && r.Kind != "files" && r.Kind != "tests" {
+		return errors.New("required_tools is supported only for files/tests, up to 16 refs")
+	}
+	seenTools := map[string]bool{}
+	for _, id := range r.RequiredTools {
+		if !toolRefName.MatchString(id) || seenTools[id] {
+			return errors.New("invalid required tool ref")
+		}
+		seenTools[id] = true
+	}
+
 	switch r.Kind {
 	case "files":
 		if len(r.AllowedChanges) > 0 {
@@ -131,6 +158,10 @@ func (r Rule) Validate() error {
 			}
 		}
 	case "manual":
+	case "external_state":
+		if r.Operation == "" || len(r.Expected) == 0 {
+			return errors.New("external_state requires operation and expected fields")
+		}
 	default:
 		return errors.New("unsupported verifier kind")
 	}
@@ -144,7 +175,7 @@ func Evaluate(ctx context.Context, dir string, current, baseline artifact.Manife
 // EvaluateBundle checks required/structured files in the selected artifacts,
 // change scope against the complete frozen workspace, and tests in a separate
 // copy of that frozen workspace. Evidence binds both snapshots at the caller.
-func EvaluateBundle(ctx context.Context, artifactDir, workspaceDir string, current, workspace, baseline artifact.Manifest, criteria []Criterion, rules map[string]Rule, runner TestRunner) (Result, error) {
+func EvaluateBundle(ctx context.Context, artifactDir, workspaceDir string, current, workspace, baseline artifact.Manifest, criteria []Criterion, rules map[string]Rule, runner TestRunner, external ...ExternalRunner) (Result, error) {
 	bound, err := Binding(criteria, rules)
 	if err != nil {
 		return Result{}, err
@@ -161,6 +192,23 @@ func EvaluateBundle(ctx context.Context, artifactDir, workspaceDir string, curre
 		r := rules[c.Ref]
 		e := Evidence{ID: c.ID, Kind: c.Kind, RuleDigest: digest(r), State: "passed"}
 		switch c.Kind {
+		case "external_state":
+			if len(external) == 0 || external[0] == nil {
+				e.State = "error"
+				e.Reason = "external_verifier_missing"
+				break
+			}
+			observed, err := external[0].VerifyExternal(ctx, r)
+			if err != nil {
+				e.State = "error"
+				e.Reason = "external_verifier_fault"
+			} else {
+				e.State = observed.State
+				e.Reason = observed.Reason
+				e.OperationID = observed.OperationID
+				e.ReceiptDigest = observed.ReceiptDigest
+				e.StateDigest = observed.StateDigest
+			}
 		case "manual":
 			e.State = "needs_review"
 			e.Reason = "trusted_review_required"
@@ -193,10 +241,30 @@ func EvaluateBundle(ctx context.Context, artifactDir, workspaceDir string, curre
 				}
 			}
 		}
+		if e.State == "passed" && len(r.RequiredTools) > 0 {
+			var evidenceRunner ToolEvidenceRunner
+			if len(external) > 0 {
+				evidenceRunner, _ = external[0].(ToolEvidenceRunner)
+			}
+			if evidenceRunner == nil {
+				e.State = "failed"
+				e.Reason = "tool_evidence_missing"
+			} else {
+				d, err := evidenceRunner.ToolEvidence(ctx, r.RequiredTools)
+				if err != nil {
+					e.State = "failed"
+					e.Reason = "tool_evidence_missing"
+				} else {
+					e.ToolDigest = d
+				}
+			}
+		}
 		result.Evidence = append(result.Evidence, e)
-		if e.State == "error" {
+		if e.State == "unknown" {
+			result.State = "unknown"
+		} else if e.State == "error" && result.State != "unknown" {
 			result.State = "error"
-		} else if e.State == "failed" && result.State != "error" {
+		} else if e.State == "failed" && result.State != "error" && result.State != "unknown" {
 			result.State = "failed"
 		} else if e.State == "needs_review" && result.State == "passed" {
 			result.State = "needs_review"

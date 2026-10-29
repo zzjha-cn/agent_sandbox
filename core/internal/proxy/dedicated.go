@@ -54,11 +54,14 @@ func (d Dedicated) write(t TaskSpec) (changed bool, err error) {
 	if err := os.MkdirAll(d.Dir, 0o755); err != nil {
 		return false, err
 	}
+	if _, _, err := toolGatewayRoute(t.ToolEndpoint); err != nil {
+		return false, err
+	}
 	block := len(t.Block) > 0
 	files := map[string][]byte{
 		"allow.txt":  joinLines(t.Allow),
 		"block.txt":  joinLines(t.Block),
-		"squid.conf": RenderDedicated(t.TaskID, block, t.Open, d.UpstreamHost, d.UpstreamPort),
+		"squid.conf": RenderDedicated(t.TaskID, block, t.Open, d.UpstreamHost, d.UpstreamPort, t.ToolEndpoint),
 	}
 	for name, want := range files {
 		old, _ := os.ReadFile(d.path(name))

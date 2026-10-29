@@ -5,6 +5,20 @@ http_port 3128
 acl SSL_ports port 443
 acl CONNECT method CONNECT
 http_access deny CONNECT !SSL_ports
+{{- if .ToolHost}}
+# This listener only relays this Task's authenticated MCP lease.
+http_port 3129 accel no-vhost name=sbx_tools defaultsite={{.ToolHost}}
+acl sbx_tool_listener myportname sbx_tools
+acl sbx_tool_path urlpath_regex ^/mcp$
+acl sbx_tool_method method POST GET DELETE
+http_access allow sbx_tool_listener sbx_tool_path sbx_tool_method
+http_access deny sbx_tool_listener
+cache_peer {{.ToolHost}} parent {{.ToolPort}} 0 no-query originserver login=PASSTHRU name=sbx_tool_peer
+cache_peer_access sbx_tool_peer allow sbx_tool_listener
+cache_peer_access sbx_tool_peer deny all
+always_direct deny sbx_tool_listener
+never_direct allow sbx_tool_listener
+{{- end}}
 {{- if .Block}}
 acl blocked dstdomain "/etc/sbx/block.txt"
 http_access deny blocked
@@ -20,7 +34,9 @@ http_access deny all
 {{- if .UpstreamHost}}
 
 cache_peer {{.UpstreamHost}} parent {{.UpstreamPort}} 0 no-query no-digest default
-never_direct allow all
+{{if .ToolHost}}cache_peer_access {{.UpstreamHost}} deny sbx_tool_listener
+cache_peer_access {{.UpstreamHost}} allow all
+{{end}}never_direct allow all
 {{- end}}
 
 # 和 shared 用同一个 logformat，这样 access.log 的解析只有一套；

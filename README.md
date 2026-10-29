@@ -27,7 +27,7 @@ A coding agent only gets out of your way once you turn the permission prompts of
 
 You also get tasks that **actually run in parallel** without stepping on each other, dependency installs that never touch your host, and every outbound request through a proxy — so you can **ask afterwards what it talked to**.
 
-For file processing and automation, [`sbx task`](docs/general-tasks.md) adds registered inputs, immutable artifacts, independent validation, and local directory or Git delivery. Review and delivery retries reuse the recorded attempt.
+For file processing and automation, [`sbx task`](docs/general-tasks.md) adds registered inputs, immutable artifacts, independent validation, and local directory or Git delivery. Review and delivery retries reuse the recorded attempt. [G6 external operations](docs/external-operations.md) add declared record updates, authorization, receipt reconciliation, and business-state verification without file artifacts. [G5 dynamic read-only tools](docs/dynamic-tools.md) support authorized runtime queries and reports bound to actual tool evidence.
 
 ```console
 $ cd ~/code/shop

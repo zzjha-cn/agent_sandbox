@@ -22,6 +22,7 @@ import (
 	"sandx/internal/isolation"
 	"sandx/internal/protocol"
 	"sandx/internal/task"
+	"sandx/internal/toolgate"
 )
 
 const generalInputLimit = 1 << 20
@@ -154,7 +155,7 @@ func (a *App) taskCmd() *cobra.Command {
 		}{"sbx.artifact-retention/v1", "pruned"})
 	}}
 	root.AddCommand(prune)
-	for _, action := range []string{"run", "verify", "deliver", "approve", "reject"} {
+	for _, action := range []string{"run", "verify", "deliver", "approve", "reject", "reconcile", "apply"} {
 		action := action
 		var specPath, reviewer string
 		cmd := &cobra.Command{Use: action + " --spec <file|->", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
@@ -223,12 +224,17 @@ func (a *App) taskCmd() *cobra.Command {
 			return err
 		}
 		record, err := store.Load()
+		calls, toolErr := execution.ReadToolCalls(t, record)
+		if err == nil {
+			err = toolErr
+		}
 		out := struct {
+			ToolCalls     []toolgate.Audit      `json:"tool_calls,omitempty"`
 			SchemaVersion string                `json:"schema_version"`
 			Recorded      bool                  `json:"recorded"`
 			Recovery      string                `json:"recovery"`
 			Record        *execution.TaskRecord `json:"record,omitempty"`
-		}{SchemaVersion: "sbx.task-status/v2", Recorded: record != nil, Recovery: "not_recorded", Record: record}
+		}{ToolCalls: calls, SchemaVersion: "sbx.task-status/v2", Recorded: record != nil, Recovery: "not_recorded", Record: record}
 		if err != nil {
 			out.Recovery = "record_invalid"
 		} else if record != nil {

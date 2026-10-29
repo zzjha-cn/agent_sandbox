@@ -25,7 +25,7 @@ func (s *Service) Continue(ctx context.Context, req Request, action, reviewer st
 	if req.Task.Name != req.Pipeline.Spec.TaskID || req.Task.ExecutionDir == "" {
 		return result, pipelineError(AdmissionRejected, AdmissionPhase, errors.New("task identity mismatch"))
 	}
-	if action != "verify" && action != "deliver" && action != "approve" && action != "reject" {
+	if action != "verify" && action != "deliver" && action != "approve" && action != "reject" && action != "reconcile" && action != "apply" {
 		return result, pipelineError(AdmissionRejected, AdmissionPhase, errors.New("unknown continuation action"))
 	}
 	if action == "approve" || action == "reject" {
@@ -67,8 +67,17 @@ func (s *Service) Continue(ctx context.Context, req Request, action, reviewer st
 	last := &record.Attempts[len(record.Attempts)-1]
 	result = last.Result
 	facts := last.Pipeline
-	if facts == nil || facts.Prepared == nil || result.ExecutionState != Finished || facts.Artifact == nil && action != "verify" {
+	if facts == nil || facts.Prepared == nil || result.ExecutionState != Finished || facts.Artifact == nil && action != "verify" && action != "reconcile" && action != "apply" {
 		return result, pipelineError(AdmissionRejected, AdmissionPhase, errors.New("no complete retained artifact is available; reconcile the recorded execution stage"))
+	}
+	if facts.ToolsDigest != "" && facts.ToolsDigest != contentBinding(req.Pipeline.Spec.Tools) || facts.ToolsDigest == "" && len(req.Pipeline.Spec.Tools) > 0 {
+		return result, pipelineError(AdmissionRejected, AdmissionPhase, errors.New("continuation must select recorded tools"))
+	}
+	if facts.OperationsDigest != "" && facts.OperationsDigest != contentBinding(req.Pipeline.Spec.Operations) {
+		return result, pipelineError(AdmissionRejected, AdmissionPhase, errors.New("continuation must select recorded external operations"))
+	}
+	if facts.OperationsDigest == "" && len(req.Pipeline.Spec.Operations) > 0 {
+		return result, pipelineError(AdmissionRejected, AdmissionPhase, errors.New("legacy attempt cannot acquire external write permissions"))
 	}
 	if contentBinding(facts.Outputs) != contentBinding(req.Pipeline.Spec.Outputs) || contentBinding(facts.Criteria) != contentBinding(req.Pipeline.Spec.Criteria) || contentBinding(facts.Sink) != contentBinding(req.Pipeline.Spec.Sink) {
 		return result, pipelineError(AdmissionRejected, AdmissionPhase, errors.New("continuation must select the recorded outputs, criteria and sink"))
@@ -88,7 +97,7 @@ func (s *Service) Continue(ctx context.Context, req Request, action, reviewer st
 		return result, pipelineError(AdmissionRejected, AdmissionPhase, err)
 	}
 	for _, op := range record.Operations {
-		if op.Kind != "delivery" && (op.State == "intent" || op.State == "unknown") {
+		if op.Kind != "delivery" && op.External == nil && (op.State == "intent" || op.State == "unknown") {
 			return result, pipelineError(AdmissionRejected, AdmissionPhase, ErrRecoveryRequired)
 		}
 	}
@@ -97,6 +106,11 @@ func (s *Service) Continue(ctx context.Context, req Request, action, reviewer st
 	defer func() { s.store = oldStore }()
 	s.record = record
 	s.facts = facts
+	if len(req.Pipeline.Spec.Tools) > 0 {
+		if _, err := ReadToolCalls(req.Task, record); err != nil {
+			return result, pipelineError(InternalFailed, AdmissionPhase, err)
+		}
+	}
 	s.eventErr = nil
 	s.persistFailed = false
 	s.failureNotice = nil
@@ -107,7 +121,38 @@ func (s *Service) Continue(ctx context.Context, req Request, action, reviewer st
 		}
 	}
 	switch action {
-	case "verify":
+	case "verify", "reconcile", "apply":
+		if action == "apply" {
+			if err := s.driver.Stop(ctx, req); err != nil {
+				primary = pipelineError(EnvironmentFailed, ExecutePhase, err)
+				break
+			}
+			_, running, err := s.driver.Inspect(ctx, req)
+			if err != nil || running {
+				primary = pipelineError(EnvironmentFailed, ExecutePhase, errors.New("runtime must be stopped before external submission"))
+				break
+			}
+			primary = s.executeExternal(ctx, req, &result)
+			if primary != nil {
+				break
+			}
+		}
+		if action == "reconcile" {
+			for _, call := range req.Pipeline.Spec.Operations {
+				_, err := s.externalOperation(ctx, req, &result, call, true)
+				if err != nil {
+					primary = pipelineError(ProductOutcomeUnknown, EvaluatePhase, err)
+					break
+				}
+			}
+			if primary != nil {
+				break
+			}
+		}
+		if facts.Outputs == nil {
+			primary = s.evaluateExternalOnly(ctx, req, &result)
+			break
+		}
 		if facts.Artifact == nil {
 			primary = s.recollect(ctx, req, &result)
 			break
@@ -116,11 +161,12 @@ func (s *Service) Continue(ctx context.Context, req Request, action, reviewer st
 			primary = err
 			break
 		}
-		validation, err := completion.EvaluateBundle(ctx, filepath.Join(pipelineRoot(req), "snapshots", facts.Artifact.ID, "outputs"), filepath.Join(pipelineRoot(req), "snapshots", facts.Artifact.ID, "workspace"), facts.Artifact.Manifest, facts.Artifact.WorkspaceManifest, artifact.Filter(facts.Prepared.Baseline, req.Pipeline.Policy.Exclude), facts.Criteria, req.Pipeline.Policy.Criteria, req.Pipeline.Verifier)
+		validation, err := completion.EvaluateBundle(ctx, filepath.Join(pipelineRoot(req), "snapshots", facts.Artifact.ID, "outputs"), filepath.Join(pipelineRoot(req), "snapshots", facts.Artifact.ID, "workspace"), facts.Artifact.Manifest, facts.Artifact.WorkspaceManifest, artifact.Filter(facts.Prepared.Baseline, req.Pipeline.Policy.Exclude), facts.Criteria, req.Pipeline.Policy.Criteria, req.Pipeline.Verifier, externalEvaluator{s, req, &result})
 		if err != nil {
 			primary = pipelineError(EnvironmentFailed, EvaluatePhase, err)
 			break
 		}
+		s.guardExternalCompletion(req, &validation)
 		validation.ArtifactDigest = facts.Artifact.Digest
 		facts.Validation = &validation
 		facts.Review = nil
@@ -138,6 +184,8 @@ func (s *Service) Continue(ctx context.Context, req Request, action, reviewer st
 			break
 		}
 		switch validation.State {
+		case "unknown":
+			primary = pipelineError(ProductOutcomeUnknown, EvaluatePhase, errors.New("external operation requires reconciliation"))
 		case "passed":
 			if req.Pipeline.Spec.Sink != nil {
 				primary = s.deliverPipeline(ctx, req, &result)

@@ -66,12 +66,13 @@ var _, _ Egress = Shared{}, Dedicated{}
 
 // TaskSpec 描述一个接入 proxy 的 Task。
 type TaskSpec struct {
-	TaskID   string // <ws>.<task>
-	Network  string // Task 的 internal 网络
-	CredFile string // state/<ws>/<task>/proxy.cred
-	Allow    []string
-	Block    []string // 策略拦截层；cloud_mcp=true 时为空
-	Open     bool
+	ToolEndpoint string // trusted execution-owned MCP lease; dedicated only
+	TaskID       string // <ws>.<task>
+	Network      string // Task 的 internal 网络
+	CredFile     string // state/<ws>/<task>/proxy.cred
+	Allow        []string
+	Block        []string // 策略拦截层；cloud_mcp=true 时为空
+	Open         bool
 }
 
 // lock 串行化对 proxy 目录的修改（多个 sbx 进程并发 run/done 时）。

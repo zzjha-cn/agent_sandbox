@@ -1,5 +1,7 @@
 # sbx 实现现状：设计与流程
 
+G2–G4 补充：`sbx task` 经同一个 execution.Service 准备通用副本、冻结产物、独立验证及本地交付；新的命名空间、记录版本和继续/清理命令见 [通用任务手册](general-tasks.md)。本篇主体保留 Git/v1 路径的结构说明。
+
 > 对应代码：`core/`（2026-10-27；Claude/Codex、执行内核及 v1 协议已实现）。本文只写**代码现在实际怎么工作**。
 > 目标设计见 [design.md](design.md)，按场景逐步讲解见 [walkthrough.md](walkthrough.md)。决策依据 `private/adr/` 和验收记录 `private/m1-acceptance.md` 不纳入版本控制，只在本地可见。
 

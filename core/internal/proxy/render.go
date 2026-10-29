@@ -5,7 +5,10 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"net/url"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"text/template"
 
@@ -118,10 +121,18 @@ func RenderTask(taskID string, block, open bool) []byte {
 
 // RenderDedicated 渲染 dedicated 模式下某个 Task 独占实例的整份配置。
 // 和 shared 不同，这里没有 include 片段，白名单和拦截表就在同一个目录里。
-func RenderDedicated(taskID string, block, open bool, upstreamHost, upstreamPort string) []byte {
+func RenderDedicated(taskID string, block, open bool, upstreamHost, upstreamPort string, toolEndpoint ...string) []byte {
+	var toolHost, toolPort string
+	if len(toolEndpoint) > 0 {
+		var err error
+		toolHost, toolPort, err = toolGatewayRoute(toolEndpoint[0])
+		if err != nil {
+			return nil
+		}
+	}
 	var b bytes.Buffer
 	err := dedTmpl.Execute(&b, map[string]any{
-		"TaskID": taskID, "Block": block, "Open": open,
+		"TaskID": taskID, "Block": block, "Open": open, "ToolHost": toolHost, "ToolPort": toolPort,
 		"UpstreamHost": upstreamHost, "UpstreamPort": upstreamPort,
 	})
 	if err != nil {
@@ -147,4 +158,21 @@ func upsertPasswd(text, user, hash string) string {
 		return ""
 	}
 	return strings.Join(out, "\n") + "\n"
+}
+
+var toolGatewayHost = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.-]*$`)
+
+func toolGatewayRoute(endpoint string) (string, string, error) {
+	if endpoint == "" {
+		return "", "", nil
+	}
+	u, err := url.Parse(endpoint)
+	if err != nil || u.Scheme != "http" || u.User != nil || u.Path != "/mcp" || u.RawQuery != "" || u.Fragment != "" || !toolGatewayHost.MatchString(u.Hostname()) {
+		return "", "", fmt.Errorf("invalid tool gateway route")
+	}
+	port, err := strconv.Atoi(u.Port())
+	if err != nil || port < 1 || port > 65535 {
+		return "", "", fmt.Errorf("invalid tool gateway port")
+	}
+	return u.Hostname(), strconv.Itoa(port), nil
 }

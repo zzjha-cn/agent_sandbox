@@ -1,5 +1,7 @@
 # 自动化调用与 v1 执行协议
 
+G2–G4 的通用入口 `sbx task run/verify/approve/reject/deliver/status/prune` 及 `sbx.execution/v2` 的当前子集见 [通用任务手册](general-tasks.md)。它使用独立的任务命名空间和 v2 内部记录；本页 v1 字段、事件投影与 `artifact_delivery=none` 的能力承诺保持不变。G7 再做完整发布与综合验收。
+
 适用于脚本、CI 或外部调度器。日常交互见 [命令手册](commands.md)，正式测试见 [测试指南](testing.md)。sbx 当前是一次性本地 CLI；调用方准备仓库和配置，不需要常驻 worker 或 master。
 
 ## 选择调用方式

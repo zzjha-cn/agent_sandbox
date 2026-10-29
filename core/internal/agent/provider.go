@@ -22,6 +22,7 @@ type Launch struct {
 	Continue     bool
 	Notify       bool
 	SessionID    string
+	Tools        bool
 	NoRepository bool
 }
 
@@ -41,7 +42,7 @@ type claudeProvider struct{}
 func (claudeProvider) Name() string { return "claude" }
 func (claudeProvider) Command(o Launch) (string, error) {
 	if o.Headless {
-		return HeadlessCmd(HeadlessOpts{Continue: o.Continue, Notify: o.Notify}), nil
+		return HeadlessCmd(HeadlessOpts{Continue: o.Continue, Notify: o.Notify, Tools: o.Tools}), nil
 	}
 	return ClaudeCmd(o.Continue), nil
 }
@@ -89,6 +90,13 @@ func (codexProvider) Command(o Launch) (string, error) {
 export CODEX_HOME=/home/agent/.codex
 `
 	cmd := "codex"
+	if o.Tools {
+		setup += `export SBX_TOOL_TOKEN="$(cat /sbx/gen/tool-token)"
+export NO_PROXY="${NO_PROXY},proxy"
+export no_proxy="${no_proxy},proxy"
+`
+		cmd += ` -c "mcp_servers=$(cat /sbx/gen/tools-codex.conf)"`
+	}
 	if o.Headless {
 		cmd += " exec"
 		if o.Continue {

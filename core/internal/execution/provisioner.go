@@ -168,6 +168,7 @@ func (p *Provisioner) Resume(ctx context.Context, req Request, state docker.Stat
 	}
 	step = "restoring the proxy attachment"
 	specProxy := h.ProxySpec(t, meta.TaskID)
+	specProxy.ToolEndpoint = req.ToolEndpoint
 	attachment, rollback, err := proxy.BeginAttachment(egress, specProxy)
 	if err != nil {
 		return err
@@ -286,6 +287,7 @@ func (p *Provisioner) Create(ctx context.Context, req Request) (err error) {
 	step = "attaching to the egress proxy"
 	h.WarnSkippedNotifyHosts()
 	specProxy := h.ProxySpec(t, t.ID())
+	specProxy.ToolEndpoint = req.ToolEndpoint
 	attachment, rollback, err := proxy.BeginAttachment(egress, specProxy)
 	if err != nil {
 		return err
@@ -318,6 +320,7 @@ func (p *Provisioner) Create(ctx context.Context, req Request) (err error) {
 	if err := agent.RenderGen(t.GenDir(), h.GenInput(hostClaude, req)); err != nil {
 		return err
 	}
+
 	step = "creating the container"
 	gitDir := t.WS.GitDir
 	if t.IsMain() {

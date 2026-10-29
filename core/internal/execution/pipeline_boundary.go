@@ -57,7 +57,7 @@ func pipelineBoundary(req Request) error {
 		resources = append(resources, p.Policy.Sinks[p.Spec.Sink.TargetRef].Path)
 	}
 	var protected []string
-	for _, name := range []string{"executions", "artifacts", "state", "locks", "workspaces", "worktrees", "proxy", "verifications", "config.toml", "execution-policy.toml"} {
+	for _, name := range []string{"executions", "tool-calls", "artifacts", "state", "locks", "workspaces", "worktrees", "proxy", "verifications", "config.toml", "execution-policy.toml"} {
 		protected = append(protected, filepath.Join(req.Task.Home, name))
 	}
 	for _, provider := range req.Config.Agents {
@@ -73,6 +73,24 @@ func pipelineBoundary(req Request) error {
 			name = filepath.Join(home, strings.TrimPrefix(name, "~"))
 		}
 		protected = append(protected, name)
+	}
+	for _, g := range p.Policy.Tools {
+		if g.CredentialFile != "" {
+			protected = append(protected, g.CredentialFile)
+			credential, err := plannedPath(g.CredentialFile)
+			if err != nil {
+				return err
+			}
+			for _, mounted := range []string{filepath.Join(req.Task.Home, "workspaces"), filepath.Join(req.Task.Home, "worktrees"), filepath.Join(req.Task.Home, "state"), filepath.Join(req.Task.Home, "proxy")} {
+				mount, err := plannedPath(mounted)
+				if err != nil {
+					return err
+				}
+				if overlaps(credential, mount) {
+					return errors.New("connector credential overlaps an agent-accessible mount")
+				}
+			}
+		}
 	}
 	for _, resource := range resources {
 		resolved, err := plannedPath(resource)

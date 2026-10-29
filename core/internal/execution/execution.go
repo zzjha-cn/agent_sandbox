@@ -36,6 +36,8 @@ type Request struct {
 	Detach       bool
 	Config       config.Config
 	Requirements Requirements
+	ToolEndpoint string // execution-owned lease address
+	ToolGateway  bool   // execution-owned, never decoded from TaskSpec
 	Pipeline     *PipelinePlan
 }
 
@@ -226,6 +228,7 @@ type Service struct {
 	persistFailed bool
 	started       bool
 	facts         *PipelineFacts
+	closeTools    func() error
 }
 
 func NewService(driver Driver, sinks ...EventSink) *Service {
@@ -359,6 +362,13 @@ func (s *Service) run(ctx context.Context, req Request, result Result) (Result, 
 			return result, pipelineError(AdmissionRejected, PreparePhase, err)
 		}
 	}
+	if req.Pipeline != nil && len(req.Pipeline.Spec.Tools) > 0 {
+		closeTools, err := s.startTools(ctx, &req, &result)
+		if err != nil {
+			return result, pipelineError(AdmissionRejected, PreparePhase, err)
+		}
+		defer closeTools()
+	}
 	s.emit(ctx, result, EventAdmitted, "admission", "task admitted")
 	s.emit(ctx, result, EventPhaseStarted, "provision", "preparing task environment")
 	if exists {
@@ -401,6 +411,9 @@ func (s *Service) run(ctx context.Context, req Request, result Result) (Result, 
 	s.emit(ctx, result, EventAgentStarted, "agent", "agent started")
 	if req.Mode == Headless && !req.Detach {
 		outcome, waitErr := s.driver.Wait(ctx, req)
+		if s.closeTools != nil {
+			waitErr = errors.Join(waitErr, s.closeTools())
+		}
 		if waitErr == nil && outcome.ExitCode == nil {
 			waitErr = errors.New("missing agent exit code")
 		}

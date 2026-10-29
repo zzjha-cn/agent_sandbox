@@ -75,7 +75,7 @@ func (s AgentStarter) Start(ctx context.Context, t task.Task, o Request) error {
 			sessionID = ""
 		}
 	}
-	command, err := provider.Command(agent.Launch{Headless: o.Mode == Headless, Continue: cont, Notify: o.Config.OnExit != "", SessionID: sessionID, NoRepository: t.ExecutionDir != ""})
+	command, err := provider.Command(agent.Launch{Headless: o.Mode == Headless, Continue: cont, Notify: o.Config.OnExit != "", SessionID: sessionID, NoRepository: t.ExecutionDir != "", Tools: o.ToolGateway})
 	if err != nil {
 		return err
 	}
@@ -100,7 +100,7 @@ func (s AgentStarter) Start(ctx context.Context, t task.Task, o Request) error {
 		Timeout: 30 * time.Second,
 		Ready: func() bool {
 			s, err := t.ReadStatus()
-			return err == nil && s != nil && (s.Event == "SessionStart" || s.Event == "CodexStart")
+			return err == nil && s != nil && (s.Event == "SessionStart" || s.Event == "CodexStart" || s.State == "running" || s.State == "idle")
 		},
 		Exited: func() bool { return taskAgentExited(t) },
 	}
