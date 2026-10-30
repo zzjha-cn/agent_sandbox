@@ -1,0 +1,87 @@
+{
+  "$id": "urn:sbx:schema:result:v2",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "properties": {
+    "agent_exit_code": {
+      "type": "integer"
+    },
+    "artifact_state": {
+      "type": "string"
+    },
+    "attempt_id": {
+      "type": "string"
+    },
+    "cleanup_state": {
+      "type": "string"
+    },
+    "container_state": {
+      "type": "string"
+    },
+    "event_delivery_state": {
+      "type": "string"
+    },
+    "execution_state": {
+      "type": "string"
+    },
+    "mode": {
+      "type": "string"
+    },
+    "next": {
+      "type": "string"
+    },
+    "product_delivery_state": {
+      "type": "string"
+    },
+    "stages": {
+      "items": {
+        "additionalProperties": true,
+        "properties": {
+          "phase": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "phase",
+          "state"
+        ],
+        "type": "object"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "state": {
+      "type": "string"
+    },
+    "task_id": {
+      "type": "string"
+    },
+    "validation_state": {
+      "type": "string"
+    },
+    "workspace_kind": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "mode",
+    "workspace_kind",
+    "task_id",
+    "attempt_id",
+    "state",
+    "artifact_state",
+    "cleanup_state",
+    "execution_state",
+    "validation_state",
+    "product_delivery_state",
+    "event_delivery_state",
+    "stages"
+  ],
+  "title": "sbx result",
+  "type": "object"
+}

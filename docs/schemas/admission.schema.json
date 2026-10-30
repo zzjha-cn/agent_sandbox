@@ -1,0 +1,38 @@
+{
+  "$id": "urn:sbx:schema:admission:v2",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "properties": {
+    "admitted": {
+      "const": true,
+      "type": "boolean"
+    },
+    "existing": {
+      "type": "boolean"
+    },
+    "running": {
+      "type": "boolean"
+    },
+    "schema_version": {
+      "const": "sbx.execution/v2",
+      "type": "string"
+    },
+    "task_id": {
+      "type": "string"
+    },
+    "type": {
+      "const": "admitted",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "type",
+    "task_id",
+    "admitted",
+    "existing",
+    "running"
+  ],
+  "title": "sbx admission",
+  "type": "object"
+}

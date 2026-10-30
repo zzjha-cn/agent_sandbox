@@ -1,0 +1,128 @@
+{
+  "$id": "urn:sbx:schema:version:v2",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "properties": {
+    "application_version": {
+      "type": "string"
+    },
+    "artifact_delivery": {
+      "type": "string"
+    },
+    "capabilities": {
+      "items": {
+        "type": "string"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "capability_details": {
+      "items": {
+        "additionalProperties": true,
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "requirements": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "name",
+          "requirements"
+        ],
+        "type": "object"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "compatibility": {
+      "additionalProperties": true,
+      "properties": {
+        "additive_output_fields": {
+          "type": "boolean"
+        },
+        "input_versions": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "record_versions": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "v1_records": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "input_versions",
+        "record_versions",
+        "v1_records",
+        "additive_output_fields"
+      ],
+      "type": "object"
+    },
+    "max_timeout_seconds": {
+      "type": "integer"
+    },
+    "providers": {
+      "items": {
+        "type": "string"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "record_schema": {
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "sbx.execution/v2",
+      "type": "string"
+    },
+    "schemas": {
+      "items": {
+        "type": "string"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "application_version",
+    "providers",
+    "artifact_delivery",
+    "capabilities",
+    "max_timeout_seconds",
+    "schemas",
+    "capability_details",
+    "record_schema",
+    "compatibility"
+  ],
+  "title": "sbx version",
+  "type": "object"
+}

@@ -20,7 +20,6 @@ import (
 	"sandx/internal/isolation"
 	"sandx/internal/protocol"
 	"sandx/internal/task"
-	"sandx/internal/toolgate"
 )
 
 const generalInputLimit = execution.MaxTaskBytes
@@ -80,14 +79,15 @@ func (a *App) generalRequest(ctx context.Context, spec execution.TaskSpec) (exec
 		return execution.Request{}, err
 	}
 	a.WS = t.WS
-	policy, err := readTaskPolicy(a.Home)
+	initial := a.Organization
+	policy, err := a.taskPolicy(spec, initial)
 	if err != nil {
 		return execution.Request{}, err
 	}
 	a.setRunAgent(spec.Agent.Provider)
-	plan := &execution.PipelinePlan{Spec: spec, Policy: policy, Reauthorize: func() (execution.PipelinePolicy, error) { return readTaskPolicy(a.Home) }}
+	plan := &execution.PipelinePlan{Spec: spec, Policy: policy, Reauthorize: func() (execution.PipelinePolicy, error) { return a.taskPolicy(spec, initial) }}
 	plan.Verifier = execution.DockerTestRunner{Docker: a.Docker, Isolation: isolation.New(a.Docker, a.Cfg.Isolation), TempRoot: filepath.Join(a.Home, "verifications"), Limits: policy.ArtifactLimits, Authorize: func(rule completion.Rule) error {
-		current, err := readTaskPolicy(a.Home)
+		current, err := a.taskPolicy(spec, initial)
 		if err != nil {
 			return err
 		}
@@ -103,7 +103,7 @@ func (a *App) generalRequest(ctx context.Context, spec execution.TaskSpec) (exec
 	if err := plan.Validate(); err != nil {
 		return execution.Request{}, err
 	}
-	return execution.Request{Task: t, TaskID: spec.TaskID, Mode: execution.Headless, Prompt: spec.Prompt, Config: a.Cfg, Pipeline: plan}, nil
+	return execution.Request{Task: t, TaskID: spec.TaskID, Mode: execution.Headless, Prompt: spec.Prompt, Config: a.Cfg, OrganizationPolicyDigest: initial.Digest, Pipeline: plan, Authorize: func(req execution.Request) error { return a.checkOrganization(initial, req) }}, nil
 }
 
 func (a *App) taskCmd() *cobra.Command {
@@ -124,10 +124,7 @@ func (a *App) taskCmd() *cobra.Command {
 			}
 			return &execution.ExecutionError{Kind: kind, Stage: "artifact_retention", Cause: err}
 		}
-		return json.NewEncoder(a.Out).Encode(struct {
-			SchemaVersion string `json:"schema_version"`
-			State         string `json:"state"`
-		}{"sbx.artifact-retention/v1", "pruned"})
+		return json.NewEncoder(a.Out).Encode(protocol.Retention{SchemaVersion: "sbx.artifact-retention/v1", State: "pruned"})
 	}}
 	root.AddCommand(prune)
 	for _, action := range []string{"run", "verify", "deliver", "approve", "reject", "reconcile", "apply"} {
@@ -178,18 +175,13 @@ func (a *App) taskCmd() *cobra.Command {
 		if err == nil {
 			err = toolErr
 		}
-		out := struct {
-			ToolCalls     []toolgate.Audit      `json:"tool_calls,omitempty"`
-			SchemaVersion string                `json:"schema_version"`
-			Recorded      bool                  `json:"recorded"`
-			Recovery      string                `json:"recovery"`
-			Record        *execution.TaskRecord `json:"record,omitempty"`
-		}{ToolCalls: calls, SchemaVersion: "sbx.task-status/v2", Recorded: record != nil, Recovery: "not_recorded", Record: record}
+		out := protocol.Status{ToolCalls: calls, SchemaVersion: protocol.TaskStatusSchema, Recorded: record != nil, Recovery: "not_recorded", Record: record}
 		if err != nil {
 			out.Recovery = "record_invalid"
 		} else if record != nil {
 			out.Recovery = record.Recovery()
 		}
+		out.SetRecovery(out.Recovery)
 		if asJSON {
 			if writeErr := json.NewEncoder(a.Out).Encode(out); writeErr != nil {
 				return writeErr
@@ -203,7 +195,7 @@ func (a *App) taskCmd() *cobra.Command {
 			}
 		}
 		if err != nil {
-			return &execution.ExecutionError{Kind: execution.InternalFailed, Stage: "execution_record", Cause: execution.ErrRecordInvalid}
+			return &execution.ExecutionError{Kind: execution.InternalFailed, Stage: "execution_record", Cause: fmt.Errorf("cannot verify execution record: %w", err)}
 		}
 		return nil
 	}}
@@ -224,11 +216,14 @@ func (a *App) submitTask(parent context.Context, spec execution.TaskSpec, action
 	if err != nil {
 		return a.writeProtocolFailure(&execution.ExecutionError{Kind: execution.AdmissionRejected, Stage: "task_spec", Cause: err})
 	}
+	ctx, stopOrganization := a.organizationContext(ctx)
+	defer stopOrganization()
 	runApp := *a
 	runApp.Out = a.Err
 	runApp.Docker = a.Docker.WithContext(ctx)
 	driver := runApp.executionDriver()
-	service := execution.NewService(driver, execution.NewJSONLSink(a.Out))
+	events := &terminalEventSink{sink: a.teamSink(execution.NewJSONLSink(a.Out), req.Task.WS.ID)}
+	service := execution.NewService(driver, events)
 	var result execution.Result
 	if action == "run" {
 		result, err = service.Run(ctx, req)
@@ -237,6 +232,28 @@ func (a *App) submitTask(parent context.Context, spec execution.TaskSpec, action
 	}
 	if err == nil && result.ExecutionState == execution.AgentFailed {
 		err = &execution.ExecutionError{Kind: execution.AgentRunFailed, Stage: "agent", Cause: errors.New("agent exited unsuccessfully")}
+	}
+	if err != nil && !events.terminal && !events.writeFailed {
+		return a.writeProtocolFailure(err)
+	}
+	return err
+}
+
+// Continuation can reject before lifecycle events start. Emit one safe failure
+// response in that case, without duplicating a terminal event or retrying a
+// broken stdout transport.
+type terminalEventSink struct {
+	sink        execution.EventSink
+	terminal    bool
+	writeFailed bool
+}
+
+func (s *terminalEventSink) Emit(ctx context.Context, e execution.Event) error {
+	err := s.sink.Emit(ctx, e)
+	if err != nil {
+		s.writeFailed = true
+	} else if e.Type == execution.EventCompleted || e.Type == execution.EventFailed {
+		s.terminal = true
 	}
 	return err
 }

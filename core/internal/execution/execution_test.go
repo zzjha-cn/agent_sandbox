@@ -255,3 +255,16 @@ func (d *testDriver) Stop(context.Context, Request) error {
 	d.steps = append(d.steps, "stop")
 	return nil
 }
+
+func TestMandatoryAuditFailurePreventsAgentStart(t *testing.T) {
+	driver := &testDriver{outcome: AgentOutcome{ExitCode: new(int)}}
+	_, err := NewService(driver, failedSink{err: &RequiredEventError{Cause: errors.New("outbox full")}}).Run(context.Background(), testRequest("private"))
+	if err == nil {
+		t.Fatal("required audit error ignored")
+	}
+	for _, step := range driver.steps {
+		if step == "create" || step == "resume" || step == "wait" {
+			t.Fatal("agent started without mandatory audit", driver.steps)
+		}
+	}
+}

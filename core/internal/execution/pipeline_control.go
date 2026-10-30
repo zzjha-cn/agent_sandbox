@@ -16,6 +16,9 @@ import (
 // Continue operates only on a retained attempt. It never calls Create, Resume
 // or Wait, and therefore cannot accidentally re-submit the task prompt.
 func (s *Service) Continue(ctx context.Context, req Request, action, reviewer string) (result Result, primary error) {
+	if err := validateRequest(req); err != nil {
+		return result, err
+	}
 	if req.Pipeline == nil {
 		return result, pipelineError(AdmissionRejected, AdmissionPhase, errors.New("general task specification is required"))
 	}

@@ -55,6 +55,9 @@ func (d *RuntimeDriver) Admit(ctx context.Context, req Request, exists, running 
 		return err
 	}
 	if ok {
+		if err := checkManagedRuntime(req, meta); err != nil {
+			return err
+		}
 		previous := meta.Agent
 		if previous == "" {
 			previous = "claude"
@@ -91,11 +94,26 @@ func checkTaskScope(t task.Task, scope isolation.Status) error {
 }
 
 func (d *RuntimeDriver) Create(ctx context.Context, req Request) error {
+	if err := validateRequest(req); err != nil {
+		return err
+	}
 	return d.Provisioner.Create(ctx, req)
 }
 
 func (d *RuntimeDriver) Resume(ctx context.Context, req Request, running bool) error {
+	if err := validateRequest(req); err != nil {
+		return err
+	}
 	t := req.Task
+	meta, ok, err := t.ReadMeta()
+	if err != nil {
+		return err
+	}
+	if ok {
+		if err := checkManagedRuntime(req, meta); err != nil {
+			return err
+		}
+	}
 	if req.Base != "" {
 		d.Logf("task %s already exists; ignoring --base", t.Name)
 	}
@@ -113,4 +131,30 @@ func (d *RuntimeDriver) Stop(ctx context.Context, req Request) error {
 		return err
 	}
 	return client.Stop(req.Task.Container())
+}
+
+// Do not reactivate a runtime whose existing proxy, forwards or mounted state
+// were created under another policy. Continue does not start a runtime and is
+// independently authorized against current grants, including query-only repair.
+func checkManagedRuntime(req Request, meta task.Meta) error {
+	if req.OrganizationPolicyDigest != "" && req.OrganizationPolicyDigest != meta.OrganizationPolicyDigest {
+		return &ExecutionError{Kind: AdmissionRejected, Stage: "organization_runtime", Cause: fmt.Errorf("existing runtime belongs to another or unmanaged policy; reconcile retained facts before creating a new runtime/task")}
+	}
+	return nil
+}
+
+// Check before appending a new attempt so a policy refusal cannot hide a prior
+// retained artifact from continuation. Admit repeats it under execution locks.
+func (d *RuntimeDriver) ValidateRuntime(req Request) error {
+	if req.OrganizationPolicyDigest == "" {
+		return nil
+	}
+	meta, ok, err := req.Task.ReadMeta()
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return nil
+	}
+	return checkManagedRuntime(req, meta)
 }

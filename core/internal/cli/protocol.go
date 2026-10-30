@@ -1,11 +1,13 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -13,20 +15,8 @@ import (
 	"sandx/internal/protocol"
 )
 
-type protocolFailure struct {
-	SchemaVersion string `json:"schema_version"`
-	Type          string `json:"type"`
-	ErrorCode     string `json:"error_code"`
-}
-
-type admissionRecord struct {
-	SchemaVersion string `json:"schema_version"`
-	Type          string `json:"type"`
-	TaskID        string `json:"task_id"`
-	Admitted      bool   `json:"admitted"`
-	Existing      bool   `json:"existing"`
-	Running       bool   `json:"running"`
-}
+type protocolFailure = protocol.Failure
+type admissionRecord = protocol.Admission
 
 func readEnvelope(cmd *cobra.Command, source string) (execution.TaskSpec, error) {
 	var r io.Reader
@@ -63,6 +53,14 @@ func protocolErrorCode(err error) string {
 			return "delivery_failed"
 		case execution.AgentStartFailed:
 			return "agent_start_failed"
+		case execution.VerificationFailed:
+			return "verification_failed"
+		case execution.ReviewRequired:
+			return "review_required"
+		case execution.ProductDeliveryFailed:
+			return "product_delivery_failed"
+		case execution.ProductOutcomeUnknown:
+			return "product_outcome_unknown"
 		case execution.InternalFailed:
 			return "internal_failed"
 		default:
@@ -73,6 +71,10 @@ func protocolErrorCode(err error) string {
 }
 
 func (a *App) writeProtocolFailure(err error) error {
+	if a.Organization.Managed {
+		auditErr := a.teamSink(execution.NopEventSink{}, "admission").Emit(context.Background(), execution.Event{Type: execution.EventFailed, Time: time.Now().UTC(), Phase: "admission", Result: &execution.Result{ExecutionState: execution.Rejected}})
+		err = errors.Join(err, auditErr)
+	}
 	if writeErr := a.writeProtocolRecord(protocolFailure{SchemaVersion: protocol.SchemaVersion, Type: "failed", ErrorCode: protocolErrorCode(err)}); writeErr != nil {
 		return errors.Join(err, writeErr)
 	}
@@ -136,4 +138,17 @@ func (a *App) versionCmd() *cobra.Command {
 		}}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print machine-readable protocol capabilities")
 	return cmd
+}
+
+func (a *App) schemaCmd() *cobra.Command {
+	return &cobra.Command{Use: "schema [name]", Short: "List or export bundled JSON Schemas without configuration or Docker", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		if len(args) == 0 {
+			return a.writeProtocolRecord(protocol.SchemaNames())
+		}
+		schema, err := protocol.Schema(args[0])
+		if err != nil {
+			return a.writeProtocolFailure(&protocol.CodedError{Code: "invalid_task", Err: err})
+		}
+		return a.writeProtocolRecord(schema)
+	}}
 }

@@ -130,3 +130,18 @@ func TestTaskLockRejectsConcurrentExecutionAndReleases(t *testing.T) {
 	}
 	release()
 }
+
+func TestManagedRuntimeCannotReuseOldPolicyNetwork(t *testing.T) {
+	req := Request{OrganizationPolicyDigest: "current-policy"}
+	for _, binding := range []string{"", "old-policy"} {
+		if checkManagedRuntime(req, task.Meta{OrganizationPolicyDigest: binding}) == nil {
+			t.Fatal("old runtime accepted", binding)
+		}
+	}
+	if err := checkManagedRuntime(req, task.Meta{OrganizationPolicyDigest: "current-policy"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkManagedRuntime(Request{}, task.Meta{}); err != nil {
+		t.Fatal("unmanaged behavior changed", err)
+	}
+}

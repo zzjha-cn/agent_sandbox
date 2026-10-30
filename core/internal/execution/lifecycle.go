@@ -48,6 +48,11 @@ func (s *Service) Run(ctx context.Context, req Request) (Result, error) {
 		}
 		return reject(AdmissionRejected, "task_spec", err)
 	}
+	if guard, ok := s.driver.(interface{ ValidateRuntime(Request) error }); ok {
+		if err := guard.ValidateRuntime(req); err != nil {
+			return reject(AdmissionRejected, "organization_runtime", err)
+		}
+	}
 	if req.Pipeline != nil {
 		s.facts = &PipelineFacts{Outputs: req.Pipeline.Spec.Outputs, Criteria: req.Pipeline.Spec.Criteria, Sink: req.Pipeline.Spec.Sink, OperationsDigest: contentBinding(req.Pipeline.Spec.Operations), ToolsDigest: contentBinding(req.Pipeline.Spec.Tools)}
 	}
@@ -221,6 +226,9 @@ func (s *Service) checkpoint(ctx context.Context, r *Result, phase Phase, state 
 			s.emit(ctx, *r, EventPhaseFinished, string(phase), "task phase finished")
 		}
 	}
+	if err == nil {
+		err = s.requiredEventError(r)
+	}
 	return err
 }
 
@@ -275,6 +283,11 @@ func (s *Service) save(ctx context.Context, result Result, primary error, closed
 }
 
 func validateRequest(req Request) error {
+	if req.Authorize != nil {
+		if err := req.Authorize(req); err != nil {
+			return &ExecutionError{Kind: AdmissionRejected, Stage: "organization_policy", Cause: err}
+		}
+	}
 	if req.Mode != "" && req.Mode != Interactive && req.Mode != Headless {
 		return &ExecutionError{Kind: AdmissionRejected, Stage: "task_spec", Cause: errors.New("unsupported execution mode")}
 	}

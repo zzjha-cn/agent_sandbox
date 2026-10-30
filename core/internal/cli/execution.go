@@ -6,16 +6,12 @@ import (
 
 	"github.com/spf13/cobra"
 	"sandx/internal/execution"
+	"sandx/internal/protocol"
 )
 
-const executionStatusSchema = "sbx.execution-status/v2"
+const executionStatusSchema = protocol.ExecutionStatusSchema
 
-type executionStatus struct {
-	SchemaVersion string                `json:"schema_version"`
-	Recorded      bool                  `json:"recorded"`
-	Recovery      string                `json:"recovery"`
-	Record        *execution.TaskRecord `json:"record,omitempty"`
-}
+type executionStatus = protocol.Status
 
 func (a *App) executionCmd() *cobra.Command {
 	var asJSON bool
@@ -36,7 +32,9 @@ func (a *App) executionCmd() *cobra.Command {
 			record, err := store.Load()
 			if err != nil {
 				if asJSON {
-					if writeErr := json.NewEncoder(a.Out).Encode(executionStatus{SchemaVersion: executionStatusSchema, Recovery: "record_invalid"}); writeErr != nil {
+					invalid := executionStatus{SchemaVersion: executionStatusSchema}
+					invalid.SetRecovery("record_invalid")
+					if writeErr := json.NewEncoder(a.Out).Encode(invalid); writeErr != nil {
 						return writeErr
 					}
 				}
@@ -46,6 +44,7 @@ func (a *App) executionCmd() *cobra.Command {
 			if record != nil {
 				out.Recovery = record.Recovery()
 			}
+			out.SetRecovery(out.Recovery)
 			if asJSON {
 				return json.NewEncoder(a.Out).Encode(out)
 			}

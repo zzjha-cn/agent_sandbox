@@ -82,6 +82,18 @@ func TestProtocolClientCLIEndToEnd(t *testing.T) {
 	if !admission.Admitted || admission.TaskID != "client-job" || admission.SchemaVersion != protocol.SchemaVersion {
 		t.Fatalf("unexpected admission response: %+v", admission)
 	}
+
+	// Rejected continuation still returns a machine response before any attempt
+	// starts. It must not require parsing stderr or inspecting Docker labels.
+	rejectedOut, _, rejectedErr := run([]string{"task", "approve", "--spec", "-"}, string(envelope))
+	var earlyExit *exec.ExitError
+	if !errors.As(rejectedErr, &earlyExit) || earlyExit.ExitCode() != 3 {
+		t.Fatalf("continuation rejection: %v %s", rejectedErr, rejectedOut)
+	}
+	var early protocol.Failure
+	if err := json.Unmarshal(rejectedOut, &early); err != nil || early.ErrorCode != "admission_rejected" {
+		t.Fatalf("missing safe continuation response: %s %v", rejectedOut, err)
+	}
 	// Inputs accepted by the advertised schema must match the real decoder;
 	// unknown spelling/null and filesystem failures stay machine-classified.
 	for _, suffix := range []string{`,"Fresh":true}`, `,"fresh":null}`, `,"base":null}`, `,"timeout_seconds":null}`} {

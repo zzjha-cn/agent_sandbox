@@ -180,11 +180,11 @@
 - [x] 独占 daemon 的 namespace/owner 门禁及旧卷显式接管；不开放同 daemon 不互信多用户。
 - [x] 开发验收覆盖 Codex/PTY/资源故障；业务项目正式测试入口见 testing.md，历史结果不代替业务验收。
 
-## 通用执行闭环（G0～G6 当前范围已完成，下一阶段 G7）
+## 通用执行闭环（G0～G8 当前范围已完成）
 
 2026-10-28 已确认共用执行内核，以及输入准备、工作区、稳定产物、独立完成验证、目标交付和工具授权的职责分离。核心字段职责、默认策略与 v1/v2 迁移已在 G0 定稿；按 [执行内核 Roadmap](execution-roadmap.md) 推进，未完成项在 roadmap 中跟踪。
 
-G0 核心契约与 G1 生命周期/持久化已完成，分别具备编码前实施清单和验收条件；[验收记录](g0-g1-acceptance.md) 包含单测、race、vet、真实子进程、Docker/Codex 与 PTY 证据。G2 Source/Workspace、G3 稳定产物/独立验证、G4 本地 Sink 也已完成，见 [逐项验收](g2-g4-acceptance.md) 和 [通用任务规范](general-tasks.md)。新增 `sbx task` 显式 v2 入口，Git/交互使用行为保留；2026-10-30 已统一机器输入/事件和执行记录为 v2，旧 v1 不再兼容，见 [收敛记录](architecture-convergence.md)。G6 声明式外部写操作、未知回执恢复与业务验证已完成，见 [验收](g6-acceptance.md) 和 [操作规范](external-operations.md)。G5 动态只读工具也已完成当前范围，见 [规范](dynamic-tools.md) 与 [验收](g5-acceptance.md)，真实 Claude 云端模型仍需可用登录态单独验收。后续为 G7 完整协议发布与 G8 团队治理。候选方案与理由见 [设计提案](source-sink-tools-design.md)；业务测试按 [testing.md](testing.md) 独立推进。
+G0 核心契约与 G1 生命周期/持久化已完成，分别具备编码前实施清单和验收条件；[验收记录](g0-g1-acceptance.md) 包含单测、race、vet、真实子进程、Docker/Codex 与 PTY 证据。G2 Source/Workspace、G3 稳定产物/独立验证、G4 本地 Sink 也已完成，见 [逐项验收](g2-g4-acceptance.md) 和 [通用任务规范](general-tasks.md)。新增 `sbx task` 显式 v2 入口，Git/交互使用行为保留；2026-10-30 已统一机器输入/事件和执行记录为 v2，旧 v1 不再兼容，见 [收敛记录](architecture-convergence.md)。G6 声明式外部写操作、未知回执恢复与业务验证已完成，见 [验收](g6-acceptance.md) 和 [操作规范](external-operations.md)。G5 动态只读工具也已完成当前范围，见 [规范](dynamic-tools.md) 与 [验收](g5-acceptance.md)，真实 Claude 云端模型仍需可用登录态单独验收。G7 完整结构 schema、能力条件、恢复指引、迁移规则与综合验收已完成，见 [发布验收](g7-acceptance.md)；G8 组织限制、撤销监测和团队事件当前范围也已完成，见 [规范](organization.md) 与 [验收](g8-acceptance.md)。候选方案与理由见 [设计提案](source-sink-tools-design.md)；业务测试按 [testing.md](testing.md) 独立推进。
 
 ## 开发期架构收敛（2026-10-30）
 
@@ -193,7 +193,8 @@ G0 核心契约与 G1 生命周期/持久化已完成，分别具备编码前实
 - [x] 移除 v1 输入与有损事件投影，version/admit 统一 v2。
 - [x] Git 与通用任务共用 v2 FileStore，保留工作区类型与模式；旧 v1 记录拒绝且不改写。
 - [x] 保留真实 Codex Git headless、交互启动/恢复；回归 G2～G6。
-- [ ] G7 完整 schema/能力协商与迁移工具、G8 团队治理，未因本次收敛自动完成。
+- [x] G7 完整结构 schema/能力条件、恢复指引、开发期迁移规则和综合验收，见 [G7](g7-acceptance.md)。
+- [x] G8 固定管理员策略/能力交集、同步 TaskSpec 撤销监测、私有事件 outbox/导出与部署边界，见 [G8](g8-acceptance.md)。
 
 ## 后续（暂不排期）
 

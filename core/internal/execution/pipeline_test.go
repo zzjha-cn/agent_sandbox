@@ -399,3 +399,51 @@ func TestGeneralLostReceiptRejectsTargetRebinding(t *testing.T) {
 		t.Fatal("wrote rebound target")
 	}
 }
+
+func TestPipelineProtectsTeamOutboxAndExportCredential(t *testing.T) {
+	for _, name := range []string{"team-events", "team-events.token"} {
+		t.Run(name, func(t *testing.T) {
+			req, _ := generalRequest(t)
+			if err := os.MkdirAll(req.Task.Home, 0700); err != nil {
+				t.Fatal(err)
+			}
+			input := filepath.Join(req.Task.Home, name)
+			if name == "team-events" {
+				os.Mkdir(input, 0700)
+			} else {
+				os.WriteFile(input, []byte("secret"), 0600)
+			}
+			req.Pipeline.Spec.Source = &source.Selection{Kind: "files", Ref: "input"}
+			req.Pipeline.Policy.Sources = map[string]source.Grant{"input": {Kind: "files", Path: input, Include: []string{"."}}}
+			if err := pipelineBoundary(req); err == nil {
+				t.Fatal("private team state became a source")
+			}
+		})
+	}
+}
+
+func TestManagedRuntimeRefusalPreservesPriorRecoveryRecord(t *testing.T) {
+	req, store := generalRequest(t)
+	driver := &producingDriver{body: "{}", testDriver: testDriver{outcome: AgentOutcome{ExitCode: new(int), ContainerState: ContainerStopped}}}
+	if _, err := NewService(driver).WithStore(store).Run(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	before, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = req.Task.WriteMeta(task.Meta{OrganizationPolicyDigest: "old"}); err != nil {
+		t.Fatal(err)
+	}
+	req.OrganizationPolicyDigest = "current"
+	if _, err = NewService(&RuntimeDriver{}).Run(context.Background(), req); err == nil {
+		t.Fatal("old runtime accepted")
+	}
+	after, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after.Attempts) != len(before.Attempts) || after.Sequence != before.Sequence || after.Attempts[0].Pipeline.Artifact.Digest != before.Attempts[0].Pipeline.Artifact.Digest {
+		t.Fatal("policy refusal changed recovery history")
+	}
+}

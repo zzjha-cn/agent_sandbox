@@ -27,18 +27,20 @@ const (
 )
 
 type Request struct {
-	Task         task.Task
-	TaskID       string // optional caller-owned stable task identifier for protocol requests
-	Mode         Mode
-	Prompt       string
-	Base         string
-	Fresh        bool
-	Detach       bool
-	Config       config.Config
-	Requirements Requirements
-	ToolEndpoint string // execution-owned lease address
-	ToolGateway  bool   // execution-owned, never decoded from TaskSpec
-	Pipeline     *PipelinePlan
+	OrganizationPolicyDigest string              // trusted managed-runtime binding; never decoded
+	Authorize                func(Request) error // trusted host policy, never decoded
+	Task                     task.Task
+	TaskID                   string // optional caller-owned stable task identifier for protocol requests
+	Mode                     Mode
+	Prompt                   string
+	Base                     string
+	Fresh                    bool
+	Detach                   bool
+	Config                   config.Config
+	Requirements             Requirements
+	ToolEndpoint             string // execution-owned lease address
+	ToolGateway              bool   // execution-owned, never decoded from TaskSpec
+	Pipeline                 *PipelinePlan
 }
 
 type State string
@@ -396,6 +398,9 @@ func (s *Service) run(ctx context.Context, req Request, result Result) (Result, 
 	}
 	s.emit(ctx, result, EventAdmitted, "admission", "task admitted")
 	s.emit(ctx, result, EventPhaseStarted, "provision", "preparing task environment")
+	if err := s.requiredEventError(&result); err != nil {
+		return result, err
+	}
 	if exists {
 		err = s.driver.Resume(ctx, req, running)
 	} else {
@@ -504,4 +509,18 @@ func (s *Service) run(ctx context.Context, req Request, result Result) (Result, 
 		return result, err
 	}
 	return result, nil
+}
+
+// RequiredEventError marks loss of the mandatory local audit journal. Public
+// stdout transport failures retain their existing execution semantics.
+type RequiredEventError struct{ Cause error }
+
+func (e *RequiredEventError) Error() string { return "required event journal failed" }
+func (e *RequiredEventError) Unwrap() error { return e.Cause }
+func (s *Service) requiredEventError(result *Result) error {
+	var required *RequiredEventError
+	if errors.As(s.eventErr, &required) {
+		return s.eventDeliveryError(result)
+	}
+	return nil
 }

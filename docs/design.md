@@ -1,6 +1,6 @@
 # sbx 设计文档：AI 编码 Agent 沙箱运行时
 
-G2–G4 的通用任务执行闭环及当前范围见 [通用任务手册](general-tasks.md)、[编码前实施与验收清单](g2-g4-implementation.md)。本篇原有 Git/v1 运行时设计保持兼容；工具和组织策略仍按 [执行内核 Roadmap](execution-roadmap.md) 后续阶段推进。
+G2–G4 的通用任务执行闭环及当前范围见 [通用任务手册](general-tasks.md)、[编码前实施与验收清单](g2-g4-implementation.md)。本篇保留历史 Git/v1 运行时设计；当前机器输入/事件和记录只支持 v2，见 [迁移规则](migration.md)。G5 动态只读工具、G6 外部写、G7 发布和 G8 当前组织治理已完成，见 [执行内核 Roadmap](execution-roadmap.md) 与 [组织规范](organization.md)。
 
 | 项 | 内容 |
 |---|---|

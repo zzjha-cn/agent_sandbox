@@ -160,11 +160,21 @@ func (a *App) run(ctx context.Context, t task.Task, o runOpts) error {
 	if o.JSONL && !o.headless() {
 		return fmt.Errorf("--jsonl requires --prompt")
 	}
+	if err := a.constrainOrganization(); err != nil {
+		return err
+	}
+	initial := a.Organization
 	req := execution.Request{Task: t, Mode: execution.Interactive, Prompt: o.Prompt, Base: o.Base, Fresh: o.Fresh, Detach: o.Detach, Config: a.Cfg}
 	if o.headless() {
 		req.Mode = execution.Headless
 	}
 
+	req.Authorize = func(r execution.Request) error { return a.checkOrganization(initial, r) }
+	if err := req.Authorize(req); err != nil {
+		return &execution.ExecutionError{Kind: execution.AdmissionRejected, Stage: "organization_policy", Cause: err}
+	}
+	ctx, stopOrganization := a.organizationContext(ctx)
+	defer stopOrganization()
 	runApp := *a
 	if o.JSONL {
 		runApp.Out = a.Err
@@ -176,9 +186,9 @@ func (a *App) run(ctx context.Context, t task.Task, o runOpts) error {
 	driver := runApp.executionDriver()
 	var service *execution.Service
 	if o.JSONL {
-		service = execution.NewService(driver, execution.NewJSONLSink(a.Out))
+		service = execution.NewService(driver, a.teamSink(execution.NewJSONLSink(a.Out), t.WS.ID))
 	} else {
-		service = execution.NewService(driver)
+		service = execution.NewService(driver, a.teamSink(execution.NopEventSink{}, t.WS.ID))
 	}
 	result, err := service.Run(ctx, req)
 	if err != nil {
@@ -272,7 +282,7 @@ func (h runHost) MergePrepAllow(allow []string) error {
 		return err
 	}
 	a.Cfg = a.Loaded.Config
-	return nil
+	return a.constrainOrganization()
 }
 func (h runHost) EgressOf(t task.Task, mode string) proxy.Egress { return h.app.egressOf(t, mode) }
 func (h runHost) Egress(t task.Task) proxy.Egress                { return h.app.egress(t) }
@@ -346,11 +356,15 @@ func (a *App) proxySpec(t task.Task, taskID string) proxy.TaskSpec {
 	// 通知域名：on_idle/on_exit 里的 webhook 主机自动放行（design §6.3）。
 	// 无条件加，open 模式下也加——模式随时可能切回 allowlist。
 	notify, _ := proxy.HostsIn(a.Cfg.OnIdle, a.Cfg.OnExit)
+	allow := proxy.RenderAllow(block, proxy.BuiltinList("builtin"), proxy.BuiltinList(a.Cfg.Profile), a.Cfg.Network.Allow, notify)
+	if a.Organization.Managed {
+		allow = proxy.RenderAllow(block, a.Cfg.Network.Allow)
+	}
 	return proxy.TaskSpec{
 		TaskID:   taskID,
 		Network:  t.Network(),
 		CredFile: filepath.Join(t.StateDir(), "proxy.cred"),
-		Allow:    proxy.RenderAllow(block, proxy.BuiltinList("builtin"), proxy.BuiltinList(a.Cfg.Profile), a.Cfg.Network.Allow, notify),
+		Allow:    allow,
 		Block:    block,
 		Open:     a.Cfg.Network.Mode == "open",
 	}

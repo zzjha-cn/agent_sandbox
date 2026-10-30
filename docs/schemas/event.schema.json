@@ -1,0 +1,169 @@
+{
+  "$id": "urn:sbx:schema:event:v2",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "additionalProperties": true,
+      "properties": {
+        "attempt_id": {
+          "type": "string"
+        },
+        "error_kind": {
+          "type": "string"
+        },
+        "phase": {
+          "type": "string"
+        },
+        "result": {
+          "additionalProperties": true,
+          "properties": {
+            "agent_exit_code": {
+              "type": "integer"
+            },
+            "artifact_state": {
+              "type": "string"
+            },
+            "attempt_id": {
+              "type": "string"
+            },
+            "cleanup_state": {
+              "type": "string"
+            },
+            "container_state": {
+              "type": "string"
+            },
+            "event_delivery_state": {
+              "type": "string"
+            },
+            "execution_state": {
+              "type": "string"
+            },
+            "mode": {
+              "type": "string"
+            },
+            "next": {
+              "type": "string"
+            },
+            "product_delivery_state": {
+              "type": "string"
+            },
+            "stages": {
+              "items": {
+                "additionalProperties": true,
+                "properties": {
+                  "phase": {
+                    "type": "string"
+                  },
+                  "state": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "phase",
+                  "state"
+                ],
+                "type": "object"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "state": {
+              "type": "string"
+            },
+            "task_id": {
+              "type": "string"
+            },
+            "validation_state": {
+              "type": "string"
+            },
+            "workspace_kind": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "mode",
+            "workspace_kind",
+            "task_id",
+            "attempt_id",
+            "state",
+            "artifact_state",
+            "cleanup_state",
+            "execution_state",
+            "validation_state",
+            "product_delivery_state",
+            "event_delivery_state",
+            "stages"
+          ],
+          "type": "object"
+        },
+        "schema_version": {
+          "const": "sbx.execution/v2",
+          "type": "string"
+        },
+        "stage": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "task_id": {
+          "type": "string"
+        },
+        "time": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "admitted",
+            "phase_started",
+            "phase_finished",
+            "agent_started",
+            "agent_exited",
+            "completed",
+            "failed"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "type",
+        "task_id",
+        "attempt_id",
+        "time"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": true,
+      "not": {
+        "required": [
+          "attempt_id"
+        ]
+      },
+      "properties": {
+        "error_code": {
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "sbx.execution/v2",
+          "type": "string"
+        },
+        "type": {
+          "const": "failed",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "type",
+        "error_code"
+      ],
+      "type": "object"
+    }
+  ],
+  "title": "sbx event"
+}

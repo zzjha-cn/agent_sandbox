@@ -367,7 +367,8 @@ func (p *Provisioner) Create(ctx context.Context, req Request) (err error) {
 	}
 	step = "writing meta"
 	if err := t.WriteMeta(task.Meta{
-		Namespace: d.ResourceLabels["sbx.namespace"], Owner: d.ResourceLabels["sbx.owner"],
+		OrganizationPolicyDigest: req.OrganizationPolicyDigest,
+		Namespace:                d.ResourceLabels["sbx.namespace"], Owner: d.ResourceLabels["sbx.owner"],
 		Task: t.Name, WS: t.WS.ID, Root: t.WS.Root, Base: baseSHA,
 		Agent: cfg.DefaultAgent, Profile: cfg.Profile, Image: tag, Proxy: cfg.Network.Proxy, TaskID: t.ID(),
 		DepMasks: cfg.Deps.Mask, PrepTag: prepTag, PrepAllow: prepAllow(prepPlan),

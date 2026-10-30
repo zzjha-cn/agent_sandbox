@@ -54,6 +54,9 @@ func (a *App) configCmd() *cobra.Command {
 					a.Cfg = a.Loaded.Config
 				}
 			}
+			if err := a.constrainOrganization(); err != nil {
+				return err
+			}
 			// 路径里可能有 CJK，tabwriter 按字节算宽度会错位，这张表自己对齐。
 			fmt.Fprintf(a.Out, "%s  (built-in)\n", padCJK(config.LayerDefault, 9))
 			for _, l := range a.Loaded.Layers {

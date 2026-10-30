@@ -57,7 +57,7 @@ func pipelineBoundary(req Request) error {
 		resources = append(resources, p.Policy.Sinks[p.Spec.Sink.TargetRef].Path)
 	}
 	var protected []string
-	for _, name := range []string{"executions", "tool-calls", "artifacts", "state", "locks", "workspaces", "worktrees", "proxy", "verifications", "config.toml", "execution-policy.toml"} {
+	for _, name := range []string{"executions", "tool-calls", "artifacts", "state", "locks", "workspaces", "worktrees", "proxy", "verifications", "config.toml", "execution-policy.toml", "team-events", "team-events.token"} {
 		protected = append(protected, filepath.Join(req.Task.Home, name))
 	}
 	for _, provider := range req.Config.Agents {

@@ -1,0 +1,374 @@
+{
+  "$comment": "Structural client validation only. Runtime additionally rejects duplicate JSON keys, non-UTF-8, >1 MiB input, duplicate logical ids, invalid artifact patterns and operation values >64 KiB; it validates registered grants, provider versions and runtime policy. Schema validity never grants authority. Omit optional fields rather than null.",
+  "$id": "urn:sbx:schema:task:v2",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "sink"
+        ]
+      },
+      "then": {
+        "required": [
+          "outputs"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "criteria": {
+            "contains": {
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "files",
+                    "tests",
+                    "manual"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "required": [
+          "criteria"
+        ]
+      },
+      "then": {
+        "required": [
+          "outputs"
+        ]
+      }
+    }
+  ],
+  "properties": {
+    "agent": {
+      "additionalProperties": false,
+      "properties": {
+        "provider": {
+          "enum": [
+            "claude",
+            "codex"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider"
+      ],
+      "type": "object"
+    },
+    "criteria": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "files",
+              "tests",
+              "manual",
+              "external_state"
+            ],
+            "type": "string"
+          },
+          "ref": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "ref"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "limits": {
+      "additionalProperties": false,
+      "properties": {
+        "timeout_seconds": {
+          "maximum": 86400,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "operations": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "grant_ref": {
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$",
+            "type": "string"
+          },
+          "id": {
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$",
+            "type": "string"
+          },
+          "target": {
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$",
+            "type": "string"
+          },
+          "value": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "maxProperties": 100,
+            "minProperties": 1,
+            "propertyNames": {
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$"
+            },
+            "type": "object"
+          }
+        },
+        "required": [
+          "id",
+          "grant_ref",
+          "target",
+          "value"
+        ],
+        "type": "object"
+      },
+      "maxItems": 32,
+      "type": "array"
+    },
+    "outputs": {
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "properties": {
+            "include": {
+              "minItems": 1
+            }
+          },
+          "required": [
+            "include"
+          ]
+        },
+        {
+          "properties": {
+            "patch": {
+              "const": true
+            }
+          },
+          "required": [
+            "patch"
+          ]
+        }
+      ],
+      "description": "Safe relative artifact patterns; runtime validates path/glob semantics and policy limits.",
+      "properties": {
+        "allow_empty": {
+          "type": "boolean"
+        },
+        "include": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "patch": {
+          "type": "boolean"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "prompt": {
+      "pattern": "\\S",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "sbx.execution/v2",
+      "type": "string"
+    },
+    "sink": {
+      "additionalProperties": false,
+      "properties": {
+        "conflict": {
+          "enum": [
+            "",
+            "reject",
+            "replace"
+          ],
+          "type": "string"
+        },
+        "delivery_key": {
+          "pattern": "^[a-z0-9][a-z0-9-]{0,39}$",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "local_directory",
+            "git_local"
+          ],
+          "type": "string"
+        },
+        "target_ref": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "target_ref",
+        "delivery_key"
+      ],
+      "type": "object"
+    },
+    "source": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "files"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "revision": {
+                "const": ""
+              },
+              "untracked": {
+                "const": false
+              },
+              "working_tree": {
+                "const": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "untracked": {
+                "const": true
+              }
+            },
+            "required": [
+              "untracked"
+            ]
+          },
+          "then": {
+            "properties": {
+              "working_tree": {
+                "const": true
+              }
+            },
+            "required": [
+              "working_tree"
+            ]
+          }
+        }
+      ],
+      "properties": {
+        "include": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "kind": {
+          "enum": [
+            "files",
+            "git"
+          ],
+          "type": "string"
+        },
+        "ref": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "revision": {
+          "type": "string"
+        },
+        "untracked": {
+          "type": "boolean"
+        },
+        "working_tree": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "kind",
+        "ref"
+      ],
+      "type": "object"
+    },
+    "task_id": {
+      "pattern": "^[a-z0-9][a-z0-9-]{0,39}$",
+      "type": "string"
+    },
+    "tools": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "fields": {
+            "items": {
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$",
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "grant_ref": {
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$",
+            "type": "string"
+          },
+          "id": {
+            "pattern": "^[a-zA-Z][a-zA-Z0-9_]{0,47}$",
+            "type": "string"
+          },
+          "kind": {
+            "const": "records.get",
+            "type": "string"
+          },
+          "targets": {
+            "items": {
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$",
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "grant_ref",
+          "targets",
+          "fields"
+        ],
+        "type": "object"
+      },
+      "maxItems": 16,
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "task_id",
+    "prompt",
+    "agent"
+  ],
+  "title": "sbx task",
+  "type": "object"
+}

@@ -170,7 +170,7 @@ sbx logs nightly -f -n 50               # 跟着看，先打最后 50 行
 
 ### 机器调用与执行结果
 
-公开入口是 `sbx version --json` → `sbx admit --spec task.json` → `sbx task run --spec task.json`（或 `sbx run --spec task.json`）。`admit` 只读、不预留资源；run 重新准入。机器输入、JSONL 事件和执行记录统一 v2。`--envelope` 仅保留为参数别名，旧 v1 输入明确拒绝。Git 便捷命令 `run <task> -p ... --jsonl` 保留 worktree，未声明验证或交付时不承诺业务完成。完整字段、分类码与旧记录迁移见 [automation.md](automation.md)。
+公开入口是 `sbx version --json` → `sbx admit --spec task.json` → `sbx task run --spec task.json`（或 `sbx run --spec task.json`）。`admit` 只读、不预留资源；run 重新准入。机器输入、JSONL 事件和执行记录统一 v2。`--envelope` 仅保留为参数别名，旧 v1 输入明确拒绝。Git 便捷命令 `run <task> -p ... --jsonl` 保留 worktree，未声明验证或交付时不承诺业务完成。`sbx schema` 列出契约，`sbx schema task` 离线导出 JSON Schema。status 新增 next_actions 恢复指引。完整字段、分类码与旧记录迁移见 [automation.md](automation.md)。
 
 ### `sbx done <task>...`
 
@@ -1372,3 +1372,6 @@ VM 内存取自 `docker info` 的 `MemTotal`，Docker Desktop 下就是那台 VM
 - **daemon 是用户隔离边界**：同 daemon 不支持不互信多用户；`[isolation]` 不可由项目/workspace 覆盖。
 - **Git 便捷入口不自动交付产物**：agent 退出 0 不保证测试或提交已完成；需要验证交付时使用显式 v2 任务。
 - 底层镜像必须是 Debian/Ubuntu 系（ADR 0007）。
+
+
+组织策略与汇总事件：`sbx policy show`、`sbx events status`、`sbx events flush`。固定 root 策略存在时只支持同步 TaskSpec；Git 使用 Git Source，不能通过个人配置或更换 SBX_HOME 扩权。见 [组织规范](organization.md)。

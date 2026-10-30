@@ -13,6 +13,7 @@ import (
 	"sandx/internal/config"
 	"sandx/internal/docker"
 	"sandx/internal/execution"
+	"sandx/internal/governance"
 	"sandx/internal/protocol"
 	"sandx/internal/proxy"
 	"sandx/internal/task"
@@ -24,10 +25,12 @@ var Version = "dev"
 
 // App 持有一次命令执行的公共依赖。
 type App struct {
-	Verbose bool
-	Out     io.Writer
-	Err     io.Writer
-	Docker  *docker.Client
+	Organization        governance.Snapshot
+	inspectionOrCleanup bool
+	Verbose             bool
+	Out                 io.Writer
+	Err                 io.Writer
+	Docker              *docker.Client
 
 	In_    io.Reader // 测试里替换；为空时用 os.Stdin
 	Home   string
@@ -64,7 +67,23 @@ func Execute() int {
 				top = top.Parent()
 			}
 			switch top.Name() {
-			case "run", "admit", "version", "execution", "task", "config", "trust", "isolation", "doctor", "completion", "help", "sbx":
+			case "stop", "drop", "clean", "ls", "path", "logs", "doctor", "isolation":
+				app.inspectionOrCleanup = true
+			}
+			// Managed execution has one supervised ingress. Inspection and stop/
+			// cleanup remain available after revocation.
+			switch top.Name() {
+			case "attach", "shell", "prep", "net", "port", "done":
+				org, err := governance.Load()
+				if err != nil {
+					return err
+				}
+				if org.Managed {
+					return errors.New("managed profile requires synchronous task run --spec; direct runtime mutation is disabled")
+				}
+			}
+			switch top.Name() {
+			case "run", "admit", "version", "schema", "policy", "events", "execution", "task", "config", "trust", "isolation", "doctor", "completion", "help", "sbx":
 				// Run/admit validate the envelope first and perform the same
 				// ownership check in execution admission; inspection stays read-only.
 				return nil
@@ -77,7 +96,7 @@ func Execute() int {
 		},
 	}
 	root.PersistentFlags().BoolVarP(&app.Verbose, "verbose", "v", false, "print every docker and git command sbx runs")
-	root.AddCommand(app.runCmd(), app.admitCmd(), app.versionCmd(), app.executionCmd(), app.taskCmd(), app.isolationCmd(), app.attachCmd(), app.shellCmd(), app.stopCmd(), app.lsCmd(), app.pathCmd(), app.doneCmd(), app.dropCmd(), app.portCmd(), app.logsCmd(), app.memoryCmd(), app.loginCmd(), app.configCmd(), app.trustCmd(), app.upgradeCmd(), app.netCmd(), app.prepCmd(), app.forwardCmd(), app.cleanCmd(), app.doctorCmd())
+	root.AddCommand(app.runCmd(), app.admitCmd(), app.versionCmd(), app.schemaCmd(), app.policyCmd(), app.eventsCmd(), app.executionCmd(), app.taskCmd(), app.isolationCmd(), app.attachCmd(), app.shellCmd(), app.stopCmd(), app.lsCmd(), app.pathCmd(), app.doneCmd(), app.dropCmd(), app.portCmd(), app.logsCmd(), app.memoryCmd(), app.loginCmd(), app.configCmd(), app.trustCmd(), app.upgradeCmd(), app.netCmd(), app.prepCmd(), app.forwardCmd(), app.cleanCmd(), app.doctorCmd())
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(app.Err, "sbx:", err)
 		return exitCode(err)
@@ -187,7 +206,7 @@ func (a *App) applyLayers(layers []config.Layer) error {
 		return err
 	}
 	a.Cfg, a.Loaded = ld.Config, ld
-	return nil
+	return a.constrainOrganization()
 }
 
 // homeDir 是宿主机的 ~，只用于把路径缩写成 ~/… 打印。

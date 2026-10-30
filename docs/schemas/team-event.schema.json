@@ -1,0 +1,97 @@
+{
+  "$id": "urn:sbx:schema:team-event:v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "attempt_key": {
+      "pattern": "^[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "id": {
+      "pattern": "^[0-9a-f]{32}$",
+      "type": "string"
+    },
+    "organization": {
+      "maxLength": 80,
+      "minLength": 1,
+      "type": "string"
+    },
+    "outcome": {
+      "enum": [
+        "ready",
+        "running",
+        "finished",
+        "agent_failed",
+        "timed_out",
+        "cancelled",
+        "delivery_failed",
+        "admission_rejected",
+        "environment_failed",
+        "agent_start_failed",
+        "internal_failed",
+        "verification_failed",
+        "needs_review",
+        "product_delivery_failed",
+        "product_outcome_unknown"
+      ],
+      "type": "string"
+    },
+    "phase": {
+      "enum": [
+        "admission",
+        "prepare",
+        "execute",
+        "collect",
+        "evaluate",
+        "deliver",
+        "finalize"
+      ],
+      "type": "string"
+    },
+    "policy_digest": {
+      "pattern": "^[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "sbx.team-event/v1",
+      "type": "string"
+    },
+    "subject": {
+      "pattern": "^[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "task_key": {
+      "pattern": "^[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "time": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "type": {
+      "enum": [
+        "admitted",
+        "phase_started",
+        "phase_finished",
+        "agent_started",
+        "agent_exited",
+        "completed",
+        "failed"
+      ],
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "id",
+    "organization",
+    "subject",
+    "policy_digest",
+    "task_key",
+    "attempt_key",
+    "time",
+    "type"
+  ],
+  "title": "sbx team-event",
+  "type": "object"
+}
