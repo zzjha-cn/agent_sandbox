@@ -305,7 +305,7 @@ profile = "web-go"                    # 3. 内置 Profile（默认）
 
 ## 项目状态
 
-**Claude Code、Codex、执行层重构和 v1 机器协议已实现。** 可用命令：`run / admit / version / isolation / attach / shell / stop / ls / path / done / drop / logs / port / net / memory / login / config / trust / prep / doctor / upgrade`。
+**Claude Code、Codex、执行层重构和 统一 v2 执行协议已实现。** 可用命令：`run / admit / version / isolation / attach / shell / stop / ls / path / done / drop / logs / port / net / memory / login / config / trust / prep / doctor / upgrade`。
 
 已知边界：没有 `sbx merge` 或远端产物发布；本地交付使用独立的 `sbx task` 入口。不支持同 daemon 上的不互信多用户隔离；上游代理只支持 http（只有 SOCKS 的话要自己加一层转发）；底层镜像必须是 Debian/Ubuntu 系；伴生服务和 forward 都按名字访问，不是 `localhost`。另见[明确不提供](#明确不提供)。
 
@@ -322,7 +322,7 @@ make lint          # golangci-lint；没装则退回 go vet + gofmt
 make e2e           # 旧版 Claude 端到端验收（需要已登录）
 ```
 
-需要机器调用或超时控制时，使用 `sbx version --json`、`sbx admit --envelope request.json` 和 `sbx run --envelope request.json`。信封从配置选择 provider，不接受 `--agent`。详见 [自动化手册](docs/automation.md) 和 [正式测试指南](docs/testing.md)。
+机器任务使用 `sbx version --json`、`sbx admit --spec task.json` 和 `sbx task run --spec task.json`；`sbx run --spec` 使用相同流程，TaskSpec 明确选择 provider。Git/交互式入口保留，旧 v1 输入已移除，迁移见 [自动化手册](docs/automation.md) 和 [架构收敛](docs/architecture-convergence.md)。
 
 加 `-v / --verbose` 可以打印执行的每一条 docker 和 git 命令。
 

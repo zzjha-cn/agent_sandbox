@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,7 +12,6 @@ import (
 	"reflect"
 	"syscall"
 	"time"
-	"unicode/utf8"
 
 	"github.com/BurntSushi/toml"
 	"github.com/spf13/cobra"
@@ -25,33 +23,10 @@ import (
 	"sandx/internal/toolgate"
 )
 
-const generalInputLimit = 1 << 20
+const generalInputLimit = execution.MaxTaskBytes
 
 func decodeTask(r io.Reader) (execution.TaskSpec, error) {
-	var spec execution.TaskSpec
-	b, err := io.ReadAll(io.LimitReader(r, generalInputLimit+1))
-	if err != nil {
-		return spec, err
-	}
-	if len(b) > generalInputLimit {
-		return spec, errors.New("task input exceeds 1 MiB")
-	}
-	if !utf8.Valid(b) {
-		return spec, errors.New("task input must be UTF-8")
-	}
-	decoder := json.NewDecoder(bytes.NewReader(b))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&spec); err != nil {
-		return spec, err
-	}
-	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
-		return spec, errors.New("task input must contain exactly one JSON object")
-	}
-	if err := spec.ValidateInput(); err != nil {
-		return spec, err
-	}
-	return spec, nil
+	return execution.DecodeTaskSpec(r)
 }
 
 func readTaskPolicy(home string) (execution.PipelinePolicy, error) {
@@ -162,47 +137,22 @@ func (a *App) taskCmd() *cobra.Command {
 			var reader io.Reader = a.In()
 			var input *os.File
 			if specPath == "" {
-				return &protocol.CodedError{Code: "invalid_task", Err: errors.New("--spec is required")}
+				return a.writeProtocolFailure(&protocol.CodedError{Code: "invalid_task", Err: errors.New("--spec is required")})
 			}
 			if specPath != "-" {
 				var err error
 				input, err = os.Open(specPath)
 				if err != nil {
-					return &protocol.CodedError{Code: "invalid_task", Err: err}
+					return a.writeProtocolFailure(&protocol.CodedError{Code: "invalid_task", Err: err})
 				}
 				defer input.Close()
 				reader = input
 			}
 			spec, err := decodeTask(reader)
 			if err != nil {
-				return &protocol.CodedError{Code: "invalid_task", Err: err}
+				return a.writeProtocolFailure(&protocol.CodedError{Code: "invalid_task", Err: err})
 			}
-			ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
-			defer cancel()
-			if spec.Limits.TimeoutSeconds > 0 {
-				var stop context.CancelFunc
-				ctx, stop = context.WithTimeout(ctx, time.Duration(spec.Limits.TimeoutSeconds)*time.Second)
-				defer stop()
-			}
-			req, err := a.generalRequest(ctx, spec)
-			if err != nil {
-				return &execution.ExecutionError{Kind: execution.AdmissionRejected, Stage: "task_spec", Cause: err}
-			}
-			runApp := *a
-			runApp.Out = a.Err
-			runApp.Docker = a.Docker.WithContext(ctx)
-			driver := runApp.executionDriver()
-			service := execution.NewService(driver, taskEventSink{encoder: json.NewEncoder(a.Out)})
-			var result execution.Result
-			if action == "run" {
-				result, err = service.Run(ctx, req)
-			} else {
-				result, err = service.Continue(ctx, req, action, reviewer)
-			}
-			if err == nil && result.ExecutionState == execution.AgentFailed {
-				err = &execution.ExecutionError{Kind: execution.AgentRunFailed, Stage: "agent", Cause: errors.New("agent exited unsuccessfully")}
-			}
-			return err
+			return a.submitTask(cmd.Context(), spec, action, reviewer)
 		}}
 		cmd.Flags().StringVar(&specPath, "spec", "", "general task JSON (maximum 1 MiB), or - for stdin")
 		if action == "approve" || action == "reject" {
@@ -219,7 +169,7 @@ func (a *App) taskCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		store, err := execution.NewGeneralFileStore(t)
+		store, err := execution.NewFileStore(t)
 		if err != nil {
 			return err
 		}
@@ -262,11 +212,31 @@ func (a *App) taskCmd() *cobra.Command {
 	return root
 }
 
-type taskEventSink struct{ encoder *json.Encoder }
-
-func (s taskEventSink) Emit(_ context.Context, event execution.Event) error {
-	return s.encoder.Encode(struct {
-		SchemaVersion string `json:"schema_version"`
-		execution.Event
-	}{SchemaVersion: execution.TaskInputSchema, Event: event})
+func (a *App) submitTask(parent context.Context, spec execution.TaskSpec, action, reviewer string) error {
+	ctx, cancel := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	if spec.Limits.TimeoutSeconds > 0 {
+		var stop context.CancelFunc
+		ctx, stop = context.WithTimeout(ctx, time.Duration(spec.Limits.TimeoutSeconds)*time.Second)
+		defer stop()
+	}
+	req, err := a.generalRequest(ctx, spec)
+	if err != nil {
+		return a.writeProtocolFailure(&execution.ExecutionError{Kind: execution.AdmissionRejected, Stage: "task_spec", Cause: err})
+	}
+	runApp := *a
+	runApp.Out = a.Err
+	runApp.Docker = a.Docker.WithContext(ctx)
+	driver := runApp.executionDriver()
+	service := execution.NewService(driver, execution.NewJSONLSink(a.Out))
+	var result execution.Result
+	if action == "run" {
+		result, err = service.Run(ctx, req)
+	} else {
+		result, err = service.Continue(ctx, req, action, reviewer)
+	}
+	if err == nil && result.ExecutionState == execution.AgentFailed {
+		err = &execution.ExecutionError{Kind: execution.AgentRunFailed, Stage: "agent", Cause: errors.New("agent exited unsuccessfully")}
+	}
+	return err
 }

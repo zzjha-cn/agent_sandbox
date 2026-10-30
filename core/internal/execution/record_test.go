@@ -246,3 +246,66 @@ func TestCancelledStoreWriteDoesNotInitializeRecord(t *testing.T) {
 		t.Fatal("cancelled write initialized record", err)
 	}
 }
+
+func TestV1RecordIsRejectedWithoutChangingHistory(t *testing.T) {
+	req, store, _ := successfulRecord(t)
+	marker := filepath.Join(store.dir, "initialized")
+	if err := os.WriteFile(marker, []byte("sbx.execution-record/v1\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(filepath.Join(store.dir, "record.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.Load(); !errors.Is(err, ErrRecordInvalid) || !errors.Is(err, ErrRecordIncompatible) {
+		t.Fatal(err)
+	}
+	driver := &testDriver{}
+	_, err = NewService(driver).WithStore(store).Run(context.Background(), req)
+	if !errors.Is(err, ErrRecordIncompatible) || len(driver.steps) != 0 {
+		t.Fatalf("legacy history bypassed: %v %v", err, driver.steps)
+	}
+	after, _ := os.ReadFile(filepath.Join(store.dir, "record.json"))
+	gotMarker, _ := os.ReadFile(marker)
+	if !bytes.Equal(before, after) || string(gotMarker) != "sbx.execution-record/v1\n" {
+		t.Fatal("rewrote legacy history")
+	}
+}
+
+func TestPreflightDoesNotCreateRecordsOrStartRuntime(t *testing.T) {
+	req, store := durableRequest(t)
+	d := &testDriver{}
+	admission, err := NewService(d).Check(context.Background(), req)
+	if err != nil || admission.Existing || strings.Join(d.steps, ",") != "inspect,admit" {
+		t.Fatalf("%+v %v %v", admission, err, d.steps)
+	}
+	if _, err = os.Stat(store.dir); !os.IsNotExist(err) {
+		t.Fatal("preflight created control state", err)
+	}
+}
+
+func TestUnifiedStoreRejectsForgedWorkspaceIdentity(t *testing.T) {
+	req, _ := durableRequest(t)
+	req.Task.WS.ID = "tasks"
+	if _, err := NewFileStore(req.Task); err == nil {
+		t.Fatal("reserved task namespace accepted a repository workspace")
+	}
+}
+
+func TestPreflightBlocksUnresolvedExternalOperations(t *testing.T) {
+	req, store, record := successfulRecord(t)
+	record.Operations = []OperationRecord{{Key: "unknown-operation", AttemptID: record.Attempts[0].Result.AttemptID, Kind: "tool", State: "unknown"}}
+	unlock, err := store.Lock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = store.Save(context.Background(), record)
+	unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := &testDriver{}
+	if _, err = NewService(d).Check(context.Background(), req); !errors.Is(err, ErrRecoveryRequired) || len(d.steps) != 0 {
+		t.Fatalf("preflight bypassed unknown operation: %v %v", err, d.steps)
+	}
+}

@@ -41,7 +41,7 @@ func generalRequest(t *testing.T) (Request, *FileStore) {
 	p.Policy.Criteria = map[string]completion.Rule{"report": {Kind: "files", Version: "1", Required: []string{"report.json"}, Format: map[string]string{"report.json": "json"}, AllowedChanges: []string{"report.json"}}}
 	req := Request{Task: tsk, TaskID: spec.TaskID, Mode: Headless, Prompt: spec.Prompt, Config: config.Default(), Pipeline: p}
 	req.Config.DefaultAgent = "codex"
-	store, err := NewGeneralFileStore(tsk)
+	store, err := NewFileStore(tsk)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,9 +79,9 @@ func TestGeneralPipelineCollectsAndChecksBusinessCompletion(t *testing.T) {
 			if _, err := os.Stat(filepath.Join(req.Task.Worktree(), ".git")); !os.IsNotExist(err) {
 				t.Fatal("non-Git task initialized Git")
 			}
-			legacy, _ := NewFileStore(req.Task)
-			if _, err := legacy.Load(); err == nil {
-				t.Fatal("v1 reader accepted new recovery semantics")
+			unified, _ := NewFileStore(req.Task)
+			if recovered, err := unified.Load(); err != nil || recovered.SchemaVersion != RecordSchema {
+				t.Fatalf("unified reader lost pipeline facts: %v", err)
 			}
 		})
 	}

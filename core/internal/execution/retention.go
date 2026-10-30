@@ -17,7 +17,7 @@ func PruneArtifacts(ctx context.Context, t task.Task, attemptID string) error {
 	if err := workspace.ValidateTaskName(attemptID); err != nil {
 		return err
 	}
-	store, err := NewGeneralFileStore(t)
+	store, err := NewFileStore(t)
 	if err != nil {
 		return err
 	}

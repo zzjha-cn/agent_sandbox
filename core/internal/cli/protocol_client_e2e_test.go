@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	"sandx/internal/completion"
+	"sandx/internal/execution"
 	"sandx/internal/protocol"
 )
 
@@ -31,10 +33,6 @@ func TestProtocolClientCLIEndToEnd(t *testing.T) {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
-	}
-	git := exec.Command("git", "init", repo)
-	if out, err := git.CombinedOutput(); err != nil {
-		t.Fatalf("git init: %v: %s", err, out)
 	}
 	dockerShim := "#!/bin/sh\n" + "if [ \"$1\" = container ] && [ \"$2\" = inspect ]; then echo 'No such object' >&2; exit 1; fi\n" + "if [ \"$1\" = ps ]; then exit 0; fi\n" + "if [ \"$1\" = info ] && [ \"$3\" = '{{.ID}}' ]; then echo test-daemon; exit 0; fi\n" + "if [ \"$1\" = info ]; then echo '{\"MemTotal\":17179869184}'; exit 0; fi\n" + "if [ \"$1\" = volume ] && [ \"$2\" = inspect ]; then echo 'No such volume' >&2; exit 1; fi\n" + "echo unsupported docker shim invocation >&2; exit 2\n"
 	if err := os.WriteFile(filepath.Join(binDir, "docker"), []byte(dockerShim), 0o755); err != nil {
@@ -71,8 +69,8 @@ func TestProtocolClientCLIEndToEnd(t *testing.T) {
 	if caps.SchemaVersion != protocol.SchemaVersion {
 		t.Fatalf("unexpected protocol version: %+v", caps)
 	}
-	// Then it submits a v1 envelope to the real read-only admission command.
-	envelope, _ := json.Marshal(protocol.Envelope{SchemaVersion: protocol.SchemaVersion, TaskID: "client-job", Prompt: "run checks"})
+	// Then it submits a v2 task outside any Git repository to the real read-only admission command.
+	envelope, _ := json.Marshal(clientSpec("client-job"))
 	out, stderr, err := run([]string{"admit", "--envelope", "-"}, string(envelope))
 	if err != nil {
 		t.Fatalf("admission failed: %v; stderr=%s; stdout=%s", err, stderr, out)
@@ -95,7 +93,7 @@ func TestProtocolClientCLIEndToEnd(t *testing.T) {
 		}
 	}
 	for _, literal := range []string{"1.0", "1e2", "0.01e2"} {
-		input := strings.TrimSuffix(string(envelope), "}") + `,"timeout_seconds":` + literal + "}"
+		input := strings.Replace(string(envelope), `"timeout_seconds":0`, `"timeout_seconds":`+literal, 1)
 		if out, stderr, err := run([]string{"admit", "--envelope", "-"}, input); err != nil {
 			t.Fatalf("schema-valid integer rejected: %s %v %s %s", literal, err, stderr, out)
 		}
@@ -133,7 +131,7 @@ func TestProtocolClientCLIEndToEnd(t *testing.T) {
 	if err := json.Unmarshal(bytes.TrimSpace(out), &failure); err != nil {
 		t.Fatalf("invalid failure record: %v: %s", err, out)
 	}
-	if failure.ErrorCode != "invalid_envelope" || failure.SchemaVersion != protocol.SchemaVersion {
+	if failure.ErrorCode != "invalid_task" || failure.SchemaVersion != protocol.SchemaVersion {
 		t.Fatalf("unexpected failure response: %+v", failure)
 	}
 	// The public CLI must reject unsupported deployment before provisioning,
@@ -151,7 +149,8 @@ func TestProtocolClientCLIEndToEnd(t *testing.T) {
 			t.Fatalf("shared daemon %s: %v %s", command, err, stderr)
 		}
 		var record map[string]any
-		if err := json.Unmarshal(bytes.TrimSpace(out), &record); err != nil {
+		lines := bytes.Split(bytes.TrimSpace(out), []byte("\n"))
+		if err := json.Unmarshal(lines[len(lines)-1], &record); err != nil {
 			t.Fatal(err, string(out))
 		}
 		if record["error_code"] != "admission_rejected" {
@@ -204,7 +203,7 @@ func TestProtocolAdmissionAgainstRealDocker(t *testing.T) {
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build CLI: %v: %s", err, out)
 	}
-	envelope, _ := json.Marshal(protocol.Envelope{SchemaVersion: protocol.SchemaVersion, TaskID: "docker-readonly", Prompt: "not executed by admit"})
+	envelope, _ := json.Marshal(clientSpec("docker-readonly"))
 	cmd := exec.Command(cliBin, "admit", "--envelope", "-")
 	cmd.Dir = repo
 	cmd.Env = append(os.Environ(), "SBX_HOME="+home)
@@ -221,4 +220,10 @@ func TestProtocolAdmissionAgainstRealDocker(t *testing.T) {
 	if !admission.Admitted || admission.TaskID != "docker-readonly" || admission.Existing {
 		t.Fatalf("unexpected Docker admission response: %+v", admission)
 	}
+}
+
+func clientSpec(id string) execution.TaskSpec {
+	s := execution.TaskSpec{SchemaVersion: protocol.SchemaVersion, TaskID: id, Prompt: "run checks", Criteria: []completion.Criterion{}}
+	s.Agent.Provider = "codex"
+	return s
 }

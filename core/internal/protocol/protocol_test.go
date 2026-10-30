@@ -4,9 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
-	"math/big"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -28,25 +25,25 @@ func (d contractDriver) Wait(context.Context, execution.Request) (execution.Agen
 	return execution.AgentOutcome{ExitCode: &d.code, ContainerState: execution.ContainerStopped}, nil
 }
 
-func TestDecodeEnvelopeV1AndDefaults(t *testing.T) {
-	env, err := Decode(strings.NewReader(`{"schema_version":"sbx.execution/v1","task_id":"ci-42","prompt":"run checks"}`))
+func TestDecodeTaskV2AndDefaults(t *testing.T) {
+	env, err := Decode(strings.NewReader(`{"schema_version":"sbx.execution/v2","task_id":"ci-42","prompt":"run checks","agent":{"provider":"codex"}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if env.TaskID != "ci-42" || env.Fresh || env.TimeoutSeconds != 0 {
+	if env.TaskID != "ci-42" || env.Limits.TimeoutSeconds != 0 {
 		t.Fatalf("unexpected decoded envelope: %+v", env)
 	}
 }
 
 func TestDecodeRejectsInvalidOrAmbiguousEnvelope(t *testing.T) {
 	cases := []string{
-		`{"schema_version":"v9","task_id":"ci","prompt":"x"}`,
-		`{"schema_version":"sbx.execution/v1","task_id":"../oops","prompt":"x"}`,
-		`{"schema_version":"sbx.execution/v1","task_id":"ci","prompt":""}`,
-		`{"schema_version":"sbx.execution/v1","task_id":"ci","prompt":"x","extra":true}`,
-		`{"schema_version":"sbx.execution/v1","task_id":"ci","task_id":"other","prompt":"x"}`,
-		`{"schema_version":"sbx.execution/v1","task_id":"ci","prompt":"x"}{}`,
-		`{"schema_version":"sbx.execution/v1","task_id":"ci","prompt":"x","timeout_seconds":86401}`,
+		`{"schema_version":"v9","task_id":"ci","prompt":"x","agent":{"provider":"codex"}}`,
+		`{"schema_version":"sbx.execution/v2","task_id":"../oops","prompt":"x","agent":{"provider":"codex"}}`,
+		`{"schema_version":"sbx.execution/v2","task_id":"ci","prompt":""}`,
+		`{"schema_version":"sbx.execution/v2","task_id":"ci","prompt":"x","agent":{"provider":"codex"},"extra":true}`,
+		`{"schema_version":"sbx.execution/v2","task_id":"ci","task_id":"other","prompt":"x","agent":{"provider":"codex"}}`,
+		`{"schema_version":"sbx.execution/v2","task_id":"ci","prompt":"x","agent":{"provider":"codex"}}{}`,
+		`{"schema_version":"sbx.execution/v2","task_id":"ci","prompt":"x","agent":{"provider":"codex"},"timeout_seconds":86401}`,
 	}
 	for _, input := range cases {
 		t.Run(input, func(t *testing.T) {
@@ -59,7 +56,7 @@ func TestDecodeRejectsInvalidOrAmbiguousEnvelope(t *testing.T) {
 }
 
 func TestEnvelopeRejectsNonCanonicalAndNullFields(t *testing.T) {
-	base := `{"schema_version":"sbx.execution/v1","task_id":"ci","prompt":"x"`
+	base := `{"schema_version":"sbx.execution/v2","task_id":"ci","prompt":"x","agent":{"provider":"codex"}`
 	for _, extra := range []string{`,"Fresh":true}`, `,"fresh":true,"Fresh":false}`, `,"fresh":null}`, `,"base":null}`, `,"timeout_seconds":null}`} {
 		if _, err := Decode(strings.NewReader(base + extra)); err == nil {
 			t.Fatal("accepted input outside advertised schema:", base+extra)
@@ -71,7 +68,7 @@ func TestEnvelopeRejectsNonCanonicalAndNullFields(t *testing.T) {
 }
 
 func TestEnvelopeSizeLimitAndUnicode(t *testing.T) {
-	env, err := Decode(strings.NewReader(`{"schema_version":"sbx.execution/v1","task_id":"ci","prompt":"测试"}`))
+	env, err := Decode(strings.NewReader(`{"schema_version":"sbx.execution/v2","task_id":"ci","prompt":"测试","agent":{"provider":"codex"}}`))
 	if err != nil || env.Prompt != "测试" {
 		t.Fatalf("valid UTF-8: %+v %v", env, err)
 	}
@@ -81,46 +78,16 @@ func TestEnvelopeSizeLimitAndUnicode(t *testing.T) {
 }
 
 func TestTimeoutAcceptsExactlyBoundedJSONSchemaIntegers(t *testing.T) {
-	base := `{"schema_version":"sbx.execution/v1","task_id":"ci","prompt":"x","timeout_seconds":`
+	base := `{"schema_version":"sbx.execution/v2","task_id":"ci","prompt":"x","agent":{"provider":"codex"},"limits":{"timeout_seconds":`
 	for literal, want := range map[string]int{"1.0": 1, "1e2": 100, "0.01e2": 1, "10e-1": 1, "86400.00": 86400, "0e99999999999999999999999": 0} {
-		env, err := Decode(strings.NewReader(base + literal + "}"))
-		if err != nil || env.TimeoutSeconds != want {
+		env, err := Decode(strings.NewReader(base + literal + "}}"))
+		if err != nil || env.Limits.TimeoutSeconds != want {
 			t.Fatalf("%s: %+v %v", literal, env, err)
 		}
 	}
 	for _, literal := range []string{"1.1", "1e-999999", "1.00000000000000000000001", "86401.0", "1e99999999999999999999999", "true", `"12"`, "-1"} {
-		if _, err := Decode(strings.NewReader(base + literal + "}")); err == nil {
+		if _, err := Decode(strings.NewReader(base + literal + "}}")); err == nil {
 			t.Fatal("accepted invalid timeout", literal)
-		}
-	}
-}
-
-func TestTimeoutNormalizationMatchesExactRationalValues(t *testing.T) {
-	limit := big.NewRat(MaxTimeoutSeconds, 1)
-	for _, coefficient := range []int{0, 1, 10, 12, 99, 100, 1001, 86400, 86401} {
-		for fraction := 0; fraction <= 5; fraction++ {
-			mantissa := strconv.Itoa(coefficient)
-			if fraction > 0 {
-				if len(mantissa) <= fraction {
-					mantissa = strings.Repeat("0", fraction-len(mantissa)+1) + mantissa
-				}
-				i := len(mantissa) - fraction
-				mantissa = mantissa[:i] + "." + mantissa[i:]
-			}
-			for exponent := -6; exponent <= 6; exponent++ {
-				for _, sign := range []string{"", "-"} {
-					literal := fmt.Sprintf("%s%se%d", sign, mantissa, exponent)
-					exact, ok := new(big.Rat).SetString(literal)
-					if !ok {
-						t.Fatal("invalid test number", literal)
-					}
-					valid := exact.IsInt() && exact.Sign() >= 0 && exact.Cmp(limit) <= 0
-					value, err := timeoutInteger(json.RawMessage(literal))
-					if (err == nil) != valid || (valid && int64(value) != exact.Num().Int64()) {
-						t.Fatalf("%s: value=%d err=%v exact=%s", literal, value, err, exact)
-					}
-				}
-			}
 		}
 	}
 }
@@ -182,14 +149,14 @@ func TestProtocolEventStageUsesStableVocabulary(t *testing.T) {
 	if err := json.Unmarshal(bytes.TrimSpace(out.Bytes()), &event); err != nil {
 		t.Fatal(err)
 	}
-	if event.Phase != "provision" || event.Stage != "provision" {
+	if event.Phase != "creating task" || event.Stage != "creating task" {
 		t.Fatalf("internal stage leaked through protocol: %+v", event)
 	}
 }
 
 func TestVersionListsProtocolCapabilities(t *testing.T) {
 	got := Version("test")
-	if got.ApplicationVersion != "test" || got.SchemaVersion != SchemaVersion || len(got.Capabilities) < 3 || got.EnvelopeSchema["additionalProperties"] != false || got.ArtifactDelivery != "none" || strings.Join(got.Providers, ",") != "claude,codex" {
+	if got.ApplicationVersion != "test" || got.SchemaVersion != SchemaVersion || len(got.Capabilities) < 3 || got.ArtifactDelivery != "local_directory,git_local" || strings.Join(got.Providers, ",") != "claude,codex" {
 		t.Fatalf("incomplete capability response: %+v", got)
 	}
 }

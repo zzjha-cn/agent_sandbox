@@ -144,7 +144,7 @@ func TestServiceFailureEventDoesNotExposeErrorText(t *testing.T) {
 	if !sawFailure {
 		t.Fatalf("missing safe provisioning failure event: %s", output.String())
 	}
-	if !strings.Contains(output.String(), `"error_kind":"environment_failed"`) || !strings.Contains(output.String(), `"result":{"task_id"`) {
+	if !strings.Contains(output.String(), `"error_kind":"environment_failed"`) || !strings.Contains(output.String(), `"result":{`) {
 		t.Fatalf("machine failure event must contain typed failure and result: %s", output.String())
 	}
 	if !strings.Contains(output.String(), `"cleanup_state":"complete"`) {

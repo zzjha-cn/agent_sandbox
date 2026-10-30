@@ -23,7 +23,7 @@ func TestGeneralTaskDecodeBoundsAndVersionedEvents(t *testing.T) {
 		t.Fatalf("explicit opt-out lost: %+v %v", spec, err)
 	}
 	var out bytes.Buffer
-	sink := taskEventSink{encoder: json.NewEncoder(&out)}
+	sink := execution.NewJSONLSink(&out)
 	if err := sink.Emit(context.Background(), execution.Event{Type: execution.EventCompleted}); err != nil {
 		t.Fatal(err)
 	}

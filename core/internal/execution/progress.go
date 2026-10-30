@@ -103,7 +103,7 @@ func (r TaskRecord) Recovery() string {
 	if last.Result.State == OutcomeUnknown {
 		return "reconcile_operations"
 	}
-	if r.SchemaVersion == GeneralRecordSchema && last.Pipeline != nil {
+	if r.SchemaVersion == RecordSchema && last.Pipeline != nil {
 		if last.Pipeline.Artifact != nil && last.Pipeline.Artifact.Retention == "pruning" {
 			return "reconcile_retention"
 		}

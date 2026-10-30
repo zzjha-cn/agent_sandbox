@@ -54,7 +54,7 @@ func TestExternalCrashHelper(t *testing.T) {
 	}
 	req := Request{Task: tsk, TaskID: plan.Spec.TaskID, Mode: Headless, Prompt: plan.Spec.Prompt, Config: config.Default(), Pipeline: &plan}
 	req.Config.DefaultAgent = "codex"
-	store, err := NewGeneralFileStore(tsk)
+	store, err := NewFileStore(tsk)
 	if err != nil {
 		t.Fatal(err)
 	}

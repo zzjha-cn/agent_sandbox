@@ -19,13 +19,14 @@ import (
 	"sandx/internal/workspace"
 )
 
-const RecordSchema = "sbx.execution-record/v1"
+const RecordSchema = "sbx.execution-record/v2"
 const MaxRecordBytes = 32 << 20
 
 var (
-	ErrRecordBusy       = errors.New("execution record is locked")
-	ErrRecordInvalid    = errors.New("execution record is missing, invalid or incompatible")
-	ErrRecoveryRequired = errors.New("execution requires reconciliation before another run")
+	ErrRecordIncompatible = errors.New("v1 execution records are unsupported; preserve the old home and reconcile pending operations with the previous binary before using a new SBX_HOME")
+	ErrRecordBusy         = errors.New("execution record is locked")
+	ErrRecordInvalid      = errors.New("execution record is missing, invalid or incompatible")
+	ErrRecoveryRequired   = errors.New("execution requires reconciliation before another run")
 )
 
 type AttemptRecord struct {
@@ -67,35 +68,18 @@ type RecordStore interface {
 	Save(context.Context, *TaskRecord) error
 }
 
-type FileStore struct{ dir, key, version string }
-
-func (s *FileStore) schema() string {
-	if s.version != "" {
-		return s.version
-	}
-	return RecordSchema
-}
-
-func NewGeneralFileStore(t task.Task) (*FileStore, error) {
-	if t.ExecutionDir == "" || t.WS.ID != "tasks" {
-		return nil, errors.New("general record requires a general execution task")
-	}
-	expected, err := task.NewExecution(t.Home, t.Name)
-	if err != nil {
-		return nil, err
-	}
-	if t.Worktree() != expected.Worktree() || t.WS.Root != expected.WS.Root || t.WS.GitDir != "" {
-		return nil, errors.New("general workspace identity does not match its task")
-	}
-	s, err := NewFileStore(t)
-	if err != nil {
-		return nil, err
-	}
-	s.version = GeneralRecordSchema
-	return s, nil
-}
+type FileStore struct{ dir, key string }
 
 func NewFileStore(t task.Task) (*FileStore, error) {
+	if t.ExecutionDir != "" || t.WS.ID == "tasks" {
+		expected, err := task.NewExecution(t.Home, t.Name)
+		if err != nil {
+			return nil, err
+		}
+		if t.WS.ID != "tasks" || t.Worktree() != expected.Worktree() || t.WS.Root != expected.WS.Root || t.WS.GitDir != "" {
+			return nil, errors.New("execution workspace identity does not match its task")
+		}
+	}
 	if t.Home == "" || t.WS.ID == "" {
 		return nil, fmt.Errorf("execution record requires a home and repository identity")
 	}
@@ -229,7 +213,10 @@ func (s *FileStore) Load() (*TaskRecord, error) {
 		return nil, fmt.Errorf("%w: cannot read record", ErrRecordInvalid)
 	}
 	marker, err := readRegular(filepath.Join(s.dir, "initialized"))
-	if err != nil || string(marker) != s.schema()+"\n" {
+	if err == nil && string(marker) == "sbx.execution-record/v1\n" {
+		return nil, errors.Join(ErrRecordInvalid, ErrRecordIncompatible)
+	}
+	if err != nil || string(marker) != RecordSchema+"\n" {
 		return nil, ErrRecordInvalid
 	}
 	var disk diskRecord
@@ -251,14 +238,11 @@ func (s *FileStore) Load() (*TaskRecord, error) {
 }
 
 func (s *FileStore) validate(r *TaskRecord) error {
-	if r.SchemaVersion != s.schema() || r.TaskKey != s.key || r.Sequence == 0 || len(r.Attempts) == 0 {
+	if r.SchemaVersion != RecordSchema || r.TaskKey != s.key || r.Sequence == 0 || len(r.Attempts) == 0 {
 		return ErrRecordInvalid
 	}
 	seen := map[string]bool{}
 	for _, a := range r.Attempts {
-		if a.Pipeline != nil && r.SchemaVersion != GeneralRecordSchema {
-			return ErrRecordInvalid
-		}
 		if a.Result.AttemptID == "" || seen[a.Result.AttemptID] || a.Result.TaskID == "" || a.StartedAt.IsZero() || a.UpdatedAt.Before(a.StartedAt) || len(a.Result.Stages) != len(initialStages()) {
 			return ErrRecordInvalid
 		}
@@ -277,7 +261,7 @@ func (s *FileStore) validate(r *TaskRecord) error {
 	for _, op := range r.Operations {
 		if op.External != nil {
 			e := op.External
-			if r.SchemaVersion != GeneralRecordSchema || op.Kind != "tool" || e.Validate() != nil || e.OperationID != op.Key || e.RequestDigest != op.ObjectRef || e.GrantBinding != op.TargetRef || e.OperationID != op.ReceiptRef {
+			if op.Kind != "tool" || e.Validate() != nil || e.OperationID != op.Key || e.RequestDigest != op.ObjectRef || e.GrantBinding != op.TargetRef || e.OperationID != op.ReceiptRef {
 				return ErrRecordInvalid
 			}
 			state := "unknown"
@@ -350,7 +334,7 @@ func (s *FileStore) Save(ctx context.Context, r *TaskRecord) error {
 		if err != nil {
 			return err
 		}
-		_, writeErr := f.WriteString(s.schema() + "\n")
+		_, writeErr := f.WriteString(RecordSchema + "\n")
 		err = errors.Join(writeErr, f.Sync(), f.Close(), syncDirectory(s.dir))
 		if err != nil {
 			return err

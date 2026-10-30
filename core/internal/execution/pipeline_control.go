@@ -43,7 +43,7 @@ func (s *Service) Continue(ctx context.Context, req Request, action, reviewer st
 	store := s.store
 	if store == nil {
 		var err error
-		store, err = NewGeneralFileStore(req.Task)
+		store, err = NewFileStore(req.Task)
 		if err != nil {
 			return result, pipelineError(InternalFailed, AdmissionPhase, err)
 		}
@@ -61,7 +61,7 @@ func (s *Service) Continue(ctx context.Context, req Request, action, reviewer st
 	if err != nil {
 		return result, pipelineError(InternalFailed, AdmissionPhase, err)
 	}
-	if record == nil || record.SchemaVersion != GeneralRecordSchema || len(record.Attempts) == 0 {
+	if record == nil || record.SchemaVersion != RecordSchema || len(record.Attempts) == 0 {
 		return result, pipelineError(AdmissionRejected, AdmissionPhase, errors.New("no general attempt is recorded"))
 	}
 	last := &record.Attempts[len(record.Attempts)-1]

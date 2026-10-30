@@ -8,7 +8,7 @@ import (
 	"sandx/internal/execution"
 )
 
-const executionStatusSchema = "sbx.execution-status/v1"
+const executionStatusSchema = "sbx.execution-status/v2"
 
 type executionStatus struct {
 	SchemaVersion string                `json:"schema_version"`
@@ -40,7 +40,7 @@ func (a *App) executionCmd() *cobra.Command {
 						return writeErr
 					}
 				}
-				return &execution.ExecutionError{Kind: execution.InternalFailed, Stage: "execution_record", Cause: fmt.Errorf("cannot verify execution record; inspect and reconcile it before running")}
+				return &execution.ExecutionError{Kind: execution.InternalFailed, Stage: "execution_record", Cause: fmt.Errorf("cannot verify execution record; inspect and reconcile it before running: %w", err)}
 			}
 			out := executionStatus{SchemaVersion: executionStatusSchema, Recovery: "not_recorded", Recorded: record != nil, Record: record}
 			if record != nil {

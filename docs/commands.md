@@ -122,8 +122,9 @@ git branch -D sbx/fix-login
 | `--net open\|allowlist` | 只影响本次，不写配置 |
 | `--proxy shared\|dedicated` | 只影响本次，不写配置；Task 建好之后换不了（见下文） |
 | `-p, --prompt <text>` | headless：不自动 attach（`-p -` 从 stdin 读） |
-| `--jsonl` | 仅 headless；内部执行事件，不等同公开 v1 协议 |
-| `--envelope <file\|->` | v1 headless 信封；字段、组合限制和退出码见 [自动化手册](automation.md) |
+| `--jsonl` | 仅 headless；统一 v2 执行事件 |
+| `--spec <file\|->` | 显式 v2 任务，与 `task run --spec` 共用提交路径 |
+| `--envelope <file\|->` | --spec 的别名，仅接受 v2 |
 
 `--base` 用在从某个历史提交或另一分支起步：`sbx run hotfix --base v1.2.0`。分支已存在时，`ls` 里的 AHEAD/DIFF 基准自动取它和 HEAD 的分叉点（merge-base）。
 
@@ -134,7 +135,7 @@ sbx execution status fix-login
 sbx execution status fix-login --json
 ```
 
-在当前仓库读取历次执行的持久化阶段、执行/清理/事件输出结果和恢复判断，不访问 Docker，不加载项目配置，也不要求 trust。JSON 使用独立的 `sbx.execution-status/v1`，不是 v1 任务事件。记录存于 `$SBX_HOME/executions/<repo-id>/<task>/`；`done/drop` 保留这些记录。阶段完成不表示测试或交付已完成，当前未实现阶段明确跳过。
+在当前仓库读取历次执行的持久化阶段、执行/清理/事件输出结果和恢复判断，不访问 Docker，不加载项目配置，也不要求 trust。JSON 使用独立的 `sbx.execution-status/v2`，不是任务事件。记录存于 `$SBX_HOME/executions/<repo-id>/<task>/`；`done/drop` 保留这些记录。阶段完成不表示测试或交付已完成，当前未实现阶段明确跳过。
 
 | recovery | 含义与后续动作 |
 |---|---|
@@ -159,7 +160,7 @@ sbx logs nightly -f -n 50               # 跟着看，先打最后 50 行
 
 `-p` 和交互模式的区别只有两点：**不自动 attach**，以及**跑完容器自己停掉**（底层仍使用 tmux）。
 
-- 人类输出模式前台等待完成后打印日志；agent 成功为 0，agent 非零返回一般错误 1，不透传原始 agent code。机器调用用 `--envelope`，非零 agent 对应进程码 5，原码在 result 中。成功不替代测试和代码审查，不据此自动合并。
+- 人类输出模式前台等待完成后打印日志；agent 成功为 0，agent 非零返回一般错误 1，不透传原始 agent code。仓库机器调用加 `--jsonl`，通用任务用 `--spec`，非零 agent 对应进程码 5，原码在 result 中。成功不替代测试和代码审查，不据此自动合并。
 - **跑完容器会停**：整夜铺十个任务时，跑完一个就释放一份内存和一个 `max_running` 名额。想进去看现场就 `sbx run <task>` 把它起回来，worktree、分支、`run.log` 都还在。
 - `sbx ls` 显示 `exited(0)`（或非 0 的码）。注意这是 **Agent 的**退出码，不是容器的，也不等于 sbx 的分类退出码。
 - 输出在 `~/.sbx/state/<ws>/<task>/run.log`，追加写，超过 10MB 轮转成 `run.log.1`；Claude 有运行分隔头，Codex 保留原生 JSONL 输出。`sbx logs` 读的就是这个文件，**所以容器停了照样看得到**。
@@ -169,9 +170,7 @@ sbx logs nightly -f -n 50               # 跟着看，先打最后 50 行
 
 ### 机器调用与执行结果
 
-公开入口是 `sbx version --json` → `sbx admit --envelope request.json` → `sbx run --envelope request.json`。`admit` 只读，不预留资源；run 重新准入。JSONL stdout 和诊断 stderr 分开，调用方同时核对进程码与 result。
-
-超时只在信封中通过 `timeout_seconds` 设置（0 无上限，最大 86400 秒），不是普通 run 的 flag；SIGINT/SIGTERM 取消会停止实际执行。失败回滚不删除工作树；恢复失败保护旧资源和 meta/会话状态。公开 v1 不自动交付产物。完整字段、分类码、交付失败和脚本注意事项见 [automation.md](automation.md)，正式使用验收见 [testing.md](testing.md)。
+公开入口是 `sbx version --json` → `sbx admit --spec task.json` → `sbx task run --spec task.json`（或 `sbx run --spec task.json`）。`admit` 只读、不预留资源；run 重新准入。机器输入、JSONL 事件和执行记录统一 v2。`--envelope` 仅保留为参数别名，旧 v1 输入明确拒绝。Git 便捷命令 `run <task> -p ... --jsonl` 保留 worktree，未声明验证或交付时不承诺业务完成。完整字段、分类码与旧记录迁移见 [automation.md](automation.md)。
 
 ### `sbx done <task>...`
 
@@ -406,14 +405,14 @@ sbx trust             # 确认这个仓库的 .sbx/ 内容（见下）
 | `run [task]` | `--agent claude\|codex` | default_agent（默认 claude） |
 | | `--base <ref>` | 当前 HEAD |
 | | `--jsonl` | false，需 -p |
-| | `--envelope <file\|->` | 无；与 run 任务参数/覆盖 flag 互斥 |
+| | `--spec <file\|->` / `--envelope <file\|->` | v2 任务；与 run 任务参数/覆盖 flag 互斥 |
 | | `-d, --detach` | false |
 | | `--fresh` | false（接上次对话） |
 | | `--net open\|allowlist` | 跟随配置 |
 | | `--proxy shared\|dedicated` | 跟随配置 |
 | | `--cloud-mcp` | false（云端 MCP 被拦；只能开不能关） |
 | | `-p, --prompt <text>` | 空（交互模式）；`-` 读 stdin |
-| `admit` | `--envelope <file\|->` | 必填；只读准入 |
+| `admit` | `--spec <file\|->` | 必填；只读准入；--envelope 是别名 |
 | `version` | `--json` | false |
 | `isolation status` | `--json` | false |
 | `isolation adopt` | 无 | 显式接管本人独占的旧 daemon |
@@ -1371,5 +1370,5 @@ VM 内存取自 `docker info` 的 `MemTotal`，Docker Desktop 下就是那台 VM
 - 上游代理只支持 http；只有 SOCKS 的宿主机代理需要你自己加一层转发（design §6.4）。
 - **Codex 已支持**：交互、headless、准确 session 恢复和 fresh；API key 仅支持 headless。宿主机 Codex 配置/skills/sessions 不会随 auth.json 导入。
 - **daemon 是用户隔离边界**：同 daemon 不支持不互信多用户；`[isolation]` 不可由项目/workspace 覆盖。
-- **v1 无产物交付**：agent 退出 0 不保证测试或提交已完成，分支仍需人工审查。
+- **Git 便捷入口不自动交付产物**：agent 退出 0 不保证测试或提交已完成；需要验证交付时使用显式 v2 任务。
 - 底层镜像必须是 Debian/Ubuntu 系（ADR 0007）。

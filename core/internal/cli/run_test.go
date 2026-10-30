@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"sandx/internal/config"
 	"sandx/internal/task"
 )
@@ -15,7 +16,7 @@ func TestRunEnvelopeRejectsConflictingFlagsAsProtocolError(t *testing.T) {
 	var out bytes.Buffer
 	a := &App{Out: &out, Err: &bytes.Buffer{}}
 	cmd := a.runCmd()
-	cmd.SetIn(strings.NewReader(`{"schema_version":"sbx.execution/v1","task_id":"ci-task","prompt":"go"}`))
+	cmd.SetIn(strings.NewReader(`{"schema_version":"sbx.execution/v2","task_id":"ci-task","prompt":"go","agent":{"provider":"codex"}}`))
 	cmd.SetArgs([]string{"--envelope", "-", "--detach"})
 	if err := cmd.Execute(); err == nil {
 		t.Fatal("expected conflicting flags to fail")
@@ -24,7 +25,7 @@ func TestRunEnvelopeRejectsConflictingFlagsAsProtocolError(t *testing.T) {
 	if err := json.Unmarshal(bytes.TrimSpace(out.Bytes()), &failure); err != nil {
 		t.Fatalf("expected protocol JSON failure: %v; output=%s", err, out.String())
 	}
-	if failure.ErrorCode != "invalid_envelope" {
+	if failure.ErrorCode != "invalid_task" {
 		t.Fatalf("unexpected failure code: %+v", failure)
 	}
 }
@@ -33,13 +34,13 @@ func TestRunEnvelopeRejectsPositionalTaskAsProtocolError(t *testing.T) {
 	var out bytes.Buffer
 	a := &App{Out: &out, Err: &bytes.Buffer{}}
 	cmd := a.runCmd()
-	cmd.SetIn(strings.NewReader(`{"schema_version":"sbx.execution/v1","task_id":"ci-task","prompt":"go"}`))
+	cmd.SetIn(strings.NewReader(`{"schema_version":"sbx.execution/v2","task_id":"ci-task","prompt":"go","agent":{"provider":"codex"}}`))
 	cmd.SetArgs([]string{"--envelope", "-", "unexpected"})
 	if err := cmd.Execute(); err == nil {
 		t.Fatal("expected positional task to fail")
 	}
 	var failure protocolFailure
-	if err := json.Unmarshal(bytes.TrimSpace(out.Bytes()), &failure); err != nil || failure.ErrorCode != "invalid_envelope" {
+	if err := json.Unmarshal(bytes.TrimSpace(out.Bytes()), &failure); err != nil || failure.ErrorCode != "invalid_task" {
 		t.Fatalf("expected machine-readable invalid envelope: %v: %s", err, out.String())
 	}
 }
@@ -89,13 +90,42 @@ func TestRunRejectsUnknownAgentBeforeLoadingWorkspace(t *testing.T) {
 func TestRunEnvelopeRejectsAgentOverride(t *testing.T) {
 	var out bytes.Buffer
 	cmd := (&App{Out: &out}).runCmd()
-	cmd.SetIn(strings.NewReader(`{"schema_version":"sbx.execution/v1","task_id":"test","prompt":"go"}`))
+	cmd.SetIn(strings.NewReader(`{"schema_version":"sbx.execution/v2","task_id":"test","prompt":"go","agent":{"provider":"codex"}}`))
 	cmd.SetArgs([]string{"--envelope", "-", "--agent", "codex"})
 	if err := cmd.Execute(); err == nil {
 		t.Fatal("accepted envelope provider override")
 	}
 	var failure protocolFailure
-	if err := json.Unmarshal(out.Bytes(), &failure); err != nil || failure.ErrorCode != "invalid_envelope" {
+	if err := json.Unmarshal(out.Bytes(), &failure); err != nil || failure.ErrorCode != "invalid_task" {
 		t.Fatalf("%s %v", out.String(), err)
+	}
+}
+
+func TestEveryTaskEntrypointRejectsV1BeforeLoading(t *testing.T) {
+	for _, args := range [][]string{{"run", "--spec", "-"}, {"run", "--envelope", "-"}, {"task", "run", "--spec", "-"}, {"admit", "--spec", "-"}} {
+		var out bytes.Buffer
+		a := &App{Out: &out, Err: &bytes.Buffer{}}
+		var cmd *cobra.Command
+		switch args[0] {
+		case "run":
+			cmd = a.runCmd()
+		case "task":
+			cmd = a.taskCmd()
+		case "admit":
+			cmd = a.admitCmd()
+		}
+		cmd.SetIn(strings.NewReader(`{"schema_version":"sbx.execution/v1","task_id":"old","prompt":"x"}`))
+		if args[0] == "task" {
+			a.In_ = cmd.InOrStdin()
+		}
+		cmd.SetArgs(args[1:])
+		err := cmd.Execute()
+		if err == nil || exitCode(err) != 2 {
+			t.Fatalf("%v: %v", args, err)
+		}
+		var record protocolFailure
+		if json.Unmarshal(out.Bytes(), &record) != nil || record.SchemaVersion != "sbx.execution/v2" || record.ErrorCode != "invalid_task" {
+			t.Fatalf("%v: %s", args, out.String())
+		}
 	}
 }

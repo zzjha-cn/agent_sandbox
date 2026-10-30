@@ -69,7 +69,27 @@ const (
 	Completed Disposition = "completed"
 )
 
+type WorkspaceKind string
+
+const (
+	RepositoryWorkspace WorkspaceKind = "repository"
+	WorktreeWorkspace   WorkspaceKind = "git_worktree"
+	CopyWorkspace       WorkspaceKind = "isolated_copy"
+)
+
+func (r Request) WorkspaceKind() WorkspaceKind {
+	if r.Task.ExecutionDir != "" {
+		return CopyWorkspace
+	}
+	if r.Task.IsMain() {
+		return RepositoryWorkspace
+	}
+	return WorktreeWorkspace
+}
+
 type Result struct {
+	Mode                 Mode            `json:"mode"`
+	WorkspaceKind        WorkspaceKind   `json:"workspace_kind"`
 	TaskID               string          `json:"task_id"`
 	AttemptID            string          `json:"attempt_id"`
 	State                State           `json:"state"`
@@ -154,8 +174,13 @@ func (NopEventSink) Emit(context.Context, Event) error { return nil }
 // JSONLSink serializes one event per line for machine consumers.
 type JSONLSink struct{ Encoder *json.Encoder }
 
-func NewJSONLSink(w io.Writer) *JSONLSink                      { return &JSONLSink{Encoder: json.NewEncoder(w)} }
-func (s *JSONLSink) Emit(_ context.Context, event Event) error { return s.Encoder.Encode(event) }
+func NewJSONLSink(w io.Writer) *JSONLSink { return &JSONLSink{Encoder: json.NewEncoder(w)} }
+func (s *JSONLSink) Emit(_ context.Context, event Event) error {
+	return s.Encoder.Encode(struct {
+		SchemaVersion string `json:"schema_version"`
+		Event
+	}{TaskInputSchema, event})
+}
 
 func newAttemptID() string {
 	var b [16]byte

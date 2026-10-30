@@ -316,7 +316,7 @@ What *cannot* be in that file, by design: anything that looks like a credential,
 
 ## Status
 
-**Claude Code and Codex are supported.** The execution refactor and v1 machine protocol are implemented. Available commands: `run / admit / version / isolation / attach / shell / stop / ls / path / done / drop / logs / port / net / memory / login / config / trust / prep / doctor / upgrade`.
+**Claude Code and Codex are supported.** The execution refactor and unified v2 execution protocol are implemented. Available commands: `run / admit / version / isolation / attach / shell / stop / ls / path / done / drop / logs / port / net / memory / login / config / trust / prep / doctor / upgrade`.
 
 Known limits: there is no `sbx merge`, remote artifact publishing or multi-user isolation on a shared daemon; local artifact delivery uses the separate `sbx task` entrypoint. A host proxy has to speak HTTP (SOCKS-only needs a shim of your own); base images have to be Debian or Ubuntu; a service or a forward is reached by its name, not `localhost`. See also [Deliberately not provided](#deliberately-not-provided).
 
@@ -333,7 +333,7 @@ make lint          # golangci-lint, falling back to go vet + gofmt
 make e2e           # legacy Claude acceptance; real model calls, requires Claude login
 ```
 
-For bounded automation, use `sbx version --json`, `sbx admit --envelope request.json`, then `sbx run --envelope request.json` from the target repository. The envelope takes its provider from configuration; it cannot be combined with `--agent`. See [automation](docs/automation.md) for schema, timeout, cancellation and exit codes, and [testing](docs/testing.md) for formal manual acceptance and test prerequisites.
+For automation, use `sbx version --json`, `sbx admit --spec task.json`, then `sbx task run --spec task.json` (or `sbx run --spec`). TaskSpec selects the provider explicitly. Git and interactive commands remain available; v1 input is retired. See [automation and migration](docs/automation.md) and [architecture convergence](docs/architecture-convergence.md).
 
 Add `-v / --verbose` to print every docker and git command as it runs.
 

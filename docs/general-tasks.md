@@ -1,6 +1,6 @@
 # 通用任务：输入、验证与本地交付
 
-`sbx task` 是通用任务的显式 v2 入口，在 Git 仓库之外也能使用。支持同步 headless Claude/Codex、Git revision/文件副本/空输入、稳定产物、独立验证与本地目录/Git 交付。G5 的运行期只读工具见 [动态工具规范](dynamic-tools.md)，G6 的预先声明写操作、回执核对与业务状态验证见 [外部操作规范](external-operations.md)。旧 `sbx run`、`sbx run --envelope` 继续采用原有 Git/v1 契约。远端产物发布、组织策略与 G7 完整协议发布仍在后续阶段。
+`sbx task` 是通用任务的显式 v2 入口，在 Git 仓库之外也能使用。支持同步 headless Claude/Codex、Git revision/文件副本/空输入、稳定产物、独立验证与本地目录/Git 交付。G5 的运行期只读工具见 [动态工具规范](dynamic-tools.md)，G6 的预先声明写操作、回执核对与业务状态验证见 [外部操作规范](external-operations.md)。`sbx run` 保留 Git/交互入口；`sbx run --spec` 与 `sbx task run --spec` 共用提交路径。机器输入/事件和执行记录已统一为 v2，`--envelope` 仅是参数别名，v1 输入被拒绝，见 [自动化与迁移](automation.md)。远端产物发布、组织策略与 G7 完整协议发布仍在后续阶段。
 
 ## 1. 可信注册表与任务声明
 
@@ -77,13 +77,13 @@ sbx task approve --spec report-task.json --reviewer operator-name
 - `files` 可注册目录或单个文件，始终复制到隔离工作区，不直接写回源目录。单文件以原文件名进入工作区，注册的 include 也相对该文件所在目录。
 - `git` 注册仓库路径；`source.revision` 固定提交/引用，省略时解析 HEAD 并记录实际提交。默认只读取提交中的原始 blob，不受 archive 的 export-ignore/export-subst 改写；不复制 `.git`。
 - Git 的 `source.working_tree=true` 显式选择已跟踪工作树内容，`source.untracked=true` 再加入未被 Git 忽略的未跟踪文件；注册项须分别允许 `allow_working_tree`、`allow_untracked`。工作树选择要求 revision 等于 HEAD。选中的链接、特殊文件和 submodule 拒绝准备；需作为单独受支持输入注册。
-- 省略 source 准备空目录，不执行 git init。旧 v1 的省略输入仍表示当前 Git 仓库。
+- 省略 source 准备空目录，不执行 git init。Git 便捷命令 `sbx run <task>` 仍选择当前仓库/worktree；这是独立的工作区选择语义。
 - include 支持相对文件、目录前缀和 glob；`**` 可匹配多层。可信选择范围是上限，任务 include 只能在此范围内筛选。拒绝绝对路径、`..`、反斜线和非法模式。
 - 默认输入/产物各 64 MiB、10000 个文件、单文件 16 MiB。操作者可用 `[input_limits]`、`[artifact_limits]` 的 `bytes/files/file_bytes` 调整。任务无法放宽这些限制。
 - `.git`、`.sbx`、`.ssh`、`.aws`、`.claude`、`.codex`、`.env`/`.env.*`、`auth.json`、`credentials.json` 不进入副本/产物；可信注册表还可增加 exclude。
 - 准备保存清单、内容摘要、实际 revision、授权绑定及基线。后续 run 会比较源身份、内容、revision 和授权；变化要求新任务，不能静默更换输入或覆盖旧工作区。每次 run 仍是新 attempt，不是 prompt 幂等重放。
 
-通用任务的工作目录在 `$SBX_HOME/workspaces/tasks/<task>`，执行记录在 `executions/tasks/<task>`，稳定快照在 `artifacts/tasks/<task>`；内部记录使用 `sbx.execution-record/v2`。旧 Git/v1 记录保持 v1，不自动改写；旧记录读取器拒绝新记录，没有跨 schema 的隐式降级或同名导入。
+通用任务的工作目录在 `$SBX_HOME/workspaces/tasks/<task>`，执行记录在 `executions/tasks/<task>`，稳定快照在 `artifacts/tasks/<task>`；内部记录使用 `sbx.execution-record/v2`。Git 便捷任务也使用相同 v2 记录实现。旧 v1 记录保留原样并拒绝继续，不做隐式升级；开发期迁移步骤见 [自动化手册](automation.md)。
 
 ## 3. 产物与验证
 

@@ -11,7 +11,6 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -29,14 +28,11 @@ import (
 
 // runOpts 是一次 sbx run 的选项。
 type runOpts struct {
-	Base     string
-	Detach   bool
-	Fresh    bool
-	Prompt   string // 非空 = headless（M3-7）
-	JSONL    bool
-	Protocol bool
-	Timeout  time.Duration
-	TaskID   string
+	Base   string
+	Detach bool
+	Fresh  bool
+	Prompt string // 非空 = headless（M3-7）
+	JSONL  bool
 }
 
 // headless 报告这次是不是 headless 运行。
@@ -50,22 +46,26 @@ func (a *App) runCmd() *cobra.Command {
 		Short: "Create or resume a task and start the agent in its sandbox (omit task for main)",
 		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if cmd.Flags().Changed("spec") && cmd.Flags().Changed("envelope") {
+				return a.writeProtocolFailure(&protocol.CodedError{Code: "invalid_task", Err: errors.New("choose --spec only")})
+			}
+			if (cmd.Flags().Changed("spec") || cmd.Flags().Changed("envelope")) && envelopePath == "" {
+				return a.writeProtocolFailure(&protocol.CodedError{Code: "invalid_task", Err: errors.New("--spec must name a file or -")})
+			}
 			if envelopePath != "" {
-				env, err := readEnvelope(cmd, envelopePath)
+				for _, flag := range []string{"prompt", "base", "fresh", "jsonl", "detach", "net", "proxy", "cloud-mcp", "agent"} {
+					if cmd.Flags().Changed(flag) {
+						return a.writeProtocolFailure(&protocol.CodedError{Code: "invalid_task", Err: fmt.Errorf("--spec cannot be combined with --%s", flag)})
+					}
+				}
+				if len(args) != 0 {
+					return a.writeProtocolFailure(&protocol.CodedError{Code: "invalid_task", Err: errors.New("--spec accepts no positional task")})
+				}
+				spec, err := readEnvelope(cmd, envelopePath)
 				if err != nil {
 					return a.writeProtocolFailure(err)
 				}
-				if len(args) != 0 || cmd.Flags().Changed("prompt") || cmd.Flags().Changed("base") || cmd.Flags().Changed("fresh") || cmd.Flags().Changed("jsonl") || cmd.Flags().Changed("detach") || cmd.Flags().Changed("net") || cmd.Flags().Changed("proxy") || cmd.Flags().Changed("cloud-mcp") || cmd.Flags().Changed("agent") {
-					err = &protocol.CodedError{Code: "invalid_envelope", Err: fmt.Errorf("--envelope cannot be combined with task arguments or run override flags")}
-					return a.writeProtocolFailure(err)
-				}
-				t, err := a.loadEnvelopeTask(env)
-				if err != nil {
-					return a.writeProtocolFailure(err)
-				}
-				runCtx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
-				defer stop()
-				return a.run(runCtx, t, runOpts{Base: env.Base, Fresh: env.Fresh, Prompt: env.Prompt, JSONL: true, Protocol: true, Timeout: time.Duration(env.TimeoutSeconds) * time.Second, TaskID: env.TaskID})
+				return a.submitTask(cmd.Context(), spec, "run", "")
 			}
 			if err := cobra.MaximumNArgs(1)(cmd, args); err != nil {
 				return err
@@ -129,7 +129,8 @@ func (a *App) runCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&prompt, "prompt", "p", "", "headless: run this prompt and exit instead of opening the session (\"-\" reads stdin)")
 	cmd.Flags().BoolVar(&cloudMCP, "cloud-mcp", false, "let this task reach Claude's cloud connectors (off by default; see ADR 0015)")
 	cmd.Flags().BoolVar(&jsonl, "jsonl", false, "write machine-readable execution events and result to stdout (headless only)")
-	cmd.Flags().StringVar(&envelopePath, "envelope", "", "run a versioned JSON envelope from a file or '-' for stdin")
+	cmd.Flags().StringVar(&envelopePath, "envelope", "", "alias for --spec; accepts v2 tasks only")
+	cmd.Flags().StringVar(&envelopePath, "spec", "", "run a v2 task from a file or - for stdin")
 	return cmd
 }
 
@@ -159,15 +160,11 @@ func (a *App) run(ctx context.Context, t task.Task, o runOpts) error {
 	if o.JSONL && !o.headless() {
 		return fmt.Errorf("--jsonl requires --prompt")
 	}
-	req := execution.Request{Task: t, TaskID: o.TaskID, Mode: execution.Interactive, Prompt: o.Prompt, Base: o.Base, Fresh: o.Fresh, Detach: o.Detach, Config: a.Cfg}
+	req := execution.Request{Task: t, Mode: execution.Interactive, Prompt: o.Prompt, Base: o.Base, Fresh: o.Fresh, Detach: o.Detach, Config: a.Cfg}
 	if o.headless() {
 		req.Mode = execution.Headless
 	}
-	if o.Timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, o.Timeout)
-		defer cancel()
-	}
+
 	runApp := *a
 	if o.JSONL {
 		runApp.Out = a.Err
@@ -178,9 +175,7 @@ func (a *App) run(ctx context.Context, t task.Task, o runOpts) error {
 	}()
 	driver := runApp.executionDriver()
 	var service *execution.Service
-	if o.Protocol {
-		service = execution.NewService(driver, protocol.NewEventSink(a.Out))
-	} else if o.JSONL {
+	if o.JSONL {
 		service = execution.NewService(driver, execution.NewJSONLSink(a.Out))
 	} else {
 		service = execution.NewService(driver)

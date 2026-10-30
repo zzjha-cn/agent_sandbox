@@ -18,11 +18,10 @@ import (
 	"sandx/internal/workspace"
 )
 
-const GeneralRecordSchema = "sbx.execution-record/v2"
 const TaskInputSchema = "sbx.execution/v2"
 
-// TaskSpec is the staged general-task entrypoint. The execution/v1 envelope
-// remains a separate decoder and protocol projection.
+// TaskSpec is the single machine-facing task contract. Git convenience
+// commands adapt their workspace/session choices directly to Request.
 type TaskSpec struct {
 	SchemaVersion string            `json:"schema_version"`
 	TaskID        string            `json:"task_id"`
@@ -129,7 +128,7 @@ func contentBinding(value any) string {
 
 func (spec TaskSpec) ValidateInput() error {
 	if spec.SchemaVersion != TaskInputSchema {
-		return errors.New("unsupported general task schema")
+		return errors.New("only sbx.execution/v2 is supported; migrate v1 envelopes to a v2 TaskSpec (see docs/automation.md)")
 	}
 	if err := workspace.ValidateTaskName(spec.TaskID); err != nil {
 		return err
@@ -223,21 +222,6 @@ func (p PipelinePlan) Validate() error {
 	spec := p.Spec
 	if err := spec.ValidateInput(); err != nil {
 		return err
-	}
-	if spec.SchemaVersion != TaskInputSchema {
-		return errors.New("unsupported general task schema")
-	}
-	if err := workspace.ValidateTaskName(spec.TaskID); err != nil {
-		return err
-	}
-	if strings.TrimSpace(spec.Prompt) == "" || !utf8.ValidString(spec.Prompt) {
-		return errors.New("a nonempty UTF-8 task prompt is required")
-	}
-	if spec.Agent.Provider != "claude" && spec.Agent.Provider != "codex" {
-		return errors.New("unsupported agent provider")
-	}
-	if spec.Limits.TimeoutSeconds < 0 || spec.Limits.TimeoutSeconds > 86400 {
-		return errors.New("timeout_seconds must be between 0 and 86400")
 	}
 	if err := p.Policy.InputLimits.Validate(); err != nil {
 		return err

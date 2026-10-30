@@ -26,7 +26,7 @@ func crashPipelineRequest(t *testing.T, home string) (Request, *FileStore) {
 	policy.Sinks = map[string]SinkGrant{"target": {Kind: "local_directory", Path: filepath.Join(home, "published")}}
 	req := Request{Task: tsk, TaskID: "report", Mode: Headless, Prompt: spec.Prompt, Config: config.Default(), Pipeline: &PipelinePlan{Spec: spec, Policy: policy}}
 	req.Config.DefaultAgent = "codex"
-	store, err := NewGeneralFileStore(tsk)
+	store, err := NewFileStore(tsk)
 	if err != nil {
 		t.Fatal(err)
 	}

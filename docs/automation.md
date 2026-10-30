@@ -1,113 +1,102 @@
-# 自动化调用与 v1 执行协议
+# 自动化与统一执行协议
 
-G2–G4 的通用入口 `sbx task run/verify/approve/reject/deliver/status/prune` 及 `sbx.execution/v2` 的当前子集见 [通用任务手册](general-tasks.md)。它使用独立的任务命名空间和 v2 内部记录；本页 v1 字段、事件投影与 `artifact_delivery=none` 的能力承诺保持不变。G7 再做完整发布与综合验收。
+2026-10-30：开发阶段收敛后，机器任务输入、JSONL 事件与执行记录统一使用 v2。`sbx.execution/v1` 输入已停止支持。简单 Git/交互式命令继续保留，内部共用 `execution.Service`；完整能力/schema 发布、迁移工具与组织治理仍属于 G7/G8。
 
-适用于脚本、CI 或外部调度器。日常交互见 [命令手册](commands.md)，正式测试见 [测试指南](testing.md)。sbx 当前是一次性本地 CLI；调用方准备仓库和配置，不需要常驻 worker 或 master。
+## 选择入口
 
-## 选择调用方式
-
-| 方式 | 用途 | stdout / 退出码 |
+| 用途 | 命令 | 工作区与完成语义 |
 |---|---|---|
-| `sbx run --agent codex t -p "..."` | 人工使用的 headless 命令 | provider 日志；agent 成功为 0，非零通常返回一般错误 1，不透传原始 agent code |
-| `sbx run --agent codex t -p "..." --jsonl` | 本地内部事件调试 | 内部 JSONL，不承诺公开 v1 schema；agent 非零归进程码 5 |
-| `sbx run --envelope request.json` | 稳定机器契约 | `sbx.execution/v1` JSONL；分类退出码见下表 |
+| 交互式代码会话 | `sbx run fix-login` | 保留 Git worktree/分支；省略任务名使用 main 仓库目录 |
+| 仓库内一次性 headless | `sbx run fix-login -p "修复问题" --jsonl` | 保留 Git 工作区语义；输出统一 v2 事件，不自动声明产物验证或交付 |
+| 显式通用任务 | `sbx task run --spec task.json` | 按可信 Source 准备隔离副本，执行判据与 Sink |
+| 显式任务的便捷入口 | `sbx run --spec task.json` | 与 `task run --spec` 使用相同提交函数、超时、事件及执行流程 |
+| 只读准入 | `sbx admit --spec task.json` | 检查任务/策略、provider 能力、记录恢复门禁和 runtime 准入，不预留资源 |
 
-`--jsonl` 不是 `--envelope` 的别名。需要兼容协议或墙钟超时，应使用 envelope；普通 run 当前没有 `--timeout` 参数。
-
-## 准备与能力发现
-
-在目标 Git 仓库内执行，使用同一个 sbx 二进制：
-
-```bash
-sbx --version
-sbx version --json > capabilities.json
-sbx isolation status --json
-sbx config show
-sbx trust --show
-```
-
-先完成所需的 `sbx trust`、daemon 旧卷接管及 provider 登录。`admit` 和 `run` 不会代替人批准项目配置。若旧卷尚未接管，确认独占该 daemon 后再执行 `sbx isolation adopt`。
-
-v1 从有效配置的顶层 `default_agent` 选择 provider，默认 `claude`。使用 Codex 时，先在个人全局或该仓库的个人 workspace 配置中设 `default_agent = "codex"`。`--envelope` 不接受 `--agent`，也不接受 envelope 中的 `agent` 字段。
-
-```toml
-# 个人全局配置或该仓库的个人 workspace 配置；必须在文件顶层
-default_agent = "codex"
-```
-
-`version --json` 返回 `schema_version`、`application_version`、`providers`、`capabilities`、`max_timeout_seconds`、`envelope_schema` 和 `artifact_delivery`。调用方应确认支持目标版本与所需 capability；新增响应字段可以忽略，破坏性契约变化需要新版本。
+`run/admit --envelope` 仅保留为 `--spec` 的参数别名，接受同一个 v2 TaskSpec，不再选择 v1 流程。`run --spec` 不允许位置任务名或 `--prompt/--base/--fresh/--jsonl/--detach/--net/--proxy/--cloud-mcp/--agent` 覆盖；provider 由 TaskSpec 明确选择。
 
 ## 提交任务
 
-以下文件的仓库由命令的工作目录决定，不是 JSON 中的路径：
+操作者先在 `$SBX_HOME/execution-policy.toml` 注册 Source、判据、Sink 和所需服务授权，具体可复制示例见 [通用任务规范](general-tasks.md)。例如，注册好 input、report 和 reports 后：
 
 ```json
 {
-  "schema_version": "sbx.execution/v1",
-  "task_id": "formal-smoke",
-  "prompt": "修复约定的问题，运行项目测试，检查差异并提交到当前分支。不要合并或推送。",
-  "fresh": false,
-  "timeout_seconds": 300
+  "schema_version": "sbx.execution/v2",
+  "task_id": "monthly-report",
+  "prompt": "读取输入，生成包含 rows 和 total 的 report.json。",
+  "agent": {"provider": "codex"},
+  "source": {"kind": "files", "ref": "input"},
+  "outputs": {"include": ["report.json"]},
+  "criteria": [{"id": "report", "kind": "files", "ref": "report"}],
+  "sink": {
+    "kind": "local_directory",
+    "target_ref": "reports",
+    "delivery_key": "monthly-report-001"
+  },
+  "limits": {"timeout_seconds": 300}
 }
 ```
 
-保存为 `request.json`，然后执行：
-
 ```bash
-sbx admit --envelope request.json > admission.json
-sbx run --envelope request.json > events.jsonl 2> diagnostics.log
+sbx version --json
+sbx admit --spec task.json > admission.json
+sbx task run --spec task.json > events.jsonl 2> diagnostics.log
+# 等价提交入口：sbx run --spec task.json
+sbx task status monthly-report --json
 ```
 
-也可以 `sbx run --envelope - < request.json`。`admit` 只检查配置、信任和当前准入状态，不创建 worktree、容器、卷或 daemon 归属记录，也不预留资源；两次命令之间状态可以变化，所以 run 仍会重新检查。
+显式任务无需当前目录是 Git 仓库。省略 source 代表空工作区，不代表当前仓库；需要仓库内容时注册 Git Source。`admit` 不创建工作区、容器、执行记录或 daemon 归属记录；它不是完整源文件预扫描或未来执行保证，run 会在锁和各阶段内重新检查。
 
-| 字段 | 约束 |
-|---|---|
-| `schema_version` | 必填，严格为 `sbx.execution/v1` |
-| `task_id` | 必填，`^[a-z0-9][a-z0-9-]{0,39}$`；同一 Workspace 内的稳定 Task 名，`main` 直接使用仓库根 |
-| `prompt` | 必填，非空字符串；通过生成文件交给 provider，不进入启动命令参数 |
-| `base` | 可选，首次创建分支的起点；已有容器时忽略并提示 |
-| `fresh` | 可选，默认 false；启动新一轮会话时不续接旧对话，不重建容器 |
-| `timeout_seconds` | 可选，0 或省略表示无墙钟上限；1～86400 秒为本次 attempt 设置截止时间 |
+任务是单个 UTF-8 JSON 对象，最多 1 MiB。顶层与嵌套对象均拒绝未知字段、重复字段、大小写别名、null 和尾随 JSON。可选字段应省略；`criteria` 省略与显式空数组的语义仍不同。`limits.timeout_seconds` 为 0～86400 的整数值，支持精确表示整数的 `1.0`、`1e2`；0 或省略表示不额外设置截止时间。
 
-输入为一个 UTF-8 JSON 对象，总大小至多 1 MiB。未知字段、重复字段、大小写别名、`null` 和尾随第二个 JSON 对象均拒绝。超时值需是范围内的整数，JSON 的 `1.0`、`1e2` 也按整数值解析。
+`version --json` 提供当前 schema、应用版本、providers、capabilities、本地交付类型和最大超时。旧 `envelope_schema` 已移除；本轮不宣称发布了完整 JSON Schema 或兼容协商机制。
 
-envelope 不可与位置参数或 `--prompt`、`--base`、`--fresh`、`--jsonl`、`--detach`、`--net`、`--proxy`、`--cloud-mcp`、`--agent` 混用。网络、认证和资源策略来自本地配置，而不是信封中的任意覆盖。
+## 事件与结果
 
-同一个 Task 不能同时提交两个 headless attempt；活动执行会被拒绝。重试不是幂等重放，可能重复执行工具和外部操作；由调用方决定是否重试。Codex 的恢复按当前 Task 记录的 session ID，不能借 `--agent` 改换已有 Task 的 provider。
+所有机器执行事件由同一个 JSONL sink 输出，每行带 `schema_version="sbx.execution/v2"`，包含 task/attempt 身份和安全的阶段元数据。stdout 与 stderr 分开消费，避免将 provider 日志当成协议事件。
 
-## 读取结果与错误
+最终 `result` 保留全部结果维度：执行、验证、产物交付、事件交付、清理和阶段状态；新增 `mode` 与 `workspace_kind`，显式区分 interactive/headless 和 repository/git_worktree/isolated_copy。Git 便捷命令没有声明产物判据时，验证和交付为 not_requested，不能据 agent 成功推导业务完成。
 
-stdout 每行是一个 v1 JSON 对象；stderr 是诊断。不要合并两个流后再当 JSON 解析，也不要用人类提示文案判断状态。执行事件以 `task_id`、`attempt_id` 关联，重复运行同一 Task 会得到新的 attempt ID。
-
-正常执行收尾记录包含 `result`。成功必须同时满足进程退出 0、`result.state = "finished"`、`agent_exit_code = 0`；事件名 `completed` 本身不代表成功。读取 `artifact_state`、`cleanup_state`，不要从单个 agent code 推导全部结果。
+内部阶段错误可携带更具体的 stage；不再使用旧 v1 的有损阶段/结果投影。调用方应依据 error_kind、结果维度和进程退出码判断，不依赖人类日志或仅看 completed 事件。
 
 | 进程码 | 含义 |
 |---|---|
-| 0 | 执行成功；version/admit 成功也返回 0，但不是一次已完成的 agent 执行 |
-| 2 | 信封输入或版本无效 |
-| 3 | 准入拒绝，如活动 Task、并发限制、daemon owner/namespace 不符 |
-| 4 | 环境/runner/agent 启动失败；原始 `agent_exit_code` 未必存在 |
-| 5 | agent 运行结束且非零；原码在 `result.agent_exit_code` |
-| 6 | 结果或事件交付失败 |
-| 7 | 内部执行错误 |
-| 124 | 超时 |
-| 130 | 取消（SIGINT 或 SIGTERM） |
+| 0 | 当前命令成功；version/admit 的成功不表示任务已执行 |
+| 2 | 任务输入/版本无效 |
+| 3 | 准入或授权拒绝 |
+| 4 | 环境、启动或验证设施故障 |
+| 5 | 机器输出模式下 agent 非零退出，原码保存在结果中 |
+| 6 | 事件/响应输出失败 |
+| 7 | 内部错误、执行记录损坏或不兼容 |
+| 8 | 完成判据不通过 |
+| 9 | 等待人工判断 |
+| 10 | 产物交付失败 |
+| 11 | 外部操作结果未知 |
+| 124 / 130 | 超时 / 取消 |
 
-输入、加载配置或信任等早期失败可能只有 `type=failed`、`error_code` 的响应，没有 attempt ID 或 `result`。调用方必须同时处理早期失败、终态结果及进程码。其他 CLI 语法/一般错误仍可能是 1；不能把所有 sbx 命令都按上表解释。
+普通人类 Git headless 模式的 agent 非零仍按一般 CLI 错误返回 1；机器集成使用 --jsonl 或显式任务。输入及策略等早期错误可能只有 failed/error_code，没有 attempt 或 result。流程已经开始的失败可能输出多行事件，调用方必须逐行解析。进程码、终态事件及持久化记录需要共同核对。
 
-结果中的 `cleanup_state` 为 `not_needed`、`complete` 或 `failed`。清理失败保留原执行分类，详细资源错误在 stderr，不能因为最终 JSON 可解析就视为清理成功。超时/取消会用独立的有界 cleanup context 停止实际执行；创建失败回滚本次拥有的资源、保留 worktree，恢复失败保护旧 Task 状态。全局身份/cache/mise 和归属卷按设计保留。
+## 恢复与副作用
 
-v1 声明 `artifact_delivery = "none"`、`artifact_state = "not_produced"`：成功表示 agent 执行成功，不保证有提交、测试通过或自动导出产物。代码结果仍由调用方审查 worktree 和分支，sbx 不自动 merge/push。
+```bash
+sbx task verify --spec task.json
+sbx task deliver --spec task.json
+sbx task reconcile --spec task.json
+sbx execution status fix-login --json  # 仓库便捷任务
+```
 
-## 超时、取消和日志保存
+verify/deliver/reconcile 不重新提交 prompt。外部写结果未知时先查询，禁止自动重发或用新 attempt 绕过；动态读取与声明式写入分别见 [G5](dynamic-tools.md) 和 [G6](external-operations.md)。取消不等于远端回滚。
 
-- 为无人值守请求显式设置 `timeout_seconds`，包括环境准备和执行时间；预留清理时间，进程可能在截止时间之后才返回。
-- 调用方并发排空 stdout/stderr，设置比 sbx 截止时间更长的外部 watchdog。watchdog 先发 SIGTERM，等待退出和清理，最后才考虑强制终止；仅杀死宿主 CLI 不能证明容器和工具已经停止。
-- 完全关闭 stdout 管道可能得到 OS SIGPIPE，无法保证还能补发 JSON 或固定退出 6；缺失终态记录应归为交付未确认，并检查 Task 实际状态。
-- 保存请求、二进制版本、配置摘要、完整 stdout/stderr、进程码、最终结果及 `sbx ls`/分支检查。prompt、provider 日志和诊断可能包含业务内容，应按业务数据保存；不要导出认证文件或完整容器环境。
+Git 和通用任务统一由同一 FileStore 读写 `sbx.execution-record/v2`；工作区和记录目录仍按任务身份隔离，不因为统一格式而把两种任务合并。Git status 使用 `sbx.execution-status/v2`，通用任务 status 使用 `sbx.task-status/v2`，后者还包含工具审计。
 
-## 中断后的持久化状态
+## 开发期迁移
 
-`sbx execution status <task> --json` 提供独立的 `sbx.execution-status/v1` 查询。G1 为现有 Git 路径保存阶段意图、结果与历次 attempt，不保存 prompt、凭据或原始错误；事件输出失败不会抹去已记录的执行事实。它不改变 v1 的产物承诺，也不发布尚未实现的 v2。
+这是主动采用的不兼容变更，不提供 v1 隐式升级或降级：
 
-上次进程在准备资源时被强制终止、清理失败或关键记录损坏，会阻断新 run，需先核对。执行阶段中断或交互/后台交接会提示检查 runtime；显式新 run 仍走 inspect/admit，不能把它当作自动重放旧 prompt。状态查询及各 recovery 值见 [命令手册](commands.md)。记录在 `done/drop` 后保留，单任务历史文件上限 32 MiB；达到上限时拒绝追加，保留原历史，可使用新任务名继续独立工作。
+1. v1 输入改为 v2，明确 agent、source、criteria 与交付选择；顶层 timeout_seconds 移到 limits。base/fresh 属于 Git 便捷命令选项，不能机械塞进 v2 TaskSpec。
+2. 原调用方若依赖当前仓库/worktree，使用 `run <task> -p ... --jsonl`；需要稳定产物和验证交付则注册 Git Source，改用显式任务。
+3. 旧 v1 磁盘记录保留原样，新二进制读取时报不兼容并阻断执行。使用旧二进制核对原 SBX_HOME 的未决操作/资源后，选择新的 SBX_HOME 重新配置并登录；本轮不自动复制身份、迁移记录或删除历史。
+4. 已有 v2 通用记录可继续读取；旧记录未保存的 mode/workspace_kind 可能为空，不伪造历史事实。
+
+新目录代表独立任务身份，不能用它重复提交旧 home 中结果未知的业务操作。保留原 home、旧二进制和回执直到核对完成。服务端写入没有通用 Undo。
+
+收敛实现与本轮验收见 [架构收敛记录](architecture-convergence.md)。
