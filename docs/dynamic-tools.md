@@ -1,8 +1,8 @@
-# G5：运行期只读工具
+# 运行期只读工具
 
-通用 v2 任务可声明 `tools`。Claude/Codex 在运行期通过 MCP 发现并调用被选中的只读工具；宿主网关逐次检查可信 grant、目标与字段，代用服务凭据。工具调用不再限于 G6 的 agent 结束后声明式操作。
+通用 v2 任务可声明 `tools`。Claude/Codex 在运行期通过 MCP 发现并调用被选中的只读工具；宿主网关逐次检查可信 grant、目标与字段，代用服务凭据。运行期只读查询与 Agent 结束后由宿主提交的声明式业务写入采用不同入口。
 
-首批只提供 `records.get`。外部写入仍使用 [G6 operations](external-operations.md)，不通过这条入口自动开放写工具。Git 便捷入口、无 tools 的任务与交互式会话保留工作区/会话行为；机器协议已统一 v2，不再接受 v1 输入。当前工具入口要求同步 headless、dedicated Task proxy，以及明确固定的 provider 版本；shared proxy、交互/detach 或不支持的 provider/version 在资源准备前拒绝。
+首批只提供 `records.get`。外部写入仍使用 [声明式 operations](commands.md#外部写入与核对)，不通过这条入口自动开放写工具。Git 便捷入口、无 tools 的任务与交互式会话保留工作区/会话行为；机器协议已统一 v2，不再接受 v1 输入。当前工具入口要求同步 headless、dedicated Task proxy，以及明确固定的 provider 版本；shared proxy、交互/detach 或不支持的 provider/version 在资源准备前拒绝。
 
 ## 1. 可信授权与任务需求
 

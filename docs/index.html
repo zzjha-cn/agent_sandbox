@@ -227,6 +227,20 @@ footer code{font-size:12.5px}
   .clock{padding-top:0}
 }
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+/* Wiki additions follow the original typography, rail and surface palette. */
+[hidden]{display:none!important}#home{min-width:0;overflow-x:hidden}.wiki-map text{fill:var(--ink);font-family:var(--font-body)}.wiki-map .d-m{fill:var(--muted);font-size:12px}
+.reader-layout{display:grid;grid-template-columns:200px minmax(0,1fr);gap:28px}.toc{position:sticky;top:76px;align-self:start;max-height:78vh;overflow:auto;font-size:12.5px}.toc a{display:block;margin:8px 0;color:var(--muted);text-decoration:none}.toc a:hover{color:var(--accent)}
+.toolbar{display:flex;align-items:center;gap:18px;flex-wrap:wrap;margin-bottom:28px;font-size:13px}.toolbar input{background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:var(--r);font:inherit;padding:8px 10px}
+.reader-content{min-width:0;overflow-wrap:anywhere}.reader-content h1{font-family:var(--font-display);font-size:32px;line-height:1.3;margin-bottom:22px}.reader-content h2{margin:36px 0 18px;font-size:24px}.reader-content h3{margin-top:28px}.reader-content h1,.reader-content h2,.reader-content h3{scroll-margin-top:76px}.reader-content p,.reader-content li{font-size:14.5px}.reader-content pre{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px;overflow:auto;font-size:12.5px;line-height:1.7}.reader-content code{font-size:.9em}.reader-content blockquote{margin-left:0;border-left:2px solid var(--accent);padding-left:16px;color:var(--muted)}.table-wrap{overflow:auto}.reader-content table{width:100%;border-collapse:collapse;font-size:13px}.reader-content th,.reader-content td{padding:10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}.reader-content th{background:var(--surface-2)}
+@media(max-width:760px){.reader-layout{grid-template-columns:1fr}.toc{position:static;max-height:180px;border-bottom:1px solid var(--line);padding-bottom:16px}.toolbar input{width:100%}}
+
+/* Three-column scenario selector uses the original surface and terminal palette. */
+.scenario-picker{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));border:1px solid var(--line);border-radius:var(--r);overflow:hidden;margin:0 0 14px;background:var(--surface)}
+.scenario-picker button{appearance:none;border:0;border-right:1px solid var(--line);border-radius:0;background:var(--surface);color:var(--ink);text-align:left;font-family:var(--font-body);padding:20px 18px;cursor:pointer;position:relative;min-width:0;transition:background .15s ease}
+.scenario-picker button:last-child{border-right:0}.scenario-picker button:hover{background:var(--surface-2)}.scenario-picker button[aria-selected="true"]{background:var(--accent-soft);box-shadow:inset 0 -3px 0 var(--accent)}.scenario-picker button:focus-visible{outline:2px solid var(--accent);outline-offset:-4px;z-index:1}
+.scenario-k,.scenario-title,.scenario-summary{display:block}.scenario-k{font-family:var(--font-mono);font-size:10px;color:var(--accent);letter-spacing:.06em}.scenario-title{font-size:17px;font-weight:600;margin:8px 0}.scenario-summary{font-size:12.5px;color:var(--muted);line-height:1.6}.scenario-hint{color:var(--muted);font-size:12.5px;margin:0 0 28px}.scenario-panel:focus-visible{outline:2px solid var(--accent);outline-offset:5px}
+@media(max-width:620px){.scenario-picker button{padding:14px 9px}.scenario-title{font-size:12px;overflow-wrap:anywhere;margin:6px 0}.scenario-k{font-size:8px;letter-spacing:0;overflow-wrap:anywhere}.scenario-summary{display:none}.scenario-hint{font-size:12px}}
 </style>
 </head>
 <body>
@@ -237,21 +251,22 @@ footer code{font-size:12.5px}
     <nav>
       <a href="#cli">How it works</a>
       <a href="#architecture">Architecture</a>
-      <a href="https://github.com/zzjha-cn/agent_sandbox/blob/main/docs/commands.md">Commands</a>
+      <a href="?doc=commands.md">Commands</a>
       <a class="gh" href="https://github.com/zzjha-cn/agent_sandbox"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.4 7.4 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>GitHub</a>
     </nav>
   </div>
 </div>
 
 <div class="wrap">
+<div id="home">
 
 <header>
   <div class="mark">s<span>b</span>x</div>
   <p class="tagline">Run Claude Code or Codex in a Docker sandbox — skip the permission prompts without betting your machine on it.</p>
-  <p class="subline">One container, one git worktree and one branch per task. Inside, <code>--dangerously-skip-permissions</code> is fine. Outside, nothing changed.</p>
+  <p class="subline">Git worktrees for interactive coding. Explicit TaskSpec for inputs, tools, independent verification, delivery and recovery.</p>
   <div class="meta">
     <span class="chip on">Claude + Codex</span>
-    <span class="chip">M3 nearly done</span>
+    <span class="chip">TaskSpec v2</span>
     <span class="chip">Go 1.27</span>
     <span class="chip">Apache-2.0</span>
   </div>
@@ -261,17 +276,34 @@ footer code{font-size:12.5px}
   </div>
 </header>
 
+<section id="wiki"><div class="sec-head"><div class="num">GUIDE</div><div><h2>Choose a workflow</h2><p>Start with a task, then follow execution, verification, delivery and recovery.</p></div></div>
+<div class="pillars">
+<div class="pil"><span class="k">01 / WALKTHROUGH</span><h3>Walkthrough</h3><p>Git coding, reports, read-only queries, external writes and recovery.</p><p class="fix"><a href="?doc=walkthrough.md">From setup to delivery →</a></p></div>
+<div class="pil"><span class="k">02 / COMMANDS</span><h3>Command guide</h3><p>Find commands by scenario, with prerequisites, parameters and effects.</p><p class="fix"><a href="?doc=commands.md">Explore commands →</a></p></div>
+<div class="pil"><span class="k">03 / DESIGN</span><h3>Architecture and terms</h3><p>Understand tasks, workspaces, artifacts, tool grants and recovery facts.</p><p class="fix"><a href="?doc=design.md">Design</a> · <a href="?doc=glossary.md">Glossary</a></p></div>
+</div><div class="term" style="margin-top:24px"><pre><span class="c"># Explicit tasks: admit, execute and inspect; no Git repository required</span>
+sbx admit --spec report-task.json
+sbx task run --spec report-task.json
+sbx task status monthly-report --json
+<span class="c"># Resolve pending outcomes using recovery guidance; do not blindly rerun</span></pre></div>
+<p class="subline">Templates and machine interfaces: <a href="?doc=general-tasks.md">General tasks</a> · <a href="?doc=dynamic-tools.md">Read-only tools</a> · <a href="?doc=automation.md">Automation protocol</a> · <a href="?doc=cli-reference.md">All CLI parameters</a> · <a href="?doc=PUBLISHING.md">Publishing and maintenance</a></p></section>
 <!-- 01 -->
-<section>
+<section id="use-cases">
   <div class="sec-head">
     <div class="num">01</div>
     <div>
       <h2>A day of real use</h2>
-      <p>Before the architecture: here is an ordinary working day with sbx.</p>
+      <p>One runtime, three ways to use it. Choose a scenario to follow its workflow.</p>
     </div>
   </div>
 
-  <div class="day">
+  <div class="scenario-picker" role="tablist" aria-label="Usage scenarios">
+    <button type="button" role="tab" id="scenario-personal" aria-controls="day-personal" aria-selected="true" tabindex="0"><span class="scenario-k">01 / PERSONAL</span><span class="scenario-title">Personal use</span><span class="scenario-summary">Parallel coding, review and resume</span></button>
+    <button type="button" role="tab" id="scenario-team" aria-controls="day-team" aria-selected="false" tabindex="-1"><span class="scenario-k">02 / TEAM</span><span class="scenario-title">Team use</span><span class="scenario-summary">Shared contracts, local authority</span></button>
+    <button type="button" role="tab" id="scenario-infrastructure" aria-controls="day-infrastructure" aria-selected="false" tabindex="-1"><span class="scenario-k">03 / INFRASTRUCTURE</span><span class="scenario-title">Infrastructure</span><span class="scenario-summary">An execution kernel for your caller</span></button>
+  </div>
+  <p class="scenario-hint">Select a scenario above. All commands shown are existing CLI entry points; deployment prerequisites differ.</p>
+<div class="day scenario-panel" id="day-personal" role="tabpanel" aria-labelledby="scenario-personal" tabindex="0">
     <div class="beat">
       <div class="clock">09:30</div>
       <div>
@@ -281,7 +313,7 @@ footer code{font-size:12.5px}
 <span class="c">$</span> sbx run fix-login            <span class="c"># go in, explain the job, Ctrl-b then d to leave</span>
 <span class="c">$</span> sbx run add-search --detach  <span class="c"># this one starts in the background</span>
 <span class="c">$</span> sbx run bump-deps --detach</pre></div>
-        <p>Each task gets its own worktree, branch and container. <strong>They are separate at the filesystem level</strong>, not by convention, so none of them can touch another's files.</p>
+        <p>Each task gets its own worktree, branch and container. <strong>They are separate at the filesystem level</strong>, not by convention, so edits do not share a working tree. This is not an adversarial boundary between users with Docker API access.</p>
       </div>
     </div>
 
@@ -374,6 +406,41 @@ seeding cache/go-mod from sbx/prep-shop-e76272:a1b2c3d4e5f6 (184MB) ...</pre></d
       </div>
     </div>
   </div>
+<div class="day scenario-panel" id="day-team" role="tabpanel" aria-labelledby="scenario-team" tabindex="0" hidden>
+<div class="beat"><div class="clock">SETUP</div><div><h3>Share the task contract, keep identities separate</h3><p>A team agrees on a report format, completion criteria and TaskSpec in version control. Each member has their own provider identity, local resource grants and dedicated Docker daemon. An administrator installs organization ceilings through a trusted channel.</p><div class="term"><pre><span class="c"># Each member checks their own environment</span>
+sbx isolation status --json
+sbx login codex --status
+sbx policy show</pre></div><p>Project files describe requirements; they do not grant access. Local execution-policy.toml entries bind source, verifier and delivery references to resources approved for that member. Mutually untrusted users need separate daemons or VMs.</p></div></div>
+<div class="beat"><div class="clock">09:30</div><div><h3>Run the same declared workflow under team policy</h3><p>The team has prepared report-task.json and registered its source, completion rules and local delivery target. Managed execution uses synchronous TaskSpec, including Git Source for code tasks.</p><div class="term"><pre>sbx admit --spec report-task.json
+sbx task run --spec report-task.json
+sbx task status monthly-report --json</pre></div><p>Organization limits intersect personal grants. Admission is checked again during execution; updating, revoking or expiring policy cancels the supervised activity. This workflow does not enable managed interactive or detached sessions.</p></div></div>
+<div class="beat"><div class="clock">11:00</div><div><h3>Review the retained artifact, then deliver</h3><p>A manual criterion leaves the task in needs_review. An authorized operator inspects the immutable snapshot and validation evidence before recording a decision. The reviewer label records that decision; authentication and role assignment remain deployment responsibilities.</p><div class="term"><pre>sbx task status monthly-report --json
+sbx task approve --spec report-task.json --reviewer alice
+<span class="c"># If the delivery needs reconciliation, continue without rerunning the agent</span>
+sbx task deliver --spec report-task.json</pre></div><p>Approval and delivery reuse the original attempt. The Sink is a registered local directory or local Git target; there is no implicit remote push, merge or shared review dashboard.</p></div></div>
+<div class="beat"><div class="clock">16:00</div><div><h3>Export team events without exporting business payloads</h3><p>Managed lifecycle events first enter a private durable outbox. With a configured collector endpoint and a private per-member token, members or an external operator process can explicitly flush the queue.</p><div class="term"><pre>sbx events status
+sbx events flush</pre></div><p>The collector is supplied by the deployment. It authenticates organization and subject, deduplicates stable event IDs, and acknowledges durable storage. Offline delivery is retried with the same IDs; raw prompts, full results and tool payloads are not team-event fields.</p></div></div>
+</div>
+<div class="day scenario-panel" id="day-infrastructure" role="tabpanel" aria-labelledby="scenario-infrastructure" tabindex="0" hidden>
+<div class="beat"><div class="clock">BUILD</div><div><h3>Embed sbx behind an existing automation system</h3><p>A CI job, service or scheduler invokes the local CLI on a worker host with an assigned daemon. sbx supplies the execution boundary and durable task facts; your caller owns queuing, job placement, credentials and lifecycle supervision.</p><div class="term"><pre>sbx version --json
+sbx schema task &gt; task.schema.json
+sbx schema event &gt; event.schema.json
+sbx admit --spec job.json</pre></div><p>Inspect capability requirements as well as schema shape. Valid JSON does not authorize resources, and admission does not reserve capacity. sbx does not provide a resident worker service or a multi-tenant control plane.</p></div></div>
+<div class="beat"><div class="clock">SUBMIT</div><div><h3>Capture a synchronous run and its actual exit code</h3><p>The caller creates job.json from an approved template, with a stable logical task ID and registered resource references. Keep stdout machine events separate from diagnostics.</p><div class="term"><pre>run_code=0
+sbx task run --spec job.json &gt; execution.jsonl 2&gt; execution.log || run_code=$?
+<span class="c"># Preserve run_code; inspect execution, validation and delivery separately</span>
+sbx task status job-42 --json</pre></div><p>Here job.json declares task_id=job-42. An agent exit of zero is not sufficient evidence of business completion. The caller must interpret the process exit code and the final result, then route needs_review, delivery failures and unknown operations appropriately.</p></div></div>
+<div class="beat"><div class="clock">RECOVER</div><div><h3>Continue retained facts after interruption</h3><p>If the submitting CLI dies, first inspect the record. Recover an orphaned execution before deciding whether to continue verification, reconcile a receipt, deliver a snapshot or explicitly start a new attempt.</p><div class="term"><pre>sbx task status job-42 --json
+<span class="c"># Only for an orphaned execution; use task stop for a live supervisor</span>
+sbx task recover job-42
+<span class="c"># Choose the next command from recovery guidance, not a blanket retry loop</span>
+sbx task reconcile --spec job.json</pre></div><p>Reconcile is query-only for unknown writes. Never switch task IDs or delete records to bypass a pending effect. Missing input baselines and damaged records can still require manual investigation; recover does not fabricate success.</p></div></div>
+<div class="beat"><div class="clock">RELEASE</div><div><h3>Reclaim runtime resources independently of results</h3><p>Once the activity is closed, reclaim its dedicated containers, network and dependency volumes while retaining the workspace, logs, snapshots and receipts. Keep artifact retention an explicit policy.</p><div class="term"><pre>sbx task clean job-42
+<span class="c"># A retained artifact can still be verified or delivered</span>
+sbx task deliver --spec job.json
+<span class="c"># Once reconciled, explicitly prune a selected snapshot if appropriate</span>
+sbx task prune job-42 &lt;attempt-id&gt;</pre></div><p>Cleanup does not erase unknown outcomes or authorize replay. A new run creates a new attempt under current grants. Remote artifact publication, central scheduling and a production collector must be integrated separately.</p></div></div>
+</div>
 </section>
 
 <!-- 02 -->
@@ -480,10 +547,34 @@ sbx run --agent codex codex-fix     # resume with the same provider</pre></div>
     <div class="num">04</div>
     <div>
       <h2>Architecture</h2>
-      <p>Two tasks running in parallel on one machine.</p>
+      <p>One execution kernel for Git sessions and explicit tasks. Runtime resources and durable results have separate lifecycles.</p>
     </div>
   </div>
 
+  <h3>Execution model · From input to delivery</h3>
+  <p class="subline">TaskSpec declares requirements; trusted policies determine authority. Artifacts, operation receipts and events are recorded separately. Unknown outcomes require reconciliation.</p>
+  <figure class="wiki-map"><div class="scroller"><svg viewBox="0 0 1100 610" role="img" aria-labelledby="arch-title arch-desc">
+<title id="arch-title">sbx execution kernel, trusted policy and durable state</title><desc id="arch-desc">Users and scripts enter the execution service through Git CLI or TaskSpec. Personal and organization policies constrain access. Source prepares the workspace; Provider runs the agent; frozen artifacts are independently evaluated and delivered. Host gateways manage read-only tools and declared writes. Durable records support cancellation, cleanup and recovery. Event delivery is separate from artifact delivery.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="var(--accent)"/></marker></defs>
+<rect class="d-inner" x="10" y="15" width="1080" height="575" rx="12"/>
+<text x="30" y="45" font-size="16" font-weight="700">Trusted host execution · One-shot CLI, no resident worker</text>
+<rect class="d-accent" x="35" y="70" width="280" height="65" rx="7"/><text x="52" y="97">Users / scripts / schedulers</text><text class="d-m" x="52" y="120">Git CLI / v2 TaskSpec</text>
+<rect class="d-accent" x="365" y="70" width="320" height="65" rx="7"/><text x="383" y="97">execution.Service</text><text class="d-m" x="383" y="120">Admission · locks · lifecycle · recovery</text>
+<rect class="d-accent" x="740" y="70" width="320" height="65" rx="7"/><text x="758" y="97">Personal grants ∩ Organization limits</text><text class="d-m" x="758" y="120">Trusted refs · current grants · revocation</text>
+<path class="d-flow" style="stroke-width:1.5;marker-end:url(#arrow)" d="M315 102H365"/><path class="d-flow" style="stroke-width:1.5;marker-end:url(#arrow)" d="M740 102H685"/>
+<rect class="d-accent" x="35" y="195" width="165" height="80" rx="7"/><text x="50" y="222">Source</text><text class="d-m" x="50" y="246">files / Git / empty</text><text class="d-m" x="50" y="265">Revision / baseline</text>
+<rect class="d-accent" x="245" y="195" width="230" height="80" rx="7"/><text x="260" y="222">Workspace + Provider</text><text class="d-m" x="260" y="246">Isolated copy / worktree</text><text class="d-m" x="260" y="265">Claude / Codex</text>
+<rect class="d-accent" x="520" y="195" width="155" height="80" rx="7"/><text x="535" y="222">ArtifactSet</text><text class="d-m" x="535" y="246">Freeze after stop</text><text class="d-m" x="535" y="265">Snapshot / digest</text>
+<rect class="d-accent" x="720" y="195" width="155" height="80" rx="7"/><text x="735" y="222">Evaluator</text><text class="d-m" x="735" y="246">Files / tests / review</text><text class="d-m" x="735" y="265">Business state</text>
+<rect class="d-accent" x="920" y="195" width="140" height="80" rx="7"/><text x="935" y="222">Sink</text><text class="d-m" x="935" y="246">Directory / Git</text><text class="d-m" x="935" y="265">Delivery receipt</text>
+<path class="d-flow" style="stroke-width:1.5;marker-end:url(#arrow)" d="M200 235H245"/><path class="d-flow" style="stroke-width:1.5;marker-end:url(#arrow)" d="M475 235H520"/><path class="d-flow" style="stroke-width:1.5;marker-end:url(#arrow)" d="M675 235H720"/><path class="d-flow" style="stroke-width:1.5;marker-end:url(#arrow)" d="M875 235H920"/><path class="d-flow" style="stroke-width:1.5;marker-end:url(#arrow)" d="M525 135V165H117V195"/>
+<rect class="d-accent" x="35" y="335" width="440" height="85" rx="7"/><text x="52" y="363">Host ToolGateway / external connectors</text><text class="d-m" x="52" y="388">Read-only tools: per-call grants, host-held credentials</text><text class="d-m" x="52" y="408">Writes: agent OK + sandbox stopped → intent → submit / lookup</text>
+<path class="d-flow" style="stroke-width:1.5;marker-end:url(#arrow)" d="M350 275V335"/><path class="d-flow" style="stroke-width:1.5;marker-end:url(#arrow)" d="M475 377H495V305H797V275"/>
+<rect class="d-accent" x="520" y="335" width="540" height="85" rx="7"/><text x="537" y="363">Event delivery is separate from artifact delivery</text><text class="d-m" x="537" y="388">stdout JSONL → caller; managed team-event → private outbox</text><text class="d-m" x="537" y="408">Explicit flush → collector; locally queued ≠ remotely confirmed</text>
+<rect class="d-accent" x="35" y="465" width="1025" height="90" rx="7"/><text x="52" y="494">Durable facts: FileStore · input baseline · workspace · logs · snapshots · tool audit · operation / delivery receipts</text><text class="d-m" x="52" y="520">task stop: cancel · recover: inspect orphaned runs · clean: reclaim runtime · verify / deliver / reconcile: continue retained facts</text><text class="d-m" x="52" y="543">Reconcile unknown outcomes first; deleting a container or starting a new attempt never authorizes write replay.</text>
+<path class="d-flow" style="stroke-width:1.5;marker-end:url(#arrow)" d="M255 420V465"/><path class="d-flow" style="stroke-width:1.5;marker-end:url(#arrow)" d="M800 420V465"/>
+</svg></div><figcaption>File tasks produce stable snapshots. External-only tasks may use operation receipts and business state as completion evidence. <a href="?doc=design.md">Responsibilities and recovery boundaries →</a></figcaption></figure>
+  <h3>Docker runtime · Git workspaces and task networks</h3>
   <figure>
     <div class="scroller">
       <svg viewBox="0 0 900 640" role="img" aria-label="sbx architecture: the sbx CLI, main repo and worktrees on the host; inside Docker, two internal task networks, a shared squid proxy, the egress network and three kinds of volume">
@@ -990,10 +1081,10 @@ core/assets/agent-layer/Dockerfile       <span class="c"># tmux, git, jq, claude
   <p class="fl">
     <a href="https://github.com/zzjha-cn/agent_sandbox">Repository</a>
     <a href="https://github.com/zzjha-cn/agent_sandbox/blob/main/README.md">README</a>
-    <a href="https://github.com/zzjha-cn/agent_sandbox/blob/main/docs/commands.md">Commands and flags</a>
-    <a href="https://github.com/zzjha-cn/agent_sandbox/blob/main/docs/walkthrough.md">Walkthrough</a>
-    <a href="https://github.com/zzjha-cn/agent_sandbox/blob/main/docs/architecture.md">Architecture</a>
-    <a href="https://github.com/zzjha-cn/agent_sandbox/blob/main/docs/design.md">Design decisions</a>
+    <a href="?doc=commands.md">Commands and flags</a>
+    <a href="?doc=walkthrough.md">Walkthrough</a>
+    <a href="?doc=architecture.md">Architecture</a>
+    <a href="?doc=design.md">Design decisions</a>
     <a href="https://github.com/zzjha-cn/agent_sandbox/issues">Issues</a>
   </p>
   <p class="fine">sbx is an open-source project under
@@ -1004,5 +1095,48 @@ core/assets/agent-layer/Dockerfile       <span class="c"># tmux, git, jq, claude
 </footer>
 
 </div>
+<section id="reader" hidden aria-label="Documentation reader"><div class="toolbar"><a href="index.html">← Wiki home</a><a id="source">Markdown source</a><input id="heading-search" type="search" placeholder="Filter page contents" aria-label="Filter document headings"></div><div class="reader-layout"><aside class="toc" aria-label="On this page" id="toc"></aside><article class="reader-content" id="content" aria-live="polite"></article></div></section>
+</div>
+<script>
+'use strict';
+
+// Accessible tabs: click or arrow keys select one scenario; Personal is the default.
+const scenarioTabs = Array.from(document.querySelectorAll('.scenario-picker [role="tab"]'));
+function selectScenario(tab, moveFocus = false) {
+  scenarioTabs.forEach(item => {
+    const selected = item === tab;
+    item.setAttribute('aria-selected', String(selected));
+    item.tabIndex = selected ? 0 : -1;
+    document.getElementById(item.getAttribute('aria-controls')).hidden = !selected;
+  });
+  if (moveFocus) tab.focus();
+}
+scenarioTabs.forEach((tab, index) => {
+  tab.addEventListener('click', () => selectScenario(tab));
+  tab.addEventListener('keydown', event => {
+    let next;
+    if (event.key === 'ArrowRight') next = (index + 1) % scenarioTabs.length;
+    else if (event.key === 'ArrowLeft') next = (index + scenarioTabs.length - 1) % scenarioTabs.length;
+    else if (event.key === 'Home') next = 0;
+    else if (event.key === 'End') next = scenarioTabs.length - 1;
+    else return;
+    event.preventDefault();
+    selectScenario(scenarioTabs[next], true);
+  });
+});
+
+const allowed=new Set(['walkthrough.md','design.md','commands.md','glossary.md','general-tasks.md','dynamic-tools.md','automation.md','boundary.md','cli-reference.md','schemas/README.md','architecture.md','CONTEXT.md','PUBLISHING.md']);
+const esc=s=>s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function link(href,doc){try{const u=new URL(href,new URL(doc,location.href));if(!['http:','https:'].includes(u.protocol))return '#';if(u.origin===location.origin){const base=new URL('.',location.href);const path=u.pathname.slice(base.pathname.length);if(allowed.has(path))return '?doc='+encodeURIComponent(path)+u.hash;}return u.href;}catch{return '#';}}
+function inline(s,doc){const codes=[];s=s.replace(/`([^`]+)`/g,(_,v)=>'\u0000'+(codes.push('<code>'+esc(v)+'</code>')-1)+'\u0000');s=esc(s).replace(/\[([^\]]+)\]\(([^)]+)\)/g,(_,t,h)=>'<a href="'+esc(link(h.replace(/&amp;/g,'&'),doc))+'">'+t+'</a>').replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>').replace(/&lt;br\s*\/?&gt;/gi,'<br>');return s.replace(/\u0000(\d+)\u0000/g,(_,i)=>codes[+i]);}
+function render(md,doc){const lines=md.split('\n'),out=[],toc=[],ids=new Map();let fence=false,code=[],list=false;
+const closeList=()=>{if(list){out.push('</'+list+'>');list=false;}};
+for(let i=0;i<lines.length;i++){let s=lines[i];if(/^\s*```/.test(s)){closeList();if(fence){out.push('<pre><code>'+esc(code.join('\n'))+'</code></pre>');code=[];}fence=!fence;continue;}if(fence){code.push(s);continue;}
+const h=/^(#{1,6})\s+(.+)$/.exec(s);if(h){closeList();const base=h[2].replace(/[`*]/g,'').toLowerCase().replace(/[^\p{L}\p{N}\s_-]/gu,'').trim().replace(/\s+/g,'-');let n=ids.get(base)||0;ids.set(base,n+1);let id=base+(n?'-'+n:'');out.push('<h'+h[1].length+' id="'+esc(id)+'">'+inline(h[2],doc)+'</h'+h[1].length+'>');if(h[1].length<=3)toc.push({id,title:h[2],level:h[1].length});continue;}
+if(s.includes('|')&&i+1<lines.length&&/^\s*\|?\s*:?-{3,}/.test(lines[i+1])){closeList();let rows=[s];i++;while(i+1<lines.length&&lines[i+1].includes('|')&&lines[i+1].trim())rows.push(lines[++i]);out.push('<div class="table-wrap"><table>');rows.forEach((r,j)=>out.push('<tr>'+r.trim().replace(/^\||\|$/g,'').split('|').map(c=>'<'+(j?'td':'th')+'>'+inline(c.trim(),doc)+'</'+(j?'td':'th')+'>').join('')+'</tr>'));out.push('</table></div>');continue;}
+if(/^\s*(?:[-*]|\d+\.)\s+/.test(s)){const kind=/^\s*\d+\./.test(s)?'ol':'ul';if(list&&list!==kind)closeList();if(!list){out.push('<'+kind+'>');list=kind;}out.push('<li>'+inline(s.replace(/^\s*(?:[-*]|\d+\.)\s+/,''),doc)+'</li>');continue;}closeList();if(!s.trim()||/^---+$/.test(s))continue;if(s.startsWith('>'))out.push('<blockquote>'+inline(s.replace(/^>\s?/,''),doc)+'</blockquote>');else out.push('<p>'+inline(s,doc)+'</p>');}
+closeList();if(fence)out.push('<pre><code>'+esc(code.join('\n'))+'</code></pre>');return {html:out.join('\n'),toc};}
+(async()=>{const doc=new URLSearchParams(location.search).get('doc');if(!doc)return;document.getElementById('home').hidden=true;document.getElementById('reader').hidden=false;const content=document.getElementById('content');try{if(!allowed.has(doc))throw Error('This document is not part of the public wiki.');document.getElementById('source').href=doc;const response=await fetch(doc);if(!response.ok)throw Error('Could not load document: '+response.status);const r=render(await response.text(),doc);content.innerHTML=r.html;document.getElementById('source').href=doc;document.title=(r.toc[0]?.title||doc)+' · sbx Wiki';const toc=document.getElementById('toc');function filter(){const q=document.getElementById('heading-search').value.toLowerCase();toc.innerHTML=r.toc.filter(x=>x.title.toLowerCase().includes(q)).map(x=>'<a style="padding-left:'+(x.level-1)*10+'px" href="#'+esc(x.id)+'">'+esc(x.title)+'</a>').join('');}filter();document.getElementById('heading-search').addEventListener('input',filter);if(location.hash){const id=decodeURIComponent(location.hash.slice(1));document.getElementById(id)?.scrollIntoView();}}catch(e){content.textContent=e.message+' For local reading, open the wiki through an HTTP server, or read the Markdown source directly.';}})();
+</script>
 </body>
 </html>

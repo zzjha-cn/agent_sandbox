@@ -35,4 +35,4 @@ python3 -m venv /tmp/sbx-schema-venv
 /tmp/sbx-schema-venv/bin/python core/scripts/check-schemas.py --sbx /absolute/path/to/sbx
 ```
 
-Go 测试检测已发布文件与代码的漂移；Python 独立校验器对照真实 CLI 解码，并可用 `--report <验收目录>` 校验实际 stdout 事件/状态/结果。协议和退出码见 [自动化规范](../automation.md)，迁移见 [迁移规则](../migration.md)。
+Go 测试检测已发布文件与代码的漂移；Python 独立校验器对照真实 CLI 解码，并可用 `--report <验收目录>` 校验实际 stdout 事件/状态/结果。协议和退出码见 [自动化规范](../automation.md)，迁移见 [迁移规则](../automation.md)。

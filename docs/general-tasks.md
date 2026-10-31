@@ -1,6 +1,8 @@
 # 通用任务：输入、验证与本地交付
 
-`sbx task` 是通用任务的显式 v2 入口，在 Git 仓库之外也能使用。支持同步 headless Claude/Codex、Git revision/文件副本/空输入、稳定产物、独立验证与本地目录/Git 交付。G5 的运行期只读工具见 [动态工具规范](dynamic-tools.md)，G6 的预先声明写操作、回执核对与业务状态验证见 [外部操作规范](external-operations.md)。`sbx run` 保留 Git/交互入口；`sbx run --spec` 与 `sbx task run --spec` 共用提交路径。机器输入/事件和执行记录已统一为 v2，`--envelope` 仅是参数别名，v1 输入被拒绝，见 [自动化与迁移](automation.md)。G7 已完成 schema/能力发布与迁移规则，见 [自动化规范](automation.md)；G8 组织策略与事件汇总已完成当前范围，见 [组织规范](organization.md)；受管模式只接受同步 TaskSpec（含 Git Source）。G9 的列表、日志、停止、运行资源清理与中断恢复见 [任务管理](task-management.md)。远端产物发布仍属后续范围。
+`sbx task` 是仓库外也可使用的显式 v2 入口：支持同步 Claude/Codex、目录/Git/空输入、只读工具、声明式外部操作、稳定产物、独立验证和本地交付。`sbx run --spec` 与它共用提交路径；普通 `sbx run <task>` 保留 Git/交互语义。
+
+先读 [场景教程](walkthrough.md)，按操作查 [命令手册](commands.md)，机器字段和退出码见 [自动化协议](automation.md)。受管模式只接受同步 TaskSpec；远端发布和受管后台执行尚未开放。
 
 ## 1. 可信注册表与任务声明
 

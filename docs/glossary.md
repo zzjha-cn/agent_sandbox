@@ -1,62 +1,72 @@
-# 术语表
+# sbx 术语表
 
-> 状态：**随讨论演进**（起草 2026-10-22，按 2026-10-28 讨论更新）。标记 ✅ 的是代码里已经成立的定义，🚧 的是尚未实现或仍有待定细节的词；职责方向已确认不等于能力已实现。
->
-> 新词在这里定下来之前不要进别的文档——[maturity.md](maturity.md) 和 [boundary.md](boundary.md) 的论证都依赖术语是稳定的。
+[首页](index.html) · [场景教程](walkthrough.md) · [设计](design.md) · [命令](commands.md) · [术语](glossary.md)
 
-## 已成立的词 ✅
+以下定义对应当前实现；同名词在 Git 便捷入口与通用执行模型中的差异单独说明。命令语法见 [命令手册](commands.md)。
 
-| 词 | 定义 | 锚点 |
-|---|---|---|
-| **Workspace（旧仓库上下文）** | 旧 Git CLI 中一个仓库在本机的沙箱上下文，id 由仓库路径派生；概念上称 RepositoryContext，与通用执行工作区区分 | `commands.md`、[G0](g0-contract.md) |
-| **Task** | 受控执行和资源归属单位。旧 Git CLI 对应 worktree/分支/容器/sidecar/internal 网络；通用任务对应 `tasks` 命名空间中的隔离目录及运行资源，不要求 Git | `internal/task`、[通用任务](general-tasks.md) |
-| **Sidecar** | Task 所在 internal 网络上的普通对端，**不是网关**。包括 squid（HTTP/HTTPS 代理）、services（临时依赖）、forwarder（单 TCP 目标），以及 port 暴露端口的转发容器 | `boundary.md` §0 |
-| **prep** | 把「取」变成「存」：在 build 期（有凭据、无 agent）把外部依赖固化进镜像或 volume | `boundary.md` §2 |
-| **委托人（principal）** | 对 agent 行为负责的主体。今天的前提是 **机器的主人 = 委托人** | `maturity.md` §0 |
-| **daemon** | 一个 Docker daemon。**sbx 的隔离单位**——不变量守的是 Task 与外界，不守同一 daemon 上 Task 之间 | `commands.md` 的 daemon 归属说明 |
-| **Provider** | Claude/Codex 的启动、认证和会话适配；Task 创建后不能借 --agent 切换 | `internal/agent/provider.go` |
-| **Execution Service** | 一次性 CLI 中的生命周期服务，统一编排准入、准备、运行/停止、产物收集、独立验证、本地交付、阶段记录与恢复；已含 G6 声明式外部操作、授权与核对；已含 G5 运行期只读 MCP 工具及安全日志 | `internal/execution` |
-| **任务信封（envelope）** | 公开 sbx.execution/v1 输入：schema_version/task_id/prompt 及可选 base/fresh/timeout_seconds；仓库与策略来自当前目录和本地配置 | `automation.md` |
-| **Attempt** | 同一逻辑 Task 的一次执行，每次生成独立 attempt_id；重试不代表幂等重放 | `automation.md` |
-| **Runner** | 可被外部脚本/调度器调用的本地执行入口；底层调用执行服务，不要求常驻 worker | `automation.md` |
-| **执行记录（Execution Record）** | 独立于 Task StateDir 的版本化阶段事实与 attempt 历史；用于中断查询和恢复门禁，不是 stdout 事件日志或业务产物 | `internal/execution/record.go`、[G1](g1-implementation.md) |
-| **RepositoryContext** | G0 对当前 `workspace.Workspace` 仓库上下文的概念名；保留现有 Go 名称和路径派生 id | [G0](g0-contract.md) |
+## 任务与执行
 
-## 提案中的词 🚧
+| 术语 | 定义与边界 |
+|---|---|
+| **Task** | 逻辑任务、资源和恢复事实的归属单位。通用任务由 SBX_HOME/task_id 定位，不要求 Git。 |
+| **TaskSpec** | v2 JSON 任务声明；选择已注册的资源、工具和完成要求，不提供授权。 |
+| **task_id** | 任务稳定标识；不能换 ID 绕过尚未核对的外部写。 |
+| **Attempt / attempt_id** | Task 的一次执行及其标识。run 新增 attempt，verify/deliver 延续既有 attempt。 |
+| **RepositoryContext** | Git 便捷入口从当前仓库推导的上下文；代码中仍名为 workspace.Workspace。 |
+| **Workspace / ExecutionWorkspace** | 前者在旧 Git CLI 中指仓库上下文，后者指 Agent 的可写执行目录；阅读时需结合入口。 |
+| **main Task** | 省略 Git 任务名的特例，直接使用仓库根，无独立分支。 |
+| **worktree** | Git 便捷任务的独立工作树；通用 Git Source 副本不要求包含 .git。 |
+| **Provider** | Claude/Codex 的启动、认证、会话和状态适配。不是工具连接器。 |
+| **headless / detach** | headless 是无交互任务执行；detach 是启动后不等待终态。启动返回不等于完成。 |
+| **Execution Service** | 一次性 CLI 内的生命周期编排服务，不是常驻 worker。 |
+| **阶段 / phase** | admission、prepare、execute、collect、evaluate、deliver、finalize 等持久化边界。 |
 
-| 词 | 候选定义 | 未决问题 |
-|---|---|---|
-| **Worker** | 一台机器 + 一个 daemon + 一个常驻 sbx 进程 | 常驻进程与今天的一次性 CLI 是同一个二进制的两种模式，还是两个东西？ |
-| **Node（节点）** | 拓扑中的一个可调度位置 | 与 Worker 是否严格 1:1？若 1:1，这个词就是冗余的，应当删掉一个 |
-| **Master / 控制面** | 派发任务、收集事件的上游 | **是否属于 sbx 的交付范围**？还是只交付协议 + worker 侧实现？ |
-| **租户（tenant）** | 一组共享同一份凭据与可见性的委托人 | 一个 Worker 是否恒为单租户？ |
+## 输入、能力与成果
 
+| 术语 | 定义与边界 |
+|---|---|
+| **Source** | 准备输入、保存选择范围、内容摘要、revision 和授权绑定的适配器。 |
+| **empty** | 省略 Source 时准备的空工作区；不会执行 git init。 |
+| **基线 / baseline** | 执行前输入清单和摘要，支持差异验证与输入一致性检查。 |
+| **Grant / 可信注册表** | 操作者的资源授权及引用映射；注册于 execution-policy.toml，任务只能缩小选择范围。 |
+| **ToolGateway / MCP** | 前者逐次核验工具权限、代用凭据；后者是向 provider 暴露受控工具的协议。当前动态工具只读。 |
+| **Connector** | 对具体外部服务的调用适配，例如 record_http；不是任意插件执行框架。 |
+| **operations** | 任务预先声明的外部写操作，由宿主在 Agent 成功且沙箱停止后提交。 |
+| **ArtifactSet / snapshot** | 冻结的产物及清单、摘要与来源；区别于仍可变的工作副本。 |
+| **outputs / patch** | 前者选择文件产物，后者是可选差异文件。允许修改范围与交付范围不是同一概念。 |
+| **Criterion / Evaluator** | 前者声明完成判据，后者独立验证；支持文件、测试、人工和外部业务状态。 |
+| **needs_review** | 必须由操作者查看证据后显式 approve/reject 的验证状态。 |
+| **Sink** | 消费稳定产物并交付到授权目标的适配器；目前为本地目录或本地 Git。 |
+| **DeliveryKey / DeliveryReceipt** | 交付幂等身份及可核对回执；相同 key 不能改绑目标或产物。 |
+| **git_local** | 本地 Git 分支交付；不隐式 push、merge 或修改目标 checkout。 |
 
-## 执行模型的词（含已实现与后续范围）
+## 持久化与恢复
 
-参照系是**批作业 + 物化产物传递**（CI pipeline / Argo Workflow），**不是流处理**。理由：任务有界、agent 不确定且不可重放、工作区是双向的。详见讨论结论。
+| 术语 | 定义与边界 |
+|---|---|
+| **Execution Record / FileStore** | 独立于 Agent 状态目录的持久化事实、attempt 历史及恢复门禁；不是日志文本。 |
+| **intent** | 已落盘的操作提交意图；进程中断后不能据此认定从未提交。 |
+| **unknown** | 外部结果尚未确认；先查询核对，不能自动重发。 |
+| **recovery / next_actions** | 根据已记录事实给出的恢复状态与建议；不构成授权。 |
+| **reconcile / apply** | reconcile 查询原回执与业务状态；apply 是显式提交已证明未提交且仍有授权的操作。 |
+| **stop / recover** | stop 取消当前活动；recover 独立停止并核对孤立执行，保留业务不确定性。 |
+| **clean / prune** | task clean 回收专属运行资源；task prune 清理符合保留条件的指定快照。两者都不等于删除任务历史。 |
+| **runtime_retired** | 已确认专属资源全部清理的标记；保留原策略身份，允许新 runtime 重新准入。 |
+| **活动 token** | 绑定本次 run/continuation 的随机停止身份，防止旧停止请求误停下一活动。 |
 
-| 词 | 候选定义 | 状态 |
-|---|---|---|
-| **通用 runner 类型** | 当前公开入口只承诺 agent 执行；未来非 agent 程序是否需独立能力模型由真实场景决定 | 未实现；不与已成立的 Runner/provider 混用 |
-| **TaskSpec** | 通用任务声明，描述输入、agent、输出、完成要求和交付；与可信注册表分开 | ✅ `sbx task` 已接入阶段性 v2；已含 G6 operations；已含 G5 tools/required_tools；G7 完整发布待后续 |
-| **Source / ExecutionWorkspace** | Source 准备输入，ExecutionWorkspace 承载执行；与 RepositoryContext 区分 | ✅ files / Git revision / empty 副本；旧 Git CLI 保留 worktree |
-| **ArtifactSet** | 按明确输出范围收集的稳定产物快照及清单，带摘要与来源；区别于失败回滚用的状态快照 | ✅ 完整工作区/选定输出快照、patch、内容摘要与显式回收 |
-| **产物 Sink / DeliveryReceipt** | Sink 将通过验证的产物交付到目标并返回回执；独立于内部 EventSink | ✅ 目录/Git 本地交付、持久化意图、查询与独立重试；v1 仍无 artifact delivery，远端发布待后续 |
-| **完成判据 / Evaluator** | 任务声明完成要求，独立验证器给出结论和证据 | ✅ 文件/范围/格式/结构、受限容器测试和人工判断；G6 已含回执与外部业务状态独立验证 |
-| **Tool Gateway / GrantRef** | 工具调用入口按可信授权引用约束操作、目标和数据范围，代用凭据并记录副作用回执；项目或模型不能自行授予权限 | G6 声明式调用已有可信 grant、有效期/撤销、凭据代用与持久回执；G5 provider MCP HTTP 只读调用已实现（同步 headless、dedicated proxy） |
+## 部署与边界
 
-上述通用执行概念的实施顺序与退出条件见 [执行内核 Roadmap](execution-roadmap.md)。
-
-| 词 | 候选定义 | 状态 |
-|---|---|---|
-| **builder** | 沙箱初始化行为 | ❌ **不入场**：`prep` 已是唯一实现，改名无收益 |
-| **edge** | **前一个 task 的 sink 成为后一个 task 的 source**——编排期的数据依赖，**不是运行期的网络通道**。两个 task 不同时活着，不需要在 internal 网络上打洞 | 形态已定，优先级未定 |
-
-**不属于 edge 的：**到 master 的连接。它属于 worker 进程，容器不应知道 master 存在（ADR 0020（本地 ADR） 推论 2）。
-
-**sbx 里唯一真正的「流」是事件流**（上报）：单向；当前 v1 经本地 stdout 交付，交付失败需结合进程码判断，消费者可位于本地或上游调度端。流处理的直觉用在控制面成立，用在数据面不成立。
-
-## 撞名告警
-
-「**Task**」在今天的 sbx 里已有严格定义（见上）。集群语境里说「daemon 中存在多个 task」如果指的是同一个东西，就**不要另造词**；如果指的是「master 派下来的工作项」（可能一个工作项 → 一个 Task，也可能 → 多个），那它是另一个概念，必须另起名（建议 **Job**），否则后面每一句话都要靠上下文消歧。
+| 术语 | 定义与边界 |
+|---|---|
+| **SBX_HOME** | 本地配置、执行记录及资源关联目录，默认 ~/.sbx；新通用资源绑定 home 摘要。 |
+| **Docker daemon / namespace / owner** | 运行资源的 daemon、身份命名空间和操作者归属。标签防止误操作，不对抗 Docker API 管理员。 |
+| **Sidecar** | Task 网络上的代理、服务或转发容器；不是通用网络网关。 |
+| **Squid / allowlist / dedicated** | HTTP(S) 代理、域名允许列表与任务专属代理模式；个人默认 open，不默认限制所有出站流量。 |
+| **prep** | 在没有 Agent 的构建阶段固化私有依赖，再向任务播种。 |
+| **services / forward / port** | 任务临时依赖、到单个 TCP 目标的连接、把任务端口暴露到宿主回环地址。三者方向和风险不同。 |
+| **组织策略 / policy digest** | 管理员安装的权限上限及内容摘要；与个人授权取交集，不能补出缺失 grant。 |
+| **EventSink / JSONL** | 执行事件出口及逐行 JSON 编码；与文件产物 Sink 不同。 |
+| **outbox / collector** | 本地私有事件待投递队列与远端接收服务；本地入队不等于远端已收到。 |
+| **at-least-once / 幂等** | 至少一次投递可能重复；通过稳定身份、回执和业务核对避免重复效果，不宣称通用 exactly-once。 |
+| **schema** | 机器契约的结构描述；Go 运行时校验与策略授权仍为权威。 |
+| **Worker / Master / tenant** | 常驻执行者、控制面与多租户等未来部署概念；当前没有因此实现调度平台或多租户隔离。 |

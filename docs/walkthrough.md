@@ -1,13 +1,111 @@
-# sbx 走一遍：从第一次使用到合并分支
+# sbx 场景教程：从任务声明到验证、交付与恢复
 
-本篇保留 Git 工作区的日常流程。非 Git 输入、产物验证、人工审核和交付失败后的继续流程见 [通用任务手册](general-tasks.md)。
+[首页](index.html) · [场景教程](walkthrough.md) · [设计](design.md) · [命令](commands.md) · [术语](glossary.md)
 
-> 本文用一个具体场景，从头到尾按顺序讲一遍：每条命令敲下去之后，sbx、Docker、git、squid、claude 分别做了什么，留下了什么。
-> 讲的是 M1 代码的实际行为。想先了解 sbx 是什么、为什么这么设计，见[项目主页](https://zzjha-cn.github.io/agent_sandbox/)；命令和参数的速查见 [commands.md](commands.md)，结构化的说明见 [architecture.md](architecture.md)，设计取舍见 [design.md](design.md) 和 `private/adr/`（未纳入版本控制）。
+## 使用路线：先决定任务如何完成
+
+| 需求 | 入口 | 接着看 |
+|---|---|---|
+| 交互改代码、最后 review 合并 | `run <task>` | 下文 Git 日常流程 |
+| 脚本运行 Git 任务 | `run <task> -p "…" --jsonl` | 状态与日志；退出 0 后仍 review |
+| 目录/Git 副本生成可验证报告 | `task run --spec` | 场景一 |
+| 运行中查受控业务数据 | TaskSpec tools | 场景二 |
+| 按声明更新外部业务 | TaskSpec operations | 场景三 |
+| 等人工审核、交付失败、进程中断 | task continuation / management | 场景四 |
+| 团队使用统一上限与汇总事件 | policy / events | 场景五 |
+
+首次先 `sbx isolation status --json` 检查 daemon 归属；只有确认当前 daemon 为自己独占且需要接管旧卷时才 adopt。`sbx login codex --status` 或 `sbx login claude --status` 检查对应身份；不要用一个 provider 的登录结果推断另一个可用。
+
+## 场景一：从目录输入到报告交付
+
+目标是读输入副本，生成 report.json，通过文件检查并由操作者审核，再交付到本地目录。完整可复制的注册表和 TaskSpec 见 [通用任务手册](general-tasks.md#1-可信注册表与任务声明)。顺序如下：
+
+1. 在个人 `$SBX_HOME/execution-policy.toml` 注册 Source、文件判据、人工判据和 Sink，路径改成自己的绝对路径；注册表不能被组/其他用户写入。
+2. 保存 report-task.json，明确 provider、source 引用、outputs、criteria 和 sink；任务 JSON 不携带宿主凭据或任意验证命令。
+3. 在任意目录执行以下命令：
+
+```sh
+sbx version --json
+sbx schema task > task.schema.json
+sbx admit --spec report-task.json
+sbx task run --spec report-task.json
+sbx task list --json
+sbx task status monthly-report --json
+sbx task logs monthly-report --tail 30
+```
+
+admit 不预留资源，run 会再次检查。Agent 在隔离副本中工作，原输入不被直接改写；执行结束后停止写入者、冻结快照、独立验证。needs_review 时本次 CLI 退出，记录保留，目标尚未交付。
+
+```sh
+# 先阅读 status 的证据与快照，再作出人工决定：
+sbx task approve --spec report-task.json --reviewer operator-name
+# 或明确拒绝：sbx task reject --spec report-task.json --reviewer operator-name
+```
+
+确认目标目录中的文件和回执。approve 不重放 Agent。若不需要人工判据，自动验证全部通过后直接交付。需要代码输入时，将 Source 注册为 git 并选择 revision；省略 Source 则是空输入，不要求创建 Git 仓库。
+
+## 场景二：查询真实数据，再生成报告
+
+先由操作者注册只读 records.get grant、凭据文件和允许的目标/字段，再在 TaskSpec tools 中选择子集，并用 required_tools 判据要求实际调用证据。配置与完整示例见 [动态工具手册](dynamic-tools.md)。
+
+```sh
+sbx admit --spec query-task.json
+sbx task run --spec query-task.json
+sbx task status query-report --json
+```
+
+Agent 通过受控 MCP HTTP 网关调用；宿主逐次核对权限、撤销、期限和配额。工具凭据不作为任务文件传入。需要受支持的固定 provider 版本、同步 headless 与 dedicated proxy；不符合条件在准入时拒绝。只生成一份声称“已查询”的报告不能代替真实工具证据。
+
+## 场景三：更新外部记录，并核对业务状态
+
+操作者注册 record_http 的 write/lookup/read 权限及 external_state 判据。任务预先声明 operations；这与 Agent 运行期自由调用写工具不同。宿主等待 Agent 成功、停止沙箱后，先记录 intent，再提交请求。
+
+```sh
+sbx admit --spec update-task.json
+sbx task run --spec update-task.json
+sbx task status update-record --json
+# 回执丢失或结果 unknown：先查询，不能重新 run
+sbx task reconcile --spec update-task.json
+# 仅当证据证明尚未提交且当前仍有写权限时，显式提交：
+# sbx task apply --spec update-task.json
+```
+
+update-task.json 必须事先按实际服务契约配置，不能照抄一个不存在的业务 URL。字段含义、最小声明与恢复顺序见 [外部写命令说明](commands.md#外部写入与核对)。外部效果不会因为 CLI 取消或容器停止而自动撤销。
+
+## 场景四：失败后按事实继续
+
+| 发生什么 | 操作顺序 | 保留什么 |
+|---|---|---|
+| 判据需要重验 | `task verify --spec report-task.json` | 原 attempt、稳定快照；测试可能仍需 Docker |
+| 本地交付冲突/中断 | 先核对目标，再 `task deliver --spec report-task.json` | 原交付 key、摘要与回执，不重放 prompt |
+| 正在执行但想停止 | `task stop monthly-report` → status | 工作区、日志与未决业务事实 |
+| 提交 CLI 被 SIGKILL | `task recover monthly-report` → status | 孤立执行被核对并关闭，unknown 不被抹去 |
+| 只回收运行资源 | `task clean monthly-report` | 工作副本、输入基线、产物、日志、回执、目标 |
+| 明确再执行一次 Agent | 门禁解除后 `task run --spec report-task.json` | 旧 attempt 保留，新 runtime 按当前授权创建 |
+| 回收稳定快照 | `task prune monthly-report <attempt-id>` | 历史、清单与回执；未决状态会阻断 |
+
+`task logs monthly-report --follow` 只跟随当前选定 attempt，结束后退出。准备基线缺失、记录损坏等不能由 recover 自动补造，须保留现场人工核对。不要删除记录或换 task_id 绕过恢复门禁。
+
+## 场景五：管理员策略与团队事件
+
+管理员通过可信渠道安装 root 所有的 `/etc/sbx/organization.toml`。它只能收紧个人权限。受管运行使用同步 TaskSpec，Git 任务选择 Git Source；交互/detach/直接 shell 不进入该受管入口。
+
+```sh
+sbx policy show
+sbx task run --spec report-task.json
+sbx events status
+sbx events flush
+```
+
+flush 需要管理员配置 collector endpoint，以及个人 `$SBX_HOME/team-events.token` 私有凭据。离线时本地 outbox 保留事件，重发可能重复；collector 按稳定 ID 去重并持久化后确认。策略撤销停止进行中的活动，但不能回滚已经发生的业务写。安装与部署责任见 [设计中的信任边界](design.md#7-信任与网络边界) 和 [自动化手册](automation.md)。
+
+## Git 日常流程：从启动到 review 合并
+
+以下保留详细的 Git/Claude 使用过程。Claude 的 hooks、宿主配置和 memory 不代表 Codex 的实现；provider 的认证与会话规则以当前命令帮助为准。
 
 ## 先选 provider 与检查环境
 
-本文主体沿用 Claude 的完整日常场景；Claude 特有的 hooks、宿主机配置和项目记忆不代表 Codex 也使用同一套机制。命令按 2026-10-27 实现核对。正式业务测试步骤见 [testing.md](testing.md)，机器协议与退出码见 [automation.md](automation.md)。
+本文主体沿用 Claude 的完整日常场景；Claude 特有的 hooks、宿主机配置和项目记忆不代表 Codex 也使用同一套机制。机器协议与退出码见 [automation.md](automation.md)。
 
 首次使用或升级旧版本，先执行 `sbx isolation status --json`；仅当 daemon 确认归自己独占且旧卷待接管时执行 `sbx isolation adopt`。不应覆盖已有 config.toml 来照抄示例，下面的配置应合并到个人配置中。
 
@@ -40,7 +138,7 @@ Codex 的对话恢复按 Task 记录的 session ID，`--fresh` 在启动新一�
 | 网络 | 本机开着代理 `127.0.0.1:7890`，在容器里访问它的地址是 `host.docker.internal:7890` |
 | 由此算出的名字 | Workspace id = `shop-e76272`（目录名 + 仓库根路径 sha1 的前 6 位）<br>记忆 key = `-Users-apple-code-shop` |
 
-全文按时间顺序分 16 幕：前 12 幕是日常回路，后 3 幕是「项目跑起来还缺点什么」——连数据库、装私有依赖、够内网。每一幕先给命令，再按顺序说明发生了什么。
+下文按日常操作顺序展开，并补充数据库、私有依赖与内网连接。每一幕先给命令，再按顺序说明发生了什么。
 
 ---
 

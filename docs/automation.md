@@ -1,6 +1,6 @@
 # 自动化与统一执行协议
 
-2026-10-30：开发阶段收敛后，机器任务输入、JSONL 事件与执行记录统一使用 v2。`sbx.execution/v1` 输入已停止支持。简单 Git/交互式命令继续保留，内部共用 `execution.Service`；G7 已发布完整结构 schema、能力条件、恢复指引和迁移规则；G8 组织策略与事件汇总已完成当前范围。G9 通用任务管理见 [操作规范](task-management.md)。
+2026-10-30：开发阶段收敛后，机器任务输入、JSONL 事件与执行记录统一使用 v2。`sbx.execution/v1` 输入已停止支持。简单 Git/交互式命令继续保留，内部共用 `execution.Service`；G7 已发布完整结构 schema、能力条件、恢复指引和迁移规则；G8 组织策略与事件汇总已完成当前范围。G9 通用任务管理见 [操作规范](commands.md#通用任务每条命令的含义)。
 
 ## 选择入口
 
@@ -84,7 +84,7 @@ sbx task reconcile --spec task.json
 sbx execution status fix-login --json  # 仓库便捷任务
 ```
 
-verify/deliver/reconcile 不重新提交 prompt。外部写结果未知时先查询，禁止自动重发或用新 attempt 绕过；动态读取与声明式写入分别见 [G5](dynamic-tools.md) 和 [G6](external-operations.md)。取消不等于远端回滚。
+verify/deliver/reconcile 不重新提交 prompt。外部写结果未知时先查询，禁止自动重发或用新 attempt 绕过；动态读取与声明式写入分别见 [G5](dynamic-tools.md) 和 [G6](commands.md#外部写入与核对)。取消不等于远端回滚。
 
 Git 和通用任务统一由同一 FileStore 读写 `sbx.execution-record/v2`；工作区和记录目录仍按任务身份隔离，不因为统一格式而把两种任务合并。Git status 使用 `sbx.execution-status/v2`，通用任务 status 使用 `sbx.task-status/v2`，后者还包含工具审计。两者新增 `next_actions`，包含 action、带占位符的 command、requires_spec 和 reason；仅提供恢复指引，不授予权限。record_invalid 或 prepare/cleanup/retention 未决仍要求人工核对。
 
@@ -99,16 +99,16 @@ Git 和通用任务统一由同一 FileStore 读写 `sbx.execution-record/v2`；
 
 新目录代表独立任务身份，不能用它重复提交旧 home 中结果未知的业务操作。保留原 home、旧二进制和回执直到核对完成。服务端写入没有通用 Undo。
 
-收敛实现与本轮验收见 [架构收敛记录](architecture-convergence.md)。
+收敛实现与本轮验收见 架构收敛记录。
 
-旧 meta/config 的读取、升级和回退规则见 [迁移规范](migration.md)，完整发布验收见 [G7](g7-acceptance.md)。
+旧 meta/config 的读取、升级和回退规则见 [迁移规范](automation.md)，完整发布验收见 [G7](design.md)。
 
 
 ## G8 组织策略与事件 outbox
 
 安装固定 root 策略后，`run --spec` / `task run --spec` 与恢复命令执行组织和个人权限交集；Git 任务使用 Git Source。受管模式拒绝交互/detach/直接 shell 等无法持续监督的入口，未安装策略的个人用法保留。策略任意更新、禁用、到期或失效会取消当前活动，恢复时重新授权，未知业务写继续先核对。
 
-`sbx policy show` 显示有效上限和摘要；`sbx schema team-event` 导出 `sbx.team-event/v1`。事件先写私有本地 outbox，`sbx events status` 查看积压，`sbx events flush` 使用独立成员 token 显式上传。`event_delivery_state` 不代表远端 collector 已收件。完整安装、脱敏、访问控制和可绕过边界见 [组织规范](organization.md)，实测见 [G8](g8-acceptance.md)。
+`sbx policy show` 显示有效上限和摘要；`sbx schema team-event` 导出 `sbx.team-event/v1`。事件先写私有本地 outbox，`sbx events status` 查看积压，`sbx events flush` 使用独立成员 token 显式上传。`event_delivery_state` 不代表远端 collector 已收件。完整安装、脱敏、访问控制和可绕过边界见 [组织规范](design.md#7-信任与网络边界)，实测见 [G8](design.md)。
 
 
 ## 通用任务维护响应
