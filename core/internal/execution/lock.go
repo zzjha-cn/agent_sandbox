@@ -22,7 +22,7 @@ func (d *RuntimeDriver) Lock(req Request) (func(), error) {
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		f.Close()
 		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
-			return nil, &ExecutionError{Kind: AdmissionRejected, Stage: "locking task", Cause: fmt.Errorf("task %s has another execution in progress: %w", req.Task.Name, err)}
+			return nil, &ExecutionError{Kind: AdmissionRejected, Stage: "locking task", Cause: fmt.Errorf("task %s has another execution in progress: %w", req.Task.Name, ErrRecordBusy)}
 		}
 		return nil, &ExecutionError{Kind: EnvironmentFailed, Stage: "locking task", Cause: err}
 	}

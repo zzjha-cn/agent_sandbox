@@ -335,7 +335,7 @@ make e2e           # legacy Claude acceptance; real model calls, requires Claude
 
 For automation, use `sbx version --json`, `sbx admit --spec task.json`, then `sbx task run --spec task.json` (or `sbx run --spec`). TaskSpec selects the provider explicitly. Git and interactive commands remain available; v1 input is retired. See [automation and migration](docs/automation.md) and [architecture convergence](docs/architecture-convergence.md).
 
-Machine clients can export bundled JSON Schemas with `sbx schema task`; `sbx version --json` reports capability requirements and compatibility. See [schemas](docs/schemas/README.md), [migration rules](docs/migration.md), and [G7 acceptance](docs/g7-acceptance.md). Administrator ceilings, policy revocation, and the team-event outbox are documented in [organization policy](docs/organization.md) and [G8 acceptance](docs/g8-acceptance.md).
+Machine clients can export bundled JSON Schemas with `sbx schema task`; `sbx version --json` reports capability requirements and compatibility. See [schemas](docs/schemas/README.md), [migration rules](docs/migration.md), and [G7 acceptance](docs/g7-acceptance.md). Administrator ceilings, policy revocation, and the team-event outbox are documented in [organization policy](docs/organization.md) and [G8 acceptance](docs/g8-acceptance.md). General tasks support offline list/log inspection and explicit stop/clean/recover while retaining artifacts and receipts; see [task management](docs/task-management.md) and [G9 acceptance](docs/g9-acceptance.md).
 
 Add `-v / --verbose` to print every docker and git command as it runs.
 

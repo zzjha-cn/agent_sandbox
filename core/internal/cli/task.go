@@ -127,6 +127,7 @@ func (a *App) taskCmd() *cobra.Command {
 		return json.NewEncoder(a.Out).Encode(protocol.Retention{SchemaVersion: "sbx.artifact-retention/v1", State: "pruned"})
 	}}
 	root.AddCommand(prune)
+	root.AddCommand(a.taskManagementCommands()...)
 	for _, action := range []string{"run", "verify", "deliver", "approve", "reject", "reconcile", "apply"} {
 		action := action
 		var specPath, reviewer string

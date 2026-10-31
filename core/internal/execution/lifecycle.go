@@ -50,6 +50,10 @@ func (s *Service) Run(ctx context.Context, req Request) (Result, error) {
 	}
 	if guard, ok := s.driver.(interface{ ValidateRuntime(Request) error }); ok {
 		if err := guard.ValidateRuntime(req); err != nil {
+			var ee *ExecutionError
+			if errors.As(err, &ee) {
+				return reject(ee.Kind, ee.Stage, ee.Cause)
+			}
 			return reject(AdmissionRejected, "organization_runtime", err)
 		}
 	}
@@ -101,6 +105,9 @@ func (s *Service) Run(ctx context.Context, req Request) (Result, error) {
 		if r.SchemaVersion != RecordSchema {
 			return reject(AdmissionRejected, "execution_record", ErrRecordInvalid)
 		}
+		if req.Pipeline != nil && r.Recovery() == "inspect_runtime" {
+			return reject(AdmissionRejected, "execution_record", ErrRecoveryRequired)
+		}
 		switch r.Recovery() {
 		case "reconcile_prepare", "reconcile_cleanup", "reconcile_operations", "continue_verification", "retry_delivery", "continue_completion", "reconcile_retention":
 			return reject(AdmissionRejected, "execution_record", ErrRecoveryRequired)
@@ -111,6 +118,15 @@ func (s *Service) Run(ctx context.Context, req Request) (Result, error) {
 	}
 	if req.Pipeline != nil && store == nil {
 		return reject(AdmissionRejected, "execution_record", errors.New("general tasks require durable records"))
+	}
+	if req.Pipeline != nil {
+		var stop func()
+		var err error
+		ctx, stop, err = watchTaskStop(ctx, req.Task, result.AttemptID)
+		if err != nil {
+			return reject(InternalFailed, "task_control", err)
+		}
+		defer stop()
 	}
 	// The effective store is local to this run; an explicitly supplied test store
 	// remains reusable, while RuntimeDriver resolves a fresh per-task FileStore.
@@ -141,6 +157,11 @@ func (s *Service) runWithStore(ctx context.Context, req Request, result Result, 
 			if result.Stages[i].State == ProgressRunning {
 				result.Stages[i].State = ProgressFailed
 			}
+		}
+	}
+	if req.Pipeline != nil && s.started {
+		if logErr := archiveAttemptLog(req.Task, result.AttemptID); logErr != nil {
+			primary = errors.Join(primary, &ExecutionError{Kind: InternalFailed, Stage: "attempt_log", Cause: logErr})
 		}
 	}
 	// A skipped phase means it was not requested, not that it succeeded.
@@ -329,6 +350,9 @@ func (s *Service) Check(ctx context.Context, req Request) (Admission, error) {
 		return Admission{}, &ExecutionError{Kind: InternalFailed, Stage: "execution_record", Cause: err}
 	}
 	if record != nil {
+		if req.Pipeline != nil && record.Recovery() == "inspect_runtime" {
+			return Admission{}, &ExecutionError{Kind: AdmissionRejected, Stage: "execution_record", Cause: ErrRecoveryRequired}
+		}
 		switch record.Recovery() {
 		case "reconcile_prepare", "reconcile_cleanup", "reconcile_operations", "continue_verification", "retry_delivery", "continue_completion", "reconcile_retention":
 			return Admission{}, &ExecutionError{Kind: AdmissionRejected, Stage: "execution_record", Cause: ErrRecoveryRequired}

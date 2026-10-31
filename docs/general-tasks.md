@@ -1,6 +1,6 @@
 # 通用任务：输入、验证与本地交付
 
-`sbx task` 是通用任务的显式 v2 入口，在 Git 仓库之外也能使用。支持同步 headless Claude/Codex、Git revision/文件副本/空输入、稳定产物、独立验证与本地目录/Git 交付。G5 的运行期只读工具见 [动态工具规范](dynamic-tools.md)，G6 的预先声明写操作、回执核对与业务状态验证见 [外部操作规范](external-operations.md)。`sbx run` 保留 Git/交互入口；`sbx run --spec` 与 `sbx task run --spec` 共用提交路径。机器输入/事件和执行记录已统一为 v2，`--envelope` 仅是参数别名，v1 输入被拒绝，见 [自动化与迁移](automation.md)。G7 已完成 schema/能力发布与迁移规则，见 [自动化规范](automation.md)；G8 组织策略与事件汇总已完成当前范围，见 [组织规范](organization.md)；受管模式只接受同步 TaskSpec（含 Git Source）。远端产物发布仍属后续范围。
+`sbx task` 是通用任务的显式 v2 入口，在 Git 仓库之外也能使用。支持同步 headless Claude/Codex、Git revision/文件副本/空输入、稳定产物、独立验证与本地目录/Git 交付。G5 的运行期只读工具见 [动态工具规范](dynamic-tools.md)，G6 的预先声明写操作、回执核对与业务状态验证见 [外部操作规范](external-operations.md)。`sbx run` 保留 Git/交互入口；`sbx run --spec` 与 `sbx task run --spec` 共用提交路径。机器输入/事件和执行记录已统一为 v2，`--envelope` 仅是参数别名，v1 输入被拒绝，见 [自动化与迁移](automation.md)。G7 已完成 schema/能力发布与迁移规则，见 [自动化规范](automation.md)；G8 组织策略与事件汇总已完成当前范围，见 [组织规范](organization.md)；受管模式只接受同步 TaskSpec（含 Git Source）。G9 的列表、日志、停止、运行资源清理与中断恢复见 [任务管理](task-management.md)。远端产物发布仍属后续范围。
 
 ## 1. 可信注册表与任务声明
 
@@ -124,7 +124,7 @@ sbx task deliver --spec report-task.json
 
 这些命令不重新提交 prompt。仅重试本地交付可在 Docker 不可用时进行；重跑测试仍需要 Docker。每次继续重新核验引用/授权、判据版本和快照；撤权、改绑或快照变化会拒绝继续。未知结果保持可见，不用新 run 绕过。status 不读取配置、不要求 Git、不调用 Docker；它是阶段事实查询，不是全自动资源修复。
 
-恢复提示包括 continue_completion、continue_verification、retry_delivery、reconcile_operations、reconcile_retention，以及沿用的准备/清理核对。收集意图未完成时，verify 会隔离未提交快照并从已停止的工作区重新收集；已完成快照则直接复用。准备/清理未核对时仍保守阻断，不能删除记录伪装成新任务。
+恢复提示包括 continue_completion、continue_verification、retry_delivery、reconcile_operations、reconcile_retention，以及沿用的准备/清理核对。收集意图未完成时，verify 会隔离未提交快照并从已停止的工作区重新收集；已完成快照则直接复用。停止结果可用 `task recover <task>` 核对；准备基线缺失或快照清理未核对时仍保守阻断，不能删除记录伪装成新任务。
 
 快照默认保留，无时间型 GC。确认恢复/交付完成后可显式清理：
 

@@ -1,6 +1,6 @@
 # v2 机器契约
 
-这些 Draft 2020-12 JSON Schema 由实际 CLI 的 Go wire 类型和输入结构规则生成，使用 `sbx schema <name>` 离线导出。`$id` 是稳定 URN，不表示存在在线 schema 服务。输入只支持 `sbx.execution/v2`；独立的 artifact-retention 响应仍是 v1。
+这些 Draft 2020-12 JSON Schema 由实际 CLI 的 Go wire 类型和输入结构规则生成，使用 `sbx schema <name>` 离线导出。`$id` 是稳定 URN，不表示存在在线 schema 服务。输入只支持 `sbx.execution/v2`；独立的 artifact-retention、team-event、task-list 与 task-maintenance 契约各自使用 v1。
 
 | 名称 | 内容 |
 |---|---|
@@ -12,6 +12,8 @@
 | [version](version.schema.json) | 能力、适用条件、schema 名称及兼容边界 |
 | [admission](admission.schema.json) | 只读准入响应 |
 | [retention](retention.schema.json) | 显式产物清理响应 |
+| [task-list](task-list.schema.json) | G9 离线任务列表：持久化状态与恢复门禁，独立 v1 |
+| [task-maintenance](task-maintenance.schema.json) | G9 stop/clean/recover 的本地维护结果，独立 v1 |
 | [team-event](team-event.schema.json) | G8 汇总事件：独立 v1、严格字段白名单、稳定 ID 和摘要身份 |
 
 Schema 做结构检查；运行时继续检查 UTF-8、1 MiB 输入上限、重复 JSON key、逻辑 ID 去重、路径/glob 语义、操作 value 序列化后 64 KiB 上限和实际策略授权。对象解析后无法用标准 JSON Schema 发现原始重复 key；不能把结构合法等同于获得授权。可选输入省略，拒绝 null；省略 criteria 与显式 [] 的授权语义不同。

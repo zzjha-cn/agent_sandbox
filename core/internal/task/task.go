@@ -2,6 +2,8 @@
 package task
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -102,11 +104,16 @@ func (t Task) StateDir() string { return filepath.Join(t.Home, "state", t.WS.ID,
 func (t Task) GenDir() string   { return filepath.Join(t.StateDir(), "gen") }
 
 func (t Task) Labels() map[string]string {
-	return map[string]string{"sbx.ws": t.WS.ID, "sbx.task": t.Name}
+	labels := map[string]string{"sbx.ws": t.WS.ID, "sbx.task": t.Name}
+	if t.ExecutionDir != "" {
+		labels["sbx.execution-home"] = t.ExecutionHomeKey()
+	}
+	return labels
 }
 
 // Meta 是创建 Task 时的参数，存在 state/meta.json。
 type Meta struct {
+	RuntimeRetired           bool     `json:"runtime_retired,omitempty"`
 	OrganizationPolicyDigest string   `json:"organization_policy_digest,omitempty"`
 	Namespace                string   `json:"namespace,omitempty"`
 	Owner                    string   `json:"owner,omitempty"`
@@ -246,4 +253,11 @@ func Derive(st docker.State, exists bool, s *AgentStatus, runExit *int) string {
 	default:
 		return "starting"
 	}
+}
+
+// ExecutionHomeKey separates equal general task names in different local homes.
+func (t Task) ExecutionHomeKey() string {
+	abs, _ := filepath.Abs(t.Home)
+	sum := sha256.Sum256([]byte(filepath.Clean(abs)))
+	return hex.EncodeToString(sum[:])
 }

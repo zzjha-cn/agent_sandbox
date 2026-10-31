@@ -1375,3 +1375,18 @@ VM 内存取自 `docker info` 的 `MemTotal`，Docker Desktop 下就是那台 VM
 
 
 组织策略与汇总事件：`sbx policy show`、`sbx events status`、`sbx events flush`。固定 root 策略存在时只支持同步 TaskSpec；Git 使用 Git Source，不能通过个人配置或更换 SBX_HOME 扩权。见 [组织规范](organization.md)。
+
+
+## 通用任务管理（G9）
+
+```sh
+sbx task list --json
+sbx task status <task> --json
+sbx task logs <task> --tail 30 --follow
+sbx task logs <task> --attempt <attempt-id>
+sbx task stop <task>
+sbx task recover <task>
+sbx task clean <task>
+```
+
+这些入口按 SBX_HOME/task_id 定位，不要求 Git。list/status/logs 离线；stop 取消活动并等待收尾；recover 核对孤立执行；clean 只回收专属运行资源。原 Git 便捷任务仍用顶层 ls/logs/stop/done。状态门禁和恢复步骤见 [任务管理规范](task-management.md)。

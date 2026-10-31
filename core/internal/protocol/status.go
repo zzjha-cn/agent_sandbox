@@ -41,10 +41,22 @@ func (s *Status) SetRecovery(recovery string) {
 		a = RecoveryAction{Action: "verify", Command: "sbx task verify --spec <task.json>", RequiresSpec: true, Reason: "Continue collection and verification from recorded facts without replaying the prompt."}
 	case "record_invalid":
 		a.Reason = "Preserve the home and original binary. Inspect version, integrity and identity; never delete records to bypass recovery gates."
-	case "reconcile_prepare", "reconcile_cleanup", "reconcile_retention":
+	case "reconcile_cleanup":
+		a.Reason = "Inspect owned runtime resources before reconciling cleanup."
+		if general {
+			a.Action = "recover"
+			a.Command = "sbx task recover <task>"
+			a.Reason = "Independently stop and inspect owned task containers, then reconcile the recorded cleanup failure without replaying effects."
+		}
+	case "reconcile_prepare", "reconcile_retention":
 		a.Reason = "Inspect owned runtime resources and retained inputs/artifacts; manual reconciliation is required before a new attempt."
 	case "inspect_runtime":
 		a.Reason = "Inspect the running or interrupted session before choosing attach, stop or a new attempt."
+		if general {
+			a.Action = "recover"
+			a.Command = "sbx task recover <task>"
+			a.Reason = "Stop orphaned task containers and reconcile the interrupted record; a live supervisor must first be cancelled with sbx task stop <task>."
+		}
 	case "not_recorded", "new_attempt_allowed":
 		a.Action = "run"
 		a.Reason = "No recorded recovery gate blocks a new attempt; admission and current policy must still pass."
@@ -80,4 +92,18 @@ type Admission struct {
 type Retention struct {
 	SchemaVersion string `json:"schema_version"`
 	State         string `json:"state"`
+}
+
+const TaskListSchema = "sbx.task-list/v1"
+const TaskMaintenanceSchema = "sbx.task-maintenance/v1"
+
+type TaskList struct {
+	SchemaVersion string                  `json:"schema_version"`
+	Tasks         []execution.TaskSummary `json:"tasks"`
+}
+type TaskMaintenance struct {
+	SchemaVersion string `json:"schema_version"`
+	TaskID        string `json:"task_id"`
+	Action        string `json:"action"`
+	Recovery      string `json:"recovery"`
 }

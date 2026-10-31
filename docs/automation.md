@@ -1,6 +1,6 @@
 # 自动化与统一执行协议
 
-2026-10-30：开发阶段收敛后，机器任务输入、JSONL 事件与执行记录统一使用 v2。`sbx.execution/v1` 输入已停止支持。简单 Git/交互式命令继续保留，内部共用 `execution.Service`；G7 已发布完整结构 schema、能力条件、恢复指引和迁移规则；组织治理仍属于 G8。
+2026-10-30：开发阶段收敛后，机器任务输入、JSONL 事件与执行记录统一使用 v2。`sbx.execution/v1` 输入已停止支持。简单 Git/交互式命令继续保留，内部共用 `execution.Service`；G7 已发布完整结构 schema、能力条件、恢复指引和迁移规则；G8 组织策略与事件汇总已完成当前范围。G9 通用任务管理见 [操作规范](task-management.md)。
 
 ## 选择入口
 
@@ -109,3 +109,8 @@ Git 和通用任务统一由同一 FileStore 读写 `sbx.execution-record/v2`；
 安装固定 root 策略后，`run --spec` / `task run --spec` 与恢复命令执行组织和个人权限交集；Git 任务使用 Git Source。受管模式拒绝交互/detach/直接 shell 等无法持续监督的入口，未安装策略的个人用法保留。策略任意更新、禁用、到期或失效会取消当前活动，恢复时重新授权，未知业务写继续先核对。
 
 `sbx policy show` 显示有效上限和摘要；`sbx schema team-event` 导出 `sbx.team-event/v1`。事件先写私有本地 outbox，`sbx events status` 查看积压，`sbx events flush` 使用独立成员 token 显式上传。`event_delivery_state` 不代表远端 collector 已收件。完整安装、脱敏、访问控制和可绕过边界见 [组织规范](organization.md)，实测见 [G8](g8-acceptance.md)。
+
+
+## 通用任务维护响应
+
+`task list --json` 输出单个 `sbx.task-list/v1` 对象，tasks 为持久化任务数组，不声称 runtime 存活。`task stop/clean/recover` 成功时输出单个 `sbx.task-maintenance/v1` 对象，包含 task_id/action/recovery；失败没有成功回执，应结合进程码、stderr 和 status 判断。维护成功不表示外部操作已核对。原始 provider 日志用 `task logs` 读取，不应按 JSONL 生命周期协议解析。两种响应 schema 由 `sbx schema task-list/task-maintenance` 导出，能力为 `task.management`。

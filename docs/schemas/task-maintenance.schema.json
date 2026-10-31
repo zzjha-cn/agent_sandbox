@@ -1,0 +1,33 @@
+{
+  "$id": "urn:sbx:schema:task-maintenance:v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "properties": {
+    "action": {
+      "enum": [
+        "stop",
+        "clean",
+        "recover"
+      ],
+      "type": "string"
+    },
+    "recovery": {
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "sbx.task-maintenance/v1",
+      "type": "string"
+    },
+    "task_id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "task_id",
+    "action",
+    "recovery"
+  ],
+  "title": "sbx task-maintenance",
+  "type": "object"
+}

@@ -12,7 +12,7 @@ import (
 type JSONSchema map[string]any
 
 func SchemaNames() []string {
-	return []string{"task", "event", "result", "task-status", "execution-status", "version", "admission", "retention", "team-event"}
+	return []string{"task", "event", "result", "task-status", "execution-status", "version", "admission", "retention", "team-event", "task-list", "task-maintenance"}
 }
 
 // Schema derives wire shapes from the actual CLI types. Input objects are
@@ -20,6 +20,10 @@ func SchemaNames() []string {
 func Schema(name string) (JSONSchema, error) {
 	var value any
 	switch name {
+	case "task-list":
+		value = TaskList{}
+	case "task-maintenance":
+		value = TaskMaintenance{}
 	case "team-event":
 		value = governance.TeamEvent{}
 	case "task":
@@ -44,6 +48,13 @@ func Schema(name string) (JSONSchema, error) {
 	s["$id"] = "urn:sbx:schema:" + name + ":v2"
 	s["title"] = "sbx " + name
 	switch name {
+	case "task-list":
+		s["$id"] = "urn:sbx:schema:task-list:v1"
+		prop(s, "schema_version")["const"] = TaskListSchema
+	case "task-maintenance":
+		s["$id"] = "urn:sbx:schema:task-maintenance:v1"
+		prop(s, "schema_version")["const"] = TaskMaintenanceSchema
+		prop(s, "action")["enum"] = []string{"stop", "clean", "recover"}
 	case "team-event":
 		s["$id"] = "urn:sbx:schema:team-event:v1"
 		s["additionalProperties"] = false

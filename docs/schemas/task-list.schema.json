@@ -1,0 +1,49 @@
+{
+  "$id": "urn:sbx:schema:task-list:v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "properties": {
+    "schema_version": {
+      "const": "sbx.task-list/v1",
+      "type": "string"
+    },
+    "tasks": {
+      "items": {
+        "additionalProperties": true,
+        "properties": {
+          "attempt_id": {
+            "type": "string"
+          },
+          "execution_state": {
+            "type": "string"
+          },
+          "recovery": {
+            "type": "string"
+          },
+          "task_id": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "recovery"
+        ],
+        "type": "object"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "tasks"
+  ],
+  "title": "sbx task-list",
+  "type": "object"
+}

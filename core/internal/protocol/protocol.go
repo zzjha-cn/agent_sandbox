@@ -50,7 +50,7 @@ type VersionInfo struct {
 func Version(appVersion string) VersionInfo {
 	return VersionInfo{SchemaVersion: SchemaVersion, ApplicationVersion: appVersion,
 		Providers: []string{"claude", "codex"}, ArtifactDelivery: "local_directory,git_local",
-		Capabilities: []string{"task.v2", "admit.v2", "events.jsonl.v2", "timeout", "source.files", "source.git", "artifact.snapshot", "criteria.files", "criteria.tests", "criteria.manual", "criteria.external_state", "tools.records.get", "operations.record_http", "organization.ceilings", "events.team-outbox"}, MaxTimeoutSeconds: MaxTimeoutSeconds, Schemas: SchemaNames(), CapabilityDetails: capabilityDetails(), RecordSchema: execution.RecordSchema, Compatibility: Compatibility{InputVersions: []string{SchemaVersion}, RecordVersions: []string{execution.RecordSchema}, V1Records: "preserve_and_reconcile_with_original_binary", AdditiveOutputFields: true}}
+		Capabilities: []string{"task.v2", "admit.v2", "events.jsonl.v2", "timeout", "source.files", "source.git", "artifact.snapshot", "criteria.files", "criteria.tests", "criteria.manual", "criteria.external_state", "tools.records.get", "operations.record_http", "organization.ceilings", "events.team-outbox", "task.management"}, MaxTimeoutSeconds: MaxTimeoutSeconds, Schemas: SchemaNames(), CapabilityDetails: capabilityDetails(), RecordSchema: execution.RecordSchema, Compatibility: Compatibility{InputVersions: []string{SchemaVersion}, RecordVersions: []string{execution.RecordSchema}, V1Records: "preserve_and_reconcile_with_original_binary", AdditiveOutputFields: true}}
 }
 
 type CapabilityDetail struct {
@@ -67,6 +67,7 @@ type Compatibility struct {
 // Implementation constraints, not a grant of local authority.
 func capabilityDetails() []CapabilityDetail {
 	return []CapabilityDetail{
+		{Name: "task.management", Requirements: []string{"task list/status/logs are offline", "stop uses attempt-scoped supervisor cancellation", "clean/recover require exclusive task locks and daemon ownership", "runtime cleanup retains workspace/artifacts/receipts; unknown effects forbid replay"}},
 		{Name: "organization.ceilings", Requirements: []string{"root-owned /etc/sbx/organization.toml", "synchronous TaskSpec only when managed", "dedicated Docker daemon/VM for mutually untrusted operators", "policy changes cancel within 250ms plus bounded cleanup; external effects require reconciliation"}},
 		{Name: "events.team-outbox", Requirements: []string{"managed policy", "private durable local outbox", "explicit events flush with per-operator collector credential", "collector authenticates subject and deduplicates stable event id"}},
 		{Name: "task.v2", Requirements: []string{"explicit provider", "headless synchronous execution", "Docker", "current operator policy"}},

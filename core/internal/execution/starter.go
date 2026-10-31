@@ -9,6 +9,7 @@ import (
 	"sandx/internal/docker"
 	"sandx/internal/task"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -60,6 +61,15 @@ func (s AgentStarter) Start(ctx context.Context, t task.Task, o Request) error {
 	os.Remove(filepath.Join(t.StateDir(), "run.exit"))
 	if o.Mode == Headless {
 		if err := s.RotateLog(filepath.Join(t.StateDir(), "run.log")); err != nil {
+			return err
+		}
+	}
+	if o.Pipeline != nil && o.Mode == Headless {
+		f, err := os.OpenFile(t.RunLogPath(), os.O_CREATE|os.O_WRONLY|os.O_TRUNC|syscall.O_NOFOLLOW, 0600)
+		if err != nil {
+			return err
+		}
+		if err := f.Close(); err != nil {
 			return err
 		}
 	}

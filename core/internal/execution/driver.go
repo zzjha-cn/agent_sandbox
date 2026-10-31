@@ -2,6 +2,7 @@ package execution
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sandx/internal/agent"
 	"sandx/internal/docker"
@@ -31,6 +32,9 @@ func (d *RuntimeDriver) Inspect(ctx context.Context, req Request) (bool, bool, e
 
 func (d *RuntimeDriver) Admit(ctx context.Context, req Request, exists, running bool) error {
 	t := req.Task
+	if err := d.checkExecutionHome(ctx, req); err != nil {
+		return err
+	}
 	if err := isolation.CheckBoundary(req.Config.Isolation); err != nil {
 		return err
 	}
@@ -55,6 +59,9 @@ func (d *RuntimeDriver) Admit(ctx context.Context, req Request, exists, running 
 		return err
 	}
 	if ok {
+		if exists && meta.RuntimeRetired {
+			return fmt.Errorf("retired runtime still exists; clean before reuse")
+		}
 		if err := checkManagedRuntime(req, meta); err != nil {
 			return err
 		}
@@ -110,6 +117,9 @@ func (d *RuntimeDriver) Resume(ctx context.Context, req Request, running bool) e
 		return err
 	}
 	if ok {
+		if meta.RuntimeRetired {
+			return fmt.Errorf("retired runtime cannot resume")
+		}
 		if err := checkManagedRuntime(req, meta); err != nil {
 			return err
 		}
@@ -137,7 +147,7 @@ func (d *RuntimeDriver) Stop(ctx context.Context, req Request) error {
 // were created under another policy. Continue does not start a runtime and is
 // independently authorized against current grants, including query-only repair.
 func checkManagedRuntime(req Request, meta task.Meta) error {
-	if req.OrganizationPolicyDigest != "" && req.OrganizationPolicyDigest != meta.OrganizationPolicyDigest {
+	if !meta.RuntimeRetired && req.OrganizationPolicyDigest != "" && req.OrganizationPolicyDigest != meta.OrganizationPolicyDigest {
 		return &ExecutionError{Kind: AdmissionRejected, Stage: "organization_runtime", Cause: fmt.Errorf("existing runtime belongs to another or unmanaged policy; reconcile retained facts before creating a new runtime/task")}
 	}
 	return nil
@@ -146,8 +156,11 @@ func checkManagedRuntime(req Request, meta task.Meta) error {
 // Check before appending a new attempt so a policy refusal cannot hide a prior
 // retained artifact from continuation. Admit repeats it under execution locks.
 func (d *RuntimeDriver) ValidateRuntime(req Request) error {
-	if req.OrganizationPolicyDigest == "" {
+	if req.OrganizationPolicyDigest == "" && req.Task.ExecutionDir == "" {
 		return nil
+	}
+	if err := d.checkExecutionHome(d.dockerContext(), req); err != nil {
+		return err
 	}
 	meta, ok, err := req.Task.ReadMeta()
 	if err != nil {
@@ -156,5 +169,46 @@ func (d *RuntimeDriver) ValidateRuntime(req Request) error {
 	if !ok {
 		return nil
 	}
+	if meta.RuntimeRetired {
+		_, exists, err := d.Docker.Inspect(req.Task.Container())
+		if err != nil {
+			return err
+		}
+		if exists {
+			return fmt.Errorf("retired runtime still exists; clean before reuse")
+		}
+	}
 	return checkManagedRuntime(req, meta)
+}
+
+func (d *RuntimeDriver) checkExecutionHome(ctx context.Context, req Request) error {
+	if req.Task.ExecutionDir == "" || d.Docker == nil {
+		return nil
+	}
+	_, exists, err := d.Docker.WithContext(ctx).Inspect(req.Task.Container())
+	if err != nil {
+		return &ExecutionError{Kind: errorKind(err, EnvironmentFailed), Stage: "runtime_identity", Cause: err}
+	}
+	if !exists {
+		return nil
+	}
+	raw, err := d.Docker.WithContext(ctx).Run("container", "inspect", "--format", "{{json .Config.Labels}}", req.Task.Container())
+	if err != nil {
+		return err
+	}
+	labels := map[string]string{}
+	if err := json.Unmarshal([]byte(raw), &labels); err != nil {
+		return err
+	}
+	if labels["sbx.execution-home"] != req.Task.ExecutionHomeKey() {
+		return fmt.Errorf("runtime belongs to another home or lacks a home identity; preserve records and inspect original runtime before reuse")
+	}
+	return nil
+}
+
+func (d *RuntimeDriver) dockerContext() context.Context {
+	if d.Docker == nil {
+		return context.Background()
+	}
+	return d.Docker.Context()
 }

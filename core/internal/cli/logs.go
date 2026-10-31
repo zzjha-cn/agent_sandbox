@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -54,7 +55,7 @@ func (a *App) logsCmd() *cobra.Command {
 // showLogs 读宿主机上的 run.log——state 目录本来就是 bind mount，不用进容器，
 // 所以容器停了照样看得到（headless 跑完容器就停了，这是常态）。
 func (a *App) showLogs(t task.Task, follow bool, tail int) error {
-	b, err := os.ReadFile(t.RunLogPath())
+	b, err := readLog(t.RunLogPath())
 	if os.IsNotExist(err) {
 		return fmt.Errorf("task %s has no run.log — it was never run with sbx run -p.\nInteractive output lives in tmux: sbx attach %s", t.Name, t.Name)
 	}
@@ -111,7 +112,7 @@ func followFile(path string, out io.Writer, offset int64, done func() bool, tick
 }
 
 func copyFrom(path string, out io.Writer, offset int64) (int64, error) {
-	f, err := os.Open(path)
+	f, err := openLog(path)
 	if os.IsNotExist(err) {
 		return 0, nil
 	}
@@ -123,4 +124,29 @@ func copyFrom(path string, out io.Writer, offset int64) (int64, error) {
 		return 0, err
 	}
 	return io.Copy(out, f)
+}
+
+// Agent-writable log paths must never follow a symlink or block on a FIFO.
+func openLog(path string) (*os.File, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	info, err := f.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		f.Close()
+		if err == nil {
+			err = fmt.Errorf("log is not a regular file")
+		}
+		return nil, err
+	}
+	return f, nil
+}
+func readLog(path string) ([]byte, error) {
+	f, err := openLog(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(f)
 }

@@ -324,7 +324,7 @@ make e2e           # 旧版 Claude 端到端验收（需要已登录）
 
 机器任务使用 `sbx version --json`、`sbx admit --spec task.json` 和 `sbx task run --spec task.json`；`sbx run --spec` 使用相同流程，TaskSpec 明确选择 provider。Git/交互式入口保留，旧 v1 输入已移除，迁移见 [自动化手册](docs/automation.md) 和 [架构收敛](docs/architecture-convergence.md)。
 
-机器调用方可通过 `sbx schema task` 离线导出 JSON Schema，`sbx version --json` 查询能力条件和兼容边界；状态查询新增 next_actions。见 [schema](docs/schemas/README.md)、[迁移规则](docs/migration.md) 和 [G7 验收](docs/g7-acceptance.md)。G8 的固定组织策略、运行期撤销和团队事件 outbox 见 [组织规范](docs/organization.md) 与 [验收](docs/g8-acceptance.md)。
+机器调用方可通过 `sbx schema task` 离线导出 JSON Schema，`sbx version --json` 查询能力条件和兼容边界；状态查询新增 next_actions。见 [schema](docs/schemas/README.md)、[迁移规则](docs/migration.md) 和 [G7 验收](docs/g7-acceptance.md)。G8 的固定组织策略、运行期撤销和团队事件 outbox 见 [组织规范](docs/organization.md) 与 [验收](docs/g8-acceptance.md)。G9 提供仓库外可用的 `task list/logs/stop/clean/recover`，支持保留产物与回执的运行资源管理，见 [任务管理](docs/task-management.md) 和 [验收](docs/g9-acceptance.md)。
 
 加 `-v / --verbose` 可以打印执行的每一条 docker 和 git 命令。
 

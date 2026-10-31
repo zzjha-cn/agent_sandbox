@@ -104,6 +104,12 @@ func (s *Service) Continue(ctx context.Context, req Request, action, reviewer st
 			return result, pipelineError(AdmissionRejected, AdmissionPhase, ErrRecoveryRequired)
 		}
 	}
+	var stop func()
+	ctx, stop, err = watchTaskStop(ctx, req.Task, result.AttemptID)
+	if err != nil {
+		return result, pipelineError(InternalFailed, AdmissionPhase, err)
+	}
+	defer stop()
 	oldStore := s.store
 	s.store = store
 	defer func() { s.store = oldStore }()
