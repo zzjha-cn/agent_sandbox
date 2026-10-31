@@ -1,346 +1,154 @@
 <h1 align="center">sbx</h1>
 
-<p align="center">
-  Run Claude Code or Codex in a Docker sandbox — skip the permission prompts without betting your machine on it.
-</p>
+<p align="center">A controlled execution runtime for Claude Code and Codex.</p>
 
 <p align="center">
-  <a href="https://zzjha-cn.github.io/agent_sandbox/"><b>Website</b></a> ·
-  <b>English</b> ·
-  <a href="README.cn.md">简体中文</a>
+  <a href="https://zzjha-cn.github.io/agent_sandbox/"><b>Website & Wiki</b></a> ·
+  <b>English</b> · <a href="README.cn.md">简体中文</a> ·
+  <a href="docs/walkthrough.md">Walkthrough</a> · <a href="docs/commands.md">Commands</a>
 </p>
 
 <p align="center">
   <img alt="Go" src="https://img.shields.io/badge/Go-1.27-00ADD8?logo=go&logoColor=white">
   <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue">
-  <img alt="Status" src="https://img.shields.io/badge/status-Claude%20%2B%20Codex-brightgreen">
+  <img alt="Providers" src="https://img.shields.io/badge/providers-Claude%20%2B%20Codex-brightgreen">
 </p>
 
----
+sbx runs an agent in a Docker sandbox and manages the work around it: preparing inputs, controlling access, recording execution, validating results and delivering artifacts. Use it interactively for code, or submit a structured task from a script or another system.
 
-<p align="left">
-  <b>Overview: </b> <a href="https://zzjha-cn.github.io/agent_sandbox/"><b> Website </b></a>
-</p>
+| Entry point | Use it for | Workspace and completion |
+|---|---|---|
+| `sbx run <task>` | Interactive coding in a Git repository | A separate worktree and `sbx/<task>` branch; review and merge yourself |
+| `sbx run <task> -p "…" --jsonl` | A scripted, headless Git task | Git worktree with machine events; agent success alone does not prove business completion |
+| `sbx task run --spec task.json` | Reports, code tasks, tool queries or declared external operations | A file, Git or empty input; explicit outputs, criteria and optional local delivery |
+| `sbx run --spec task.json` | Convenience entry for a general task | Same submission path as `sbx task run --spec` |
 
+The Git convenience workflow and general tasks share an execution service. They do not use the same workspace or result semantics. Omitting the name in `sbx run` selects the **main task**, which works directly in the repository root.
 
-A coding agent only gets out of your way once you turn the permission prompts off — and the moment you do, it can touch anything on your machine. sbx moves that trade-off somewhere safer: **one container, one git worktree and one branch per task**. Inside, `--dangerously-skip-permissions` is fine. Outside, nothing changed.
+## Quick start: a Git task
 
-You also get tasks that **actually run in parallel** without stepping on each other, dependency installs that never touch your host, and every outbound request through a proxy — so you can **ask afterwards what it talked to**.
+You need Go 1.27, Git, a running Docker daemon dedicated to one trusted operator, and a supported Claude Code or Codex login or API-key configuration. Mutually untrusted operators need separate daemons or VMs.
 
-For file processing and automation, [`sbx task`](docs/general-tasks.md) adds registered inputs, immutable artifacts, independent validation, and local directory or Git delivery. Review and delivery retries reuse the recorded attempt. [G6 external operations](docs/external-operations.md) add declared record updates, authorization, receipt reconciliation, and business-state verification without file artifacts. [G5 dynamic read-only tools](docs/dynamic-tools.md) support authorized runtime queries and reports bound to actual tool evidence.
-
-```console
-$ cd ~/code/shop
-$ sbx run fix-login          # branch + container + Claude Code, in one command
-$ sbx ls
-workspace shop-e76272 (/Users/you/code/shop)
-TASK        STATUS   BRANCH          AHEAD  DIFF         LAST-ACTIVE  PATH
-add-search  idle     sbx/add-search  2      7f +210 -14  12m ago      ~/.sbx/worktrees/shop-e76272/add-search
-fix-login   running  sbx/fix-login   1      3f +48 -6    8s ago       ~/.sbx/worktrees/shop-e76272/fix-login
-```
-
-`Ctrl-b`, release, then `d` leaves the session with the agent still running. Come back with `sbx attach fix-login`; when it's done, `sbx done` and `git merge`.
-
-## What it solves
-
-| Problem | How sbx handles it |
-|---|---|
-| You want the prompts off, but not an agent loose on your filesystem | It only ever sees one worktree and its own container. The rest of your host is never mounted |
-| Two tasks editing the same repo collide | Each task gets its own git worktree and `sbx/<task>` branch — physically separate |
-| Agent-installed dependencies pollute your local environment | `node_modules` and friends are masked by volumes; invisible in both directions |
-| It ran all night and you have no idea what it did or where it connected | State comes from provider status records (`sbx ls`); all egress goes through Squid (`sbx net denied`) |
-| Closing the terminal kills the agent | The agent runs in tmux *inside* the container — survives closed terminals and host reboots |
-
-## Quick start
-
-**Prerequisites**: Docker Desktop running (10GB of memory recommended), Go 1.27, an account supported by Claude Code or Codex (or a configured API key for supported modes).
-
-### 1. Install
-
-**From source** — there are no published releases yet, so this is the way in today:
-
-```bash
+```sh
 git clone https://github.com/zzjha-cn/agent_sandbox.git
 cd agent_sandbox/core
 make build
-ln -sf "$PWD/bin/sbx" /usr/local/bin/sbx   # optional
+# Add core/bin to your PATH, or invoke the binary by its absolute path.
+export PATH="$PWD/bin:$PATH"
 sbx --version
 ```
 
-If you skip the symlink, use the absolute path to `core/bin/sbx` in subsequent examples; [testing.md](docs/testing.md) shows how to keep the tested binary fixed.
+Inspect daemon ownership, then log in to the provider you intend to use:
 
-`sbx` is a single binary that only shells out to `docker` and `git`, so a symlink is all the installation there is.
-
-To cut archives for other machines (`darwin`/`linux` × `amd64`/`arm64`, plus `SHA256SUMS`):
-
-```bash
-make release                 # version comes from `git describe`; untagged builds read like 4acd0a6-dirty
-tar -xzf dist/sbx_<version>_<os>_<arch>.tar.gz
-sudo install -m 0755 sbx /usr/local/bin/sbx
-```
-
-> **On macOS, download with `curl -L`, not a browser.** The binaries are not signed or notarized. An archive saved by a browser carries `com.apple.quarantine`, and the extracted `sbx` refuses to run with *"cannot be opened because the developer cannot be verified"*. `curl` does not set that attribute. If you already hit it: `xattr -d com.apple.quarantine sbx`.
-
-### 2. Configure (only if you need a host proxy)
-
-`~/.sbx/config.toml`:
-
-```toml
-[network]
-upstream = "http://host.docker.internal:7890"   # leave empty for a direct connection
-```
-
-### 3. Check daemon ownership and log in
-
-Use a Docker daemon dedicated to one trusted operator. Team members should use separate daemons or VMs; Task names and labels do not isolate users sharing Docker access.
-
-```bash
+```sh
 sbx isolation status --json
-# Only when upgrading an existing, unclaimed daemon that belongs to you:
-sbx isolation adopt
-```
-
-An empty daemon is claimed on its first resource-changing command. An unadopted legacy installation or a different owner is rejected; do not delete the ownership volume to bypass it. `SBX_HOME` separates host configuration, not Docker credentials or daemon ownership.
-
-Log in to the provider you will use:
-
-```bash
-sbx login claude
-sbx login claude --status
-# Or reuse an existing local Codex auth.json:
-sbx login codex --import ~/.codex
+# Adopt only an unclaimed legacy daemon that you have verified is yours:
+# sbx isolation adopt
 sbx login codex --status
-# Without a local auth.json: sbx login codex (device-code flow)
+# If needed, import an existing Codex auth.json or use the login flow:
+# sbx login codex --import ~/.codex
+# sbx login codex
 ```
 
-Claude login uses its browser/code flow; Codex import copies only `auth.json`, without browser authorization or copying config/sessions. Credentials live in `sbx-home`, shared by tasks on this daemon. Use `sbx login <provider> --logout` to clear that provider; importing over existing Codex credentials requires `--force`. Omitting the provider always selects Claude.
+An empty daemon is claimed when sbx first creates resources. Do not remove the ownership marker to bypass a mismatch. Credentials are held in the daemon's shared `sbx-home` volume. `sbx login` without a provider selects Claude.
 
-### 4. Run your first task
-
-```bash
-cd ~/code/shop
-sbx run fix-login                 # default: Claude
-# Or, without changing configuration:
-sbx run --agent codex codex-fix
+```sh
+cd ~/code/my-project
+sbx trust --show                 # inspect project configuration, if present
+# Review and run sbx trust when project configuration needs approval.
+sbx run --agent codex fix-login
 ```
 
-That's it. Worktree, branch, container, network and proxy credentials are all set up, and the selected agent is waiting inside. `--agent` selects the provider for this invocation; use the same provider when resuming that Task. To make Codex the default, set top-level `default_agent = "codex"` in your configuration.
+Detach from the interactive session with `Ctrl-b`, release, then `d`. The task continues inside its container. Resume it with the same provider, review the worktree, and merge the branch yourself:
 
-## The workflow
-
-```bash
-sbx run fix-login              # start (running it again resumes, continuing the last conversation)
-sbx run nightly -p "fix the failing tests"   # headless: run a prompt, stop the container when done
-sbx logs nightly -f            # follow a headless run's output
-sbx run add-search --detach    # queue up another one without entering it
-sbx ls                         # who's running, commits ahead, diff size, time since last activity
-sbx attach fix-login           # back into the session (Ctrl-b, release, d to leave)
-code "$(sbx path fix-login)"   # open what it changed in your editor
-sbx done fix-login             # tear down the container, keep the branch
-git merge sbx/fix-login        # merge it yourself — sbx never merges for you
+```sh
+sbx ls
+sbx attach fix-login
+sbx path fix-login
+sbx stop fix-login
+sbx run --agent codex fix-login  # resume with the same provider
+sbx done fix-login               # remove task runtime/worktree; keep the branch
+git merge sbx/fix-login
 ```
 
-**`Ctrl-D` exits the agent; it does not detach.** The tmux session survives it, though, so `sbx run` brings Claude back and continues the previous conversation. A slip of the finger costs nothing.
+`sbx drop` also removes the task branch and has a separate confirmation. See the [walkthrough](docs/walkthrough.md) and [command guide](docs/commands.md) before using it.
 
-Want the changes to land in your repo directory, visible to `git status` on the host right away? **Omit the task name** — `sbx run` uses the main task, which works on the repo root with no worktree and no branch. Trade-offs and when to use it: [docs](docs/commands.md#我想直接在仓库目录里干活main-task).
+## General tasks: from input to verified delivery
 
-## The model
+A general task can run outside a Git repository. The operator first registers authorized sources, criteria, tools and sinks in `$SBX_HOME/execution-policy.toml`; a TaskSpec selects those references and can narrow their scope. The task does not grant its own access.
 
-| | What it is |
-|---|---|
-| **Workspace** | A git repository, detected from your current directory |
-| **Task** | One line of work = one container + one worktree + one `sbx/<task>` branch |
-| **main task** | The special case when you omit the name: works on the repo root, with no separate worktree or branch |
+The [general-task guide](docs/general-tasks.md#1-可信注册表与任务声明) provides a complete report example with a file Source, validation, manual review and a local directory Sink. After adapting its paths and saving `report-task.json`:
 
-All a container can see is: its worktree, your repository's `.git` directory, the shared `sbx-home` (login state and Claude config), `sbx-cache` (package-manager caches) and a read-only `/sbx/gen` (hooks, settings, status line). **Nothing else from your host is mounted.**
-
-> **`.git` is mounted writable, and `.git/hooks` + `.git/config` are mounted read-only on top of it.** The repository has to be writable: that is what makes a commit from inside the sandbox show up in `git log sbx/<task>` on your host with no syncing step. But the two places that turn a write into *host code execution* — a planted `pre-commit` hook, or a `core.hooksPath` pointing somewhere the agent controls — are closed off (submodules included). Set `git.protect = false` to go back to the unguarded behaviour; it is a safety switch, so the project layer cannot set it either way.
->
-> What remains: the agent can still rewrite history on `sbx/<task>`, and anything your own tooling reads out of `.git` other than hooks and config. This is risk R1 in [design.md](docs/design.md) — now mitigated, not eliminated. For a genuinely untrusted agent or codebase, use a throwaway clone rather than your working repo.
-
-## Networking
-
-All egress goes through a Squid proxy — by default one shared instance (`sbx-proxy`) for every task — which is **open by default**.
-
-```bash
-sbx net denied                     # what got blocked (--all for every category, --since 2h to narrow)
-sbx net allow fastdl.mongodb.org   # allow a host and hot-reload it into running tasks
-sbx run t1 --net allowlist         # allowlist mode, just for this run
-sbx run t1 --proxy dedicated       # give this task its own proxy sidecar
+```sh
+sbx version --json
+sbx schema task > task.schema.json
+sbx admit --spec report-task.json
+sbx task run --spec report-task.json
+sbx task status monthly-report --json
+sbx task logs monthly-report --tail 30
+# If the recorded validation requires human review:
+sbx task approve --spec report-task.json --reviewer operator-name
 ```
 
-Allowlist mode (`network.mode = "allowlist"`) permits only the built-in list plus whatever you configure — the right choice when running untrusted code. Both modes go through Squid, so the logs are always there, and the cloud-MCP policy block applies either way ([ADR 0015](docs/CONTEXT.md)).
+Admission is read-only and does not reserve resources; run checks again. The agent works in an isolated copy. When outputs are requested, sbx stops the runtime before freezing an artifact snapshot, evaluates it independently and delivers it to an authorized local directory or local Git target. A local Git delivery does not push or merge. A task without file outputs can instead use external operation receipts and business state as evidence.
 
-> Flipping the default from allowlist to open was a deliberate call on 2026-10-08. When the allowlist blocked web search or a dependency download, the agent would quietly substitute something else and report a passing test — an outcome worse than the block itself. The trade-off is recorded in the ADR 0005 revision.
+For automation, stdout contains versioned JSONL events; diagnostics go to stderr. Check the process exit code and the recorded execution, validation and delivery states together. Schemas describe structure; the runtime still performs semantic checks and authorization. See [automation](docs/automation.md) and the [schema catalog](docs/schemas/README.md).
 
-## Services, and reaching things that are not public
+## Tools, external writes and recovery
 
-A task's network is `--internal`: the container has **no default route**, and HTTP egress exists only because Squid is reachable on it. Two mechanisms add to that without touching the invariant — both are sidecars on the task's network, never a second interface on the task itself.
+- **Read-only tools:** supported pinned Claude/Codex versions can call `records.get` through a host gateway. Each call is checked against the current grant, target, fields and limits; credentials stay on the host. This requires synchronous headless execution and a dedicated proxy. See [dynamic tools](docs/dynamic-tools.md).
+- **Declared writes:** TaskSpec `operations` declare the record update in advance. The host persists intent and submits it after the agent succeeds and the sandbox stops. A lost or ambiguous receipt remains `unknown`; use `sbx task reconcile --spec task.json` to query it first. `apply` is an explicit action for an operation proven not to have been submitted and still authorized. See [external writes](docs/commands.md#外部写入与核对).
+- **Task operations:** `sbx task list`, `status` and `logs` inspect general tasks. `task stop` cancels an active run, `task recover` checks an orphaned execution, and `task clean` removes task-owned runtime resources while retaining the workspace, snapshots, logs and receipts. `task prune` separately removes an eligible artifact snapshot. Run `sbx task <command> --help` for arguments.
+
+A new attempt, a stopped container or runtime cleanup does not prove that an external write did not happen. Keep the original records and reconcile unknown outcomes before any further submission.
+
+## Configuration and boundaries
+
+Personal settings live in `~/.sbx/config.toml`, or in `$SBX_HOME` when set. Git tasks also use project and workspace layers. Lists are generally combined and scalar values overridden; organization ceilings are applied separately and can only restrict the result.
 
 ```toml
-# <repo>/.sbx/sandbox.toml — safe to commit: no address, no credential, no host path
-[[services]]
-name  = "db"
-image = "postgres:16"
-port  = 5432
-env   = { POSTGRES_PASSWORD = "dev", POSTGRES_DB = "app" }
-```
-
-A throwaway instance started with the task and reclaimed by `sbx done`. Reach it from the container at **`db:5432`** — its name, not `localhost`: it is a separate container, and `localhost` inside the task is the task. The worst case if the agent runs wild is losing a database that was disposable to begin with, which is why this is the one to reach for first.
-
-```toml
-# ~/.sbx/config.toml or ~/.sbx/workspaces/<ws>.toml — NOT the project layer
-[[forward]]
-name = "staging-db"
-port = 5432
-to   = "db.corp.example:5432"   # or just `to = 5432` for a port on your own machine
-# host = "gitlab.corp.example"  # optional: keep the real name, so TLS still validates
-```
-
-One `socat` sidecar per entry, reachable at `staging-db:5432`. It is a peer on the task network, not a gateway, so the task still has no route of its own. Three constraints make it a hole you opened rather than one you inherited:
-
-- **`to` must resolve into private address space.** A public target would turn the forwarder into a general tunnel around Squid — unfiltered, unlogged, invisible to `sbx net denied`. Use `network.allow` for public hosts. (`allow_public = true` releases a single entry, loudly, for companies that use public ranges internally.)
-- **The project layer cannot declare one.** A config that travels with a repository should not decide where your machine connects.
-- **It is resolved once, at start, and the IP is frozen into the sidecar.** `sbx run` prints every forward and the address it actually reached, `sbx ls` marks which tasks have them, and the task's `meta.json` keeps the record for when you review the branch later.
-
-Reaching a real shared database means the network layer has stopped being the thing protecting you: whatever the agent does there, it does for real. Use a read-only account or a separate schema, and consider `network.mode = "allowlist"` for that workspace — once the task holds real data, controlling egress is worth what it costs.
-
-### Deliberately not provided
-
-These are decided, not pending. Writing them down is the point: without it, the first person who needs testcontainers mounts the Docker socket and never learns what it cost.
-
-| | Why not | Instead |
-|---|---|---|
-| `/var/run/docker.sock` | Full control of your host's Docker: privileged containers, your root filesystem. An order of magnitude worse than R1, and immediate | `[[services]]` |
-| Cloud credentials, kubeconfig | Largest blast radius there is — spend money, delete resources, exfiltrate data | Run those from the host |
-| SSH keys in the container | Push access to every repo you have. Your branches are already on the host, so `git push` belongs there | `git push` on the host |
-| `host.docker.internal` passthrough | Reaches *every* port your machine listens on — other projects' dev servers, every local database. There is no "just 5432" version of it | `[[forward]]`, one port at a time |
-| A non-internal interface on the task | That is the moment it gets a default route, and the allowlist, policy blocks and access log all stop meaning anything | The sidecars above |
-| Runtime credential injection, devices / `--gpus` / `--cap-add` | Not yet, rather than never: the common cases are already covered another way, and capabilities need a declaration model first | — |
-
-
-## Configuration
-
-`~/.sbx/config.toml`; every field is optional:
-
-```toml
-default_agent = "claude"     # claude | codex
-profile = "web-go"            # built-in profile: web-go | py-rust
-# image = "ghcr.io/me/dev:1"  # or bring your own image, overriding profile
+# ~/.sbx/config.toml
+default_agent = "codex"       # claude or codex
+profile = "web-go"
 
 [network]
-upstream  = ""                # host proxy; empty means direct
-mode      = "open"            # open | allowlist
-allow     = []                # appended to the built-in allowlist
-
-[resources]
-cpus = 2
-memory = "3g"
-pids = 1024
-
-[deps]
-mask = ["node_modules"]       # each masked by a volume, keeping your host clean
+mode = "allowlist"            # default is open
+# upstream = "http://host.docker.internal:7890"
 ```
 
-Configuration has four layers, each overriding the last — lists are unioned, scalars replaced: built-in defaults → `~/.sbx/config.toml` → `<repo>/.sbx/sandbox.toml` (committed, shared with your team) → `~/.sbx/workspaces/<ws>.toml` (your own override for this one repo).
+`sbx config show` reports effective values and their sources; `sbx trust` reviews project configuration. A task network is internal and HTTP(S) uses Squid. Explicit service, forward and port sidecars have their own paths and permissions, so do not interpret the proxy log as a record of every possible connection. The default network mode is **open**; use allowlist and appropriate grants when you need a narrower scope. See [network and host boundaries](docs/boundary.md).
 
-```bash
-sbx config show    # every effective value and which layer it came from
-sbx trust          # review this repo's .sbx/ and record it as trusted
-```
+For Git tasks, worktrees and dependency volumes help separate ordinary work, but the repository's Git data and selected shared state are exposed as documented. Task labels and container isolation do not protect against an operator with Docker API access. Review [design and trust boundaries](docs/design.md#7-信任与网络边界) for mounts, Git protection, forwarded services and credentials.
 
-The project layer travels with the repo, so **secret-looking keys and absolute paths are rejected outright in that layer**. And because a `git pull` can change it under you, `sbx run` stops and shows you the diff whenever `.sbx/` differs from what you last confirmed — repos without a `.sbx/` directory never see any of this. Full field list and when changes take effect: [docs/commands.md](docs/commands.md#配置四层adr-0009design-91).
-
-## Bringing your own image
-
-The built-in profiles are a convenience, not a requirement. There are three ways to decide what a task runs in, highest priority first:
-
-```toml
-image = "ghcr.io/me/devbox:2026-10"   # 1. a ready-made image
-```
-```bash
-<repo>/.sbx/Dockerfile                # 2. a Dockerfile in the repo — no config needed
-profile = "web-go"                    # 3. a built-in profile (the default)
-```
-
-Whichever you pick, **you only supply the language environment**. sbx layers its own agent layer on top — tini, tmux, git, ripgrep, Node, Claude Code, Codex, mise, and an `agent` user whose UID matches yours — so you never install the agent yourself. The image tag is a hash of its inputs, so changing your base rebuilds automatically.
-
-Two things to know before you build one:
-
-- **The base has to be Debian or Ubuntu.** The agent layer installs with `apt-get`. An Alpine or RHEL base fails during build with an apt error rather than a message from sbx.
-- **Dependency masking still follows `profile`, not your image.** The defaults are keyed off the `profile` field, which a custom `image` does not change — so an image you built for Rust still inherits `web-go`'s masks. And because lists are unioned across layers, `mask` only ever *adds*; you cannot remove an inherited entry. Setting `image` plus `mask = ["target"]` leaves you with `node_modules`, `.next` **and** `target`, and the two you did not want get created as empty mount points in your worktree. Set `profile` to whichever built-in is closest, then add on top:
-
-  ```toml
-  image   = "ghcr.io/me/rustbox:1"
-  profile = "py-rust"           # masks .venv and target; without this you inherit web-go's
-  ```
-
-`image` is allowed in the project layer, so a team can commit its image choice to `<repo>/.sbx/sandbox.toml` — and because `.sbx/` is covered by trust, a `git pull` that swaps the image stops `sbx run` and shows you the diff first.
-
-## Working as a team
-
-The project layer travels with the repo, so onboarding a teammate is three steps:
-
-1. Commit `<repo>/.sbx/sandbox.toml` (profile, network mode, extra allowlist entries, dep masks) — and `<repo>/.sbx/Dockerfile` if the project needs its own image.
-2. Your teammate clones, runs `sbx trust` and reads what the diff shows them.
-3. `sbx run`.
-
-What *cannot* be in that file, by design: anything that looks like a credential, any absolute path, any command that would run in the container (`on_idle` and friends), and a short registry of safety switches and whole sections (`git.protect`, `prep.on_drift`, `[prep.secret]`, `[[forward]]`, and global-only `[isolation]`). These red lines are enforced, not advisory — a repo cannot decide where your credentials come from, what runs inside your sandbox, or what your machine dials out to.
-
-## Troubleshooting
-
-| Symptom | What's going on |
-|---|---|
-| `exited(oom)` in `sbx ls` | The container hit its memory cap. Raise `resources.memory`, or lower `max_running` — `sbx doctor` tells you whether the total fits in your Docker VM |
-| The agent says a download failed | In allowlist mode the proxy blocked it. `sbx net denied` shows what, `sbx net allow <host>` fixes it and hot-reloads running tasks |
-| `sbx run` stops and asks you to log in | The credentials in `sbx-home` expired. `sbx login` once; every task shares it |
-| `sbx run` stops on `.sbx/` | Someone changed the project config. It prints the diff — read it, then `sbx trust` |
-| Daemon ownership is rejected | Run `sbx isolation status --json`; adopt only your own unclaimed legacy daemon. Use a separate daemon for another operator |
-| A Codex Task is rejected when resuming | Keep its original provider: `sbx run --agent codex <task>`, or set `default_agent = "codex"` |
-| Something is off and you don't know what | `sbx doctor`. It checks docker, the proxy, login, trust, notifications and the agent's first-run state, and prints a fix for each problem |
+An administrator may install a fixed, root-owned `/etc/sbx/organization.toml` to impose ceilings on network, sources, sinks and tools. Managed execution accepts synchronous TaskSpec; changes or revocation cancel supervised activities and later actions recheck current permissions. Team events are written to a private outbox; `sbx events status` and `sbx events flush` inspect and explicitly export them. A collector and policy distribution are deployment responsibilities. See [organization commands](docs/commands.md#组织策略与事件上报).
 
 ## Documentation
 
-> The [introduction page](https://zzjha-cn.github.io/agent_sandbox/) is in English; the in-repo reference docs are in Chinese.
-
-| Doc | What's in it |
+| Document | Contents |
 |---|---|
-| [Introduction](https://zzjha-cn.github.io/agent_sandbox/) | **Start here** — a web page covering a day of real use, the architecture diagram, and a Q&A on each piece |
-| [automation.md](docs/automation.md) | Machine protocol, bounded runs and exit codes |
-| [testing.md](docs/testing.md) | Formal manual testing and reproducible checks |
-| [commands.md](docs/commands.md) | **Command reference**: every command, flag, config field and environment variable |
-| [walkthrough.md](docs/walkthrough.md) | One scenario end to end — what Docker, git and squid each do behind every command |
-| [architecture.md](docs/architecture.md) | How the pieces fit together and where data flows |
-| [design.md](docs/design.md) | Full design and its trade-offs |
-| [CONTEXT.md](docs/CONTEXT.md) | Glossary and decision index |
+| [Website & Wiki](https://zzjha-cn.github.io/agent_sandbox/) | Architecture diagrams and scenarios for personal, team and infrastructure use |
+| [Walkthrough](docs/walkthrough.md) | Setup, Git and general tasks, tools, review, delivery and recovery |
+| [Design](docs/design.md) | Execution flow, abstractions, trust and deployment boundaries |
+| [Commands](docs/commands.md) · [CLI reference](docs/cli-reference.md) | Scenario-oriented command guide and full CLI help |
+| [Glossary](docs/glossary.md) | Task, attempt, grant, receipt, recovery and related terms |
+| [General tasks](docs/general-tasks.md) · [Dynamic tools](docs/dynamic-tools.md) | TaskSpec, registered resources and read-only tool configuration |
+| [Automation](docs/automation.md) · [Schemas](docs/schemas/README.md) | Protocol, status, exit codes and machine-readable contracts |
+| [Boundary](docs/boundary.md) · [Publishing](docs/PUBLISHING.md) | Network/host risks and public Wiki export |
 
-## Status
+## Scope and development
 
-**Claude Code and Codex are supported.** The execution refactor and unified v2 execution protocol are implemented. Available commands: `run / admit / version / isolation / attach / shell / stop / ls / path / done / drop / logs / port / net / memory / login / config / trust / prep / doctor / upgrade`.
+The current scope includes local Docker execution, Claude/Codex, Git sessions, synchronous general tasks, local delivery, controlled read-only tools, declared record writes, recovery and organization ceilings. Remote artifact publishing, a central collector, managed interactive/detached execution, a resident worker and a multi-tenant control plane are not provided. Validate real providers and business connectors in your deployment; controlled fixtures do not establish compatibility with arbitrary production APIs.
 
-Known limits: there is no `sbx merge`, remote artifact publishing or multi-user isolation on a shared daemon; local artifact delivery uses the separate `sbx task` entrypoint. A host proxy has to speak HTTP (SOCKS-only needs a shim of your own); base images have to be Debian or Ubuntu; a service or a forward is reached by its name, not `localhost`. See also [Deliberately not provided](#deliberately-not-provided).
-
-Roadmap: [implementation-checklist.md](docs/implementation-checklist.md).
-
-## Development
-
-Run from `core/`:
-
-```bash
+```sh
+cd core
 make test          # unit tests
-make test-docker   # docker-backed integration tests (first run builds images; takes a few minutes)
-make lint          # golangci-lint, falling back to go vet + gofmt
-make e2e           # legacy Claude acceptance; real model calls, requires Claude login
+make test-docker   # Docker integration tests
+make lint          # golangci-lint, or vet and formatting checks
+make e2e           # Claude end-to-end flow; requires login
 ```
 
-For automation, use `sbx version --json`, `sbx admit --spec task.json`, then `sbx task run --spec task.json` (or `sbx run --spec`). TaskSpec selects the provider explicitly. Git and interactive commands remain available; v1 input is retired. See [automation and migration](docs/automation.md) and [architecture convergence](docs/architecture-convergence.md).
-
-Machine clients can export bundled JSON Schemas with `sbx schema task`; `sbx version --json` reports capability requirements and compatibility. See [schemas](docs/schemas/README.md), [migration rules](docs/migration.md), and [G7 acceptance](docs/g7-acceptance.md). Administrator ceilings, policy revocation, and the team-event outbox are documented in [organization policy](docs/organization.md) and [G8 acceptance](docs/g8-acceptance.md). General tasks support offline list/log inspection and explicit stop/clean/recover while retaining artifacts and receipts; see [task management](docs/task-management.md) and [G9 acceptance](docs/g9-acceptance.md).
-
-Add `-v / --verbose` to print every docker and git command as it runs.
-
-sbx drives everything through the `docker` and `git` CLIs rather than SDKs (ADR 0013). Dockerfiles, squid templates and allowlists are `go:embed`-ed into the binary, so it runs without the source tree.
+For release archives, use `make release` from `core`. To export only the public Wiki files for static hosting, see [publishing](docs/PUBLISHING.md). GitHub Pages configured to publish `docs/` directly does not require the export command; ensure everything pushed in that directory is intended to be public.
 
 ## License
 
-[Apache-2.0](LICENSE). Everything in this repository — including the Dockerfiles, the squid templates, the hooks and the status line script — is written for sbx and carries the same license.
+[Apache-2.0](LICENSE).
