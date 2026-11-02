@@ -2,8 +2,19 @@
 
 这些 Draft 2020-12 JSON Schema 由实际 CLI 的 Go wire 类型和输入结构规则生成，使用 `sbx schema <name>` 离线导出。`$id` 是稳定 URN，不表示存在在线 schema 服务。输入只支持 `sbx.execution/v2`；独立的 artifact-retention、team-event、task-list 与 task-maintenance 契约各自使用 v1。
 
+项目记忆新增独立 v1 契约，TaskSpec v2 未增加记忆字段；这些 schema 不提供审核或项目访问授权。
+
 | 名称 | 内容 |
 |---|---|
+| [memory-input](memory-input.schema.json) | 手动经验候选输入，禁止自行声明批准状态 |
+| [memory-entry](memory-entry.schema.json) | 当前条目、修订与审核摘要 |
+| [memory-project](memory-project.schema.json) | 项目元数据及完整修订历史 |
+| [memory-context](memory-context.schema.json) | 可固定引用的记忆快照 |
+| [memory-session](memory-session.schema.json) | task/attempt 启动上下文准备记录 |
+| [task-handoff](task-handoff.schema.json) | 执行事实交接和显式人工备注，独立 v1 |
+| [memory-summary](memory-summary.schema.json) | 可授权外发的人工摘要输入，禁止未知字段 |
+| [memory-extraction](memory-extraction.schema.json) | 冻结材料、模型输出、调用预算、独立作业状态与候选 ID |
+| [memory-processing](memory-processing.schema.json) | 自动提取的独立后处理结果 |
 | [task](task.schema.json) | TaskSpec，包含 Source、tools、operations、outputs、criteria、Sink、limits |
 | [event](event.schema.json) | JSONL 单行：生命周期事件或无 attempt 的早期失败 |
 | [result](result.schema.json) | 完整执行/验证/交付/清理维度和阶段结果 |
@@ -29,10 +40,18 @@ sbx schema task-status > status.schema.json
 开发者变更 wire 类型后，从仓库根目录重新构建，再更新并检查：
 
 ```bash
-python3 -m venv /tmp/sbx-schema-venv
-/tmp/sbx-schema-venv/bin/pip install jsonschema==4.26.0
-/tmp/sbx-schema-venv/bin/python core/scripts/check-schemas.py --sbx /absolute/path/to/sbx --write
-/tmp/sbx-schema-venv/bin/python core/scripts/check-schemas.py --sbx /absolute/path/to/sbx
+make -C core build
+python3 - <<'PYSCHEMA'
+import json
+from pathlib import Path
+import subprocess
+sbx = str(Path('core/bin/sbx').resolve())
+version = json.loads(subprocess.check_output([sbx, 'version', '--json']))
+for name in version['schemas']:
+    payload = subprocess.check_output([sbx, 'schema', name])
+    Path(f'docs/schemas/{name}.schema.json').write_bytes(payload)
+PYSCHEMA
+go -C core test ./internal/protocol
 ```
 
-Go 测试检测已发布文件与代码的漂移；Python 独立校验器对照真实 CLI 解码，并可用 `--report <验收目录>` 校验实际 stdout 事件/状态/结果。协议和退出码见 [自动化规范](../automation.md)，迁移见 [迁移规则](../automation.md)。
+Go 测试检测已发布文件与代码的漂移，并验证实际 CLI 的严格解码规则。若使用外部 JSON Schema 校验器，可按这些发布文件验证对应版本输出；运行时语义检查仍不可替代。协议和退出码见 [自动化规范](../automation.md)，迁移见 [迁移规则](../automation.md)。

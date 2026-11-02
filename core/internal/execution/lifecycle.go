@@ -32,11 +32,22 @@ func (s *Service) Run(ctx context.Context, req Request) (Result, error) {
 	result := Result{Mode: req.Mode, WorkspaceKind: req.WorkspaceKind(), TaskID: id, AttemptID: newAttemptID(), ArtifactState: ArtifactNotProduced,
 		CleanupState: CleanupNotNeeded, ValidationState: "not_requested", ProductDeliveryState: "not_requested",
 		EventDeliveryState: "pending", Stages: initialStages()}
+	postprocess := false
+	// Registered before lifecycle locks: model waiting must not retain execution
+	// ownership or prevent task stop/clean/recovery after business finalization.
+	defer func() {
+		if postprocess {
+			autoExtract(ctx, req, result, s.extractionModel)
+		}
+	}()
 	reject := func(kind ErrorKind, stage string, err error) (Result, error) {
 		result.setStage(AdmissionPhase, ProgressFailed)
 		s.emitFailure(ctx, &result, kind, stage, "execution admission failed")
 		result.ExecutionState = result.State
 		return result, s.withDeliveryError(&ExecutionError{Kind: kind, Stage: stage, Cause: err})
+	}
+	if err := validateMemory(req); err != nil {
+		return reject(AdmissionRejected, "project_memory", err)
 	}
 	if err := req.Requirements.check(); err != nil {
 		return reject(AdmissionRejected, "admission", err)
@@ -130,7 +141,9 @@ func (s *Service) Run(ctx context.Context, req Request) (Result, error) {
 	}
 	// The effective store is local to this run; an explicitly supplied test store
 	// remains reusable, while RuntimeDriver resolves a fresh per-task FileStore.
+	req.MemoryAttemptID = result.AttemptID
 	result, err := s.runWithStore(ctx, req, result, store)
+	postprocess = true
 	return result, err
 }
 
@@ -335,6 +348,9 @@ type Admission struct{ Existing, Running bool }
 
 // Check is read-only preflight, not a reservation. Run rechecks under its locks.
 func (s *Service) Check(ctx context.Context, req Request) (Admission, error) {
+	if err := validateMemory(req); err != nil {
+		return Admission{}, &ExecutionError{Kind: AdmissionRejected, Stage: "project_memory", Cause: err}
+	}
 	if err := req.Requirements.check(); err != nil {
 		return Admission{}, &ExecutionError{Kind: AdmissionRejected, Stage: "admission", Cause: err}
 	}

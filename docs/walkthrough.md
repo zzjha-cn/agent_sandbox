@@ -99,6 +99,35 @@ sbx events flush
 
 flush 需要管理员配置 collector endpoint，以及个人 `$SBX_HOME/team-events.token` 私有凭据。离线时本地 outbox 保留事件，重发可能重复；collector 按稳定 ID 去重并持久化后确认。策略撤销停止进行中的活动，但不能回滚已经发生的业务写。安装与部署责任见 [设计中的信任边界](design.md#7-信任与网络边界) 和 [自动化手册](automation.md)。
 
+## 场景六：让后续任务复用已确认经验
+
+个人默认 native，让 Codex 使用自身后台记忆。需要跨 Codex/Claude 复用、审核或固定知识输入时，创建项目库、录入候选并审核，再选择 managed：
+
+```sh
+sbx memory project create my-project
+sbx memory project bind --project my-project --repo /absolute/path/to/repository
+# entry.json 和带摘要的审核命令见项目记忆手册。
+sbx memory add --project my-project --file entry.json
+sbx memory candidates --project my-project
+# 审核批准后启动新任务：
+sbx run --agent codex --memory managed --memory-project my-project fix-with-memory
+sbx memory status fix-with-memory
+```
+
+候选不会自动被任务读取。旧会话恢复沿用原快照；需要新知识或切换模式时，先 stop，再 --fresh。敏感临时任务选择 off 并使用新会话。通用任务从可信宿主配置选择项目/固定快照，使用 `memory status <task> --scope general` 核对。M2 可以继续把任务中的经验沉淀为候选：
+
+```sh
+# 查看事实交接；目标/进度可用 --summary safe-summary.json 显式附加。
+sbx memory handoff fix-with-memory
+# 先在宿主配置 memory.extract.model 和 agents.<provider>.api_key_env/file。
+sbx memory extract fix-with-memory --project my-project --summary safe-summary.json
+sbx memory jobs
+sbx memory candidates --project my-project
+# 核对内容/来源并按当前 digest 审核；下一项新任务才会选用已批准经验。
+```
+
+提取单独调用模型 API，可能额外计费，订阅会话不直接复用。失败任务也能提取；证据不足可以零候选。失败/中断时用 memory job 查看、memory recover 标记孤立作业、memory retry 明确重试；这些命令不运行原任务。只有显式 auto=true 的 managed 同步 headless 任务才自动触发，memory processing 单独查询后处理。团队同步仍待 M3。完整可复制摘要与配置见 [项目记忆手册](project-memory.md)。
+
 ## Git 日常流程：从启动到 review 合并
 
 以下保留详细的 Git/Claude 使用过程。Claude 的 hooks、宿主配置和 memory 不代表 Codex 的实现；provider 的认证与会话规则以当前命令帮助为准。

@@ -29,7 +29,7 @@ Available Commands:
   login       Log in to an agent inside the sandbox (default claude; credentials live in sbx-home, shared by every task)
   logs        Show a headless run's output (sbx run -p); -f follows it
   ls          List the tasks in this workspace (--all for every workspace)
-  memory      Claude project memory between your host and the sandbox (ADR 0016)
+  memory      Manage reviewed project memory and Claude host/sandbox synchronization
   net         Inspect and adjust what tasks can reach on the network
   path        Print a task's working directory (omit task for main, the repo root): cd $(sbx path <task>)
   policy      Inspect the fixed administrator policy and effective ceilings
@@ -584,13 +584,30 @@ Global Flags:
 ## sbx memory
 
 ```text
-Claude project memory between your host and the sandbox (ADR 0016)
+Manage reviewed project memory and Claude host/sandbox synchronization
 
 Usage:
   sbx memory [command]
 
 Available Commands:
+  add         Submit a manual experience candidate (never automatically approved)
+  approve     Record an explicit review bound to the displayed entry digest
+  archive     Record an explicit review bound to the displayed entry digest
+  candidates  Read project memory entries as JSON
+  extract     Freeze safe task material and call a tool-free model to propose candidates (may incur API charges)
+  handoff     Rebuild a task handoff from durable facts without running the task (JSON)
+  job         Inspect a frozen extraction job (JSON)
+  jobs        List locally persisted extraction jobs without Docker (JSON)
+  list        Read project memory entries as JSON
+  processing  Inspect automatic memory post-processing independently of business status (JSON)
+  project     Register and bind local project knowledge
   pull        Bring memory written in the sandbox back to the host (shows the diff, then asks)
+  recover     Mark an abandoned extraction interrupted without a model call
+  reject      Record an explicit review bound to the displayed entry digest
+  retry       Retry extraction using frozen material; may incur another API charge
+  show        Read project memory entries as JSON
+  snapshot    Freeze approved project knowledge and print a reusable snapshot (JSON)
+  status      Read the recorded memory mode and snapshot without Docker (JSON)
 
 Flags:
   -h, --help   help for memory
@@ -599,6 +616,246 @@ Global Flags:
   -v, --verbose   print every docker and git command sbx runs
 
 Use "sbx memory [command] --help" for more information about a command.
+```
+
+## sbx memory add
+
+```text
+Submit a manual experience candidate (never automatically approved)
+
+Usage:
+  sbx memory add [flags]
+
+Flags:
+      --file string      JSON with kind/title/content/source and optional paths/tags/supersedes
+  -h, --help             help for add
+      --project string   registered project
+
+Global Flags:
+  -v, --verbose   print every docker and git command sbx runs
+```
+
+## sbx memory approve
+
+```text
+Record an explicit review bound to the displayed entry digest
+
+Usage:
+  sbx memory approve <entry> [flags]
+
+Flags:
+      --digest string     current entry digest from show/candidates
+  -h, --help              help for approve
+      --project string    registered project
+      --reason string     review explanation
+      --reviewer string   local operator declaration (not authenticated team identity)
+
+Global Flags:
+  -v, --verbose   print every docker and git command sbx runs
+```
+
+## sbx memory archive
+
+```text
+Record an explicit review bound to the displayed entry digest
+
+Usage:
+  sbx memory archive <entry> [flags]
+
+Flags:
+      --digest string     current entry digest from show/candidates
+  -h, --help              help for archive
+      --project string    registered project
+      --reason string     review explanation
+      --reviewer string   local operator declaration (not authenticated team identity)
+
+Global Flags:
+  -v, --verbose   print every docker and git command sbx runs
+```
+
+## sbx memory candidates
+
+```text
+Read project memory entries as JSON
+
+Usage:
+  sbx memory candidates [flags]
+
+Flags:
+  -h, --help             help for candidates
+      --project string   registered project
+
+Global Flags:
+  -v, --verbose   print every docker and git command sbx runs
+```
+
+## sbx memory extract
+
+```text
+Freeze safe task material and call a tool-free model to propose candidates (may incur API charges)
+
+Usage:
+  sbx memory extract <task> [flags]
+
+Flags:
+      --attempt string   attempt ID (default: latest)
+  -h, --help             help for extract
+      --project string   target local project (required for general tasks)
+      --scope string     task namespace: git or general (default "git")
+      --summary string   explicitly authorized, scrubbed summary JSON (max 16 KiB)
+
+Global Flags:
+  -v, --verbose   print every docker and git command sbx runs
+```
+
+## sbx memory handoff
+
+```text
+Rebuild a task handoff from durable facts without running the task (JSON)
+
+Usage:
+  sbx memory handoff <task> [flags]
+
+Flags:
+      --attempt string   attempt ID (default: latest)
+  -h, --help             help for handoff
+      --scope string     task namespace: git or general (default "git")
+      --summary string   attach operator-authored safe goal/progress/next steps JSON
+
+Global Flags:
+  -v, --verbose   print every docker and git command sbx runs
+```
+
+## sbx memory job
+
+```text
+Inspect a frozen extraction job (JSON)
+
+Usage:
+  sbx memory job <job> [flags]
+
+Flags:
+  -h, --help   help for job
+
+Global Flags:
+  -v, --verbose   print every docker and git command sbx runs
+```
+
+## sbx memory jobs
+
+```text
+List locally persisted extraction jobs without Docker (JSON)
+
+Usage:
+  sbx memory jobs [flags]
+
+Flags:
+  -h, --help   help for jobs
+
+Global Flags:
+  -v, --verbose   print every docker and git command sbx runs
+```
+
+## sbx memory list
+
+```text
+Read project memory entries as JSON
+
+Usage:
+  sbx memory list [flags]
+
+Flags:
+  -h, --help             help for list
+      --project string   registered project
+
+Global Flags:
+  -v, --verbose   print every docker and git command sbx runs
+```
+
+## sbx memory processing
+
+```text
+Inspect automatic memory post-processing independently of business status (JSON)
+
+Usage:
+  sbx memory processing <task> [flags]
+
+Flags:
+      --attempt string   attempt ID (default: latest)
+  -h, --help             help for processing
+      --scope string     task namespace: git or general (default "git")
+
+Global Flags:
+  -v, --verbose   print every docker and git command sbx runs
+```
+
+## sbx memory project
+
+```text
+Register and bind local project knowledge
+
+Usage:
+  sbx memory project [command]
+
+Available Commands:
+  bind        Bind a Git repository and all its worktrees to one project
+  create      Create an empty local project memory store
+  show        Print project metadata and immutable review history as JSON
+
+Flags:
+  -h, --help   help for project
+
+Global Flags:
+  -v, --verbose   print every docker and git command sbx runs
+
+Use "sbx memory project [command] --help" for more information about a command.
+```
+
+## sbx memory project bind
+
+```text
+Bind a Git repository and all its worktrees to one project
+
+Usage:
+  sbx memory project bind [flags]
+
+Flags:
+  -h, --help             help for bind
+      --project string   registered project
+      --repo string      Git repository or worktree directory (default ".")
+
+Global Flags:
+  -v, --verbose   print every docker and git command sbx runs
+```
+
+## sbx memory project create
+
+```text
+Create an empty local project memory store
+
+Usage:
+  sbx memory project create <project> [flags]
+
+Flags:
+  -h, --help   help for create
+
+Global Flags:
+  -v, --verbose   print every docker and git command sbx runs
+```
+
+## sbx memory project show
+
+```text
+Print project metadata and immutable review history as JSON
+
+Usage:
+  sbx memory project show <project> [flags]
+
+Flags:
+  -h, --help   help for show
+
+Global Flags:
+  -v, --verbose   print every docker and git command sbx runs
 ```
 
 ## sbx memory pull
@@ -612,6 +869,106 @@ Usage:
 Flags:
   -h, --help   help for pull
   -y, --yes    write without asking
+
+Global Flags:
+  -v, --verbose   print every docker and git command sbx runs
+```
+
+## sbx memory recover
+
+```text
+Mark an abandoned extraction interrupted without a model call
+
+Usage:
+  sbx memory recover <job> [flags]
+
+Flags:
+  -h, --help   help for recover
+
+Global Flags:
+  -v, --verbose   print every docker and git command sbx runs
+```
+
+## sbx memory reject
+
+```text
+Record an explicit review bound to the displayed entry digest
+
+Usage:
+  sbx memory reject <entry> [flags]
+
+Flags:
+      --digest string     current entry digest from show/candidates
+  -h, --help              help for reject
+      --project string    registered project
+      --reason string     review explanation
+      --reviewer string   local operator declaration (not authenticated team identity)
+
+Global Flags:
+  -v, --verbose   print every docker and git command sbx runs
+```
+
+## sbx memory retry
+
+```text
+Retry extraction using frozen material; may incur another API charge
+
+Usage:
+  sbx memory retry <job> [flags]
+
+Flags:
+  -h, --help   help for retry
+
+Global Flags:
+  -v, --verbose   print every docker and git command sbx runs
+```
+
+## sbx memory show
+
+```text
+Read project memory entries as JSON
+
+Usage:
+  sbx memory show <entry> [flags]
+
+Flags:
+  -h, --help             help for show
+      --project string   registered project
+
+Global Flags:
+  -v, --verbose   print every docker and git command sbx runs
+```
+
+## sbx memory snapshot
+
+```text
+Freeze approved project knowledge and print a reusable snapshot (JSON)
+
+Usage:
+  sbx memory snapshot [flags]
+
+Flags:
+  -h, --help             help for snapshot
+      --paths strings    relative affected paths
+      --project string   registered project
+      --tags strings     matching tags
+
+Global Flags:
+  -v, --verbose   print every docker and git command sbx runs
+```
+
+## sbx memory status
+
+```text
+Read the recorded memory mode and snapshot without Docker (JSON)
+
+Usage:
+  sbx memory status <task> [flags]
+
+Flags:
+      --attempt string   specific recorded attempt ID (default: current session)
+  -h, --help             help for status
+      --scope string     task namespace: git or general (default "git")
 
 Global Flags:
   -v, --verbose   print every docker and git command sbx runs
@@ -850,18 +1207,20 @@ Usage:
   sbx run [task] [flags]
 
 Flags:
-      --agent string      agent for this run: claude or codex (overrides default_agent without changing config files)
-      --base string       starting point for the new branch (default: current HEAD)
-      --cloud-mcp         let this task reach Claude's cloud connectors (off by default; see ADR 0015)
-  -d, --detach            start the task without attaching to it
-      --envelope string   alias for --spec; accepts v2 tasks only
-      --fresh             start a new conversation instead of continuing this task's last one
-  -h, --help              help for run
-      --jsonl             write machine-readable execution events and result to stdout (headless only)
-      --net string        network mode for this run: open (default, everything allowed) or allowlist
-  -p, --prompt string     headless: run this prompt and exit instead of opening the session ("-" reads stdin)
-      --proxy string      egress proxy for this task: shared (default, one squid for everyone) or dedicated (its own sidecar)
-      --spec string       run a v2 task from a file or - for stdin
+      --agent string            agent for this run: claude or codex (overrides default_agent without changing config files)
+      --base string             starting point for the new branch (default: current HEAD)
+      --cloud-mcp               let this task reach Claude's cloud connectors (off by default; see ADR 0015)
+  -d, --detach                  start the task without attaching to it
+      --envelope string         alias for --spec; accepts v2 tasks only
+      --fresh                   start a new conversation instead of continuing this task's last one
+  -h, --help                    help for run
+      --jsonl                   write machine-readable execution events and result to stdout (headless only)
+      --memory string           memory mode for this Git run: native, managed or off; mode changes require --fresh
+      --memory-project string   trusted local project ID for managed memory (otherwise use repository binding)
+      --net string              network mode for this run: open (default, everything allowed) or allowlist
+  -p, --prompt string           headless: run this prompt and exit instead of opening the session ("-" reads stdin)
+      --proxy string            egress proxy for this task: shared (default, one squid for everyone) or dedicated (its own sidecar)
+      --spec string             run a v2 task from a file or - for stdin
 
 Global Flags:
   -v, --verbose   print every docker and git command sbx runs

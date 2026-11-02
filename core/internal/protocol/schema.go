@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"sandx/internal/execution"
 	"sandx/internal/governance"
+	"sandx/internal/projectmemory"
+	"sandx/internal/taskmemory"
 	"strings"
 	"time"
 )
@@ -12,7 +14,7 @@ import (
 type JSONSchema map[string]any
 
 func SchemaNames() []string {
-	return []string{"task", "event", "result", "task-status", "execution-status", "version", "admission", "retention", "team-event", "task-list", "task-maintenance"}
+	return []string{"task", "event", "result", "task-status", "execution-status", "version", "admission", "retention", "team-event", "task-list", "task-maintenance", "memory-input", "memory-entry", "memory-project", "memory-context", "memory-session", "task-handoff", "memory-extraction", "memory-summary", "memory-processing"}
 }
 
 // Schema derives wire shapes from the actual CLI types. Input objects are
@@ -20,6 +22,24 @@ func SchemaNames() []string {
 func Schema(name string) (JSONSchema, error) {
 	var value any
 	switch name {
+	case "memory-processing":
+		value = taskmemory.Processing{}
+	case "task-handoff":
+		value = taskmemory.Handoff{}
+	case "memory-extraction":
+		value = taskmemory.Job{}
+	case "memory-summary":
+		value = taskmemory.Summary{}
+	case "memory-input":
+		value = projectmemory.Input{}
+	case "memory-entry":
+		value = projectmemory.Entry{}
+	case "memory-project":
+		value = projectmemory.Project{}
+	case "memory-context":
+		value = projectmemory.Snapshot{}
+	case "memory-session":
+		value = execution.MemorySession{}
 	case "task-list":
 		value = TaskList{}
 	case "task-maintenance":
@@ -43,11 +63,46 @@ func Schema(name string) (JSONSchema, error) {
 	default:
 		return nil, fmt.Errorf("unknown schema %q; use sbx schema to list names", name)
 	}
-	s := shape(reflect.TypeOf(value), name == "task")
+	s := shape(reflect.TypeOf(value), name == "task" || name == "memory-input" || name == "memory-summary")
 	s["$schema"] = "https://json-schema.org/draft/2020-12/schema"
 	s["$id"] = "urn:sbx:schema:" + name + ":v2"
 	s["title"] = "sbx " + name
 	switch name {
+	case "memory-processing":
+		s["$id"] = "urn:sbx:schema:memory-processing:v1"
+		prop(s, "schema_version")["const"] = taskmemory.ProcessingSchema
+		prop(s, "state")["enum"] = []string{"pending", "running", "succeeded", "failed", "interrupted"}
+	case "task-handoff":
+		s["$id"] = "urn:sbx:schema:task-handoff:v1"
+		prop(s, "schema_version")["const"] = taskmemory.HandoffSchema
+	case "memory-extraction":
+		s["$id"] = "urn:sbx:schema:memory-extraction:v1"
+		prop(s, "schema_version")["const"] = taskmemory.JobSchema
+		prop(s, "state")["enum"] = []string{"pending", "running", "succeeded", "failed", "interrupted"}
+	case "memory-summary":
+		s["$id"] = "urn:sbx:schema:memory-summary:v1"
+	case "memory-input", "memory-entry", "memory-project", "memory-context", "memory-session":
+		s["$id"] = "urn:sbx:schema:" + name + ":v1"
+		if name == "memory-input" || name == "memory-entry" {
+			prop(s, "kind")["enum"] = []string{"testing", "environment", "constraint", "troubleshooting", "workflow"}
+			for _, key := range []string{"title", "content", "source"} {
+				nonempty(prop(s, key))
+			}
+			if name == "memory-input" {
+				require(s, "kind", "title", "content", "source")
+			}
+		}
+		switch name {
+		case "memory-entry":
+			prop(s, "status")["enum"] = []string{"candidate", "approved", "rejected", "archived", "superseded"}
+		case "memory-project":
+			prop(s, "schema_version")["const"] = projectmemory.Schema
+		case "memory-context":
+			prop(s, "schema_version")["const"] = "sbx.memory-context/v1"
+		case "memory-session":
+			prop(s, "schema_version")["const"] = "sbx.memory-session/v1"
+			prop(s, "mode")["enum"] = []string{"native", "managed", "off"}
+		}
 	case "task-list":
 		s["$id"] = "urn:sbx:schema:task-list:v1"
 		prop(s, "schema_version")["const"] = TaskListSchema

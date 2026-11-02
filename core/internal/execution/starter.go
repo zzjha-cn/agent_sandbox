@@ -31,9 +31,27 @@ func (s AgentStarter) Start(ctx context.Context, t task.Task, o Request) error {
 	}
 	rt := agent.Runtime{Docker: s.Docker, Container: t.Container(), Worktree: t.Worktree()}
 	hasSession := rt.HasSession()
+	if provider.Name() == "codex" {
+		out, err := s.Docker.Exec(t.Container(), docker.ExecOpts{User: "agent", Workdir: t.Worktree()}, "codex", "features", "list")
+		supported := false
+		for _, line := range strings.Split(out, "\n") {
+			fields := strings.Fields(line)
+			if len(fields) >= 3 && fields[0] == "memories" {
+				supported = true
+			}
+		}
+		if err != nil || !supported {
+			return fmt.Errorf("Codex does not expose the memories feature; upgrade the task image before using sbx memory modes")
+		}
+	}
+	memory, err := prepareMemory(o, hasSession && !taskAgentExited(t))
+	if err != nil {
+		return fmt.Errorf("project memory: %w", err)
+	}
 	if hasSession && !taskAgentExited(t) {
 		return nil
 	}
+
 	key, err := s.APIKey()
 	if err != nil {
 		return err
@@ -47,8 +65,10 @@ func (s AgentStarter) Start(ctx context.Context, t task.Task, o Request) error {
 		} else if out != "" {
 			s.Logf("%s", out)
 		}
-		if err := s.ImportMemory(t.Container()); err != nil {
-			s.Logf("warning: failed to import project memory: %v", err)
+		if memory.Mode == "native" && s.ImportMemory != nil {
+			if err := s.ImportMemory(t.Container()); err != nil {
+				s.Logf("warning: failed to import project memory: %v", err)
+			}
 		}
 	}
 	s.InstallRuntimes(t, rt)
@@ -85,7 +105,7 @@ func (s AgentStarter) Start(ctx context.Context, t task.Task, o Request) error {
 			sessionID = ""
 		}
 	}
-	command, err := provider.Command(agent.Launch{Headless: o.Mode == Headless, Continue: cont, Notify: o.Config.OnExit != "", SessionID: sessionID, NoRepository: t.ExecutionDir != "", Tools: o.ToolGateway})
+	command, err := provider.Command(agent.Launch{Headless: o.Mode == Headless, Continue: cont, Notify: o.Config.OnExit != "", SessionID: sessionID, NoRepository: t.ExecutionDir != "", Tools: o.ToolGateway, MemoryMode: memory.Mode, MemoryContext: memory.Snapshot != nil})
 	if err != nil {
 		return err
 	}

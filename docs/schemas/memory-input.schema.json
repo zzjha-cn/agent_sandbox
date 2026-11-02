@@ -1,0 +1,52 @@
+{
+  "$id": "urn:sbx:schema:memory-input:v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "content": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "kind": {
+      "enum": [
+        "testing",
+        "environment",
+        "constraint",
+        "troubleshooting",
+        "workflow"
+      ],
+      "type": "string"
+    },
+    "paths": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "source": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "supersedes": {
+      "type": "string"
+    },
+    "tags": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "title": {
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "kind",
+    "title",
+    "content",
+    "source"
+  ],
+  "title": "sbx memory-input",
+  "type": "object"
+}

@@ -1,6 +1,79 @@
-# Wiki 发布与维护
+# 发布与维护
 
-[Wiki 首页](index.html) 是静态站点入口，核心内容仍以 Markdown 为唯一正文来源。首页内置阅读器、目录筛选、深色模式和响应式布局，不依赖 CDN、外部字体、构建服务或在线 schema 服务。
+[Wiki 首页](index.html) 是静态站点入口，核心内容仍以 Markdown 为唯一正文来源。首页内置阅读器、目录筛选、深色模式和响应式布局；页面使用 Google Fonts，并提供系统字体回退。
+
+## 发布二进制到 GitHub Releases
+
+仓库的 [release workflow](https://github.com/zzjha-cn/agent_sandbox/blob/main/.github/workflows/release.yml) 由 GitHub Actions **手动触发**。推送 tag 不会自动创建 Release。workflow 默认创建草稿，发布者核对后再公开；`draft=false` 会直接发布。
+
+### 1. 准备并验证发布提交
+
+将需要发布的变更提交并推送到目标分支，确认提交内容和 CI 结果：
+
+```sh
+git status
+git add path/to/changed-file  # 替换为实际需要提交的文件
+git commit -m "Prepare release"
+git push origin main
+```
+
+在 GitHub 的 **Actions → ci** 查看对应提交。当前 [CI workflow](https://github.com/zzjha-cn/agent_sandbox/blob/main/.github/workflows/ci.yml) 在 `main` 的 push 和 pull request 时运行 `make lint` 与 `make test`。Release workflow 也会在 tag 对应的代码上再次执行这两项。
+
+CI 和 Release workflow **不自动运行** `make test-docker`、真实 Agent 端到端测试或生产业务接口验收。需要这些证据的版本，应在发布前按实际变更另行验证。
+
+### 2. 创建并推送版本 tag
+
+确认当前提交就是要发布的版本，然后创建 annotated tag，例如：
+
+```sh
+git log -1 --oneline
+git tag -a v0.4.0 -m "sbx v0.4.0" -m "Describe the changes in this release."
+git show v0.4.0
+git push origin v0.4.0
+```
+
+示例中的版本号与说明应替换为本次内容。workflow 从 tag 内容提取标题与正文；annotated tag 的首段作为标题、后续内容作为正文。尽量在创建 tag 前写好说明，并确认该版本的 Release 尚不存在。
+
+### 3. 手动触发 Release workflow
+
+1. 在 GitHub 仓库打开 **Actions → release → Run workflow**。
+2. `tag` 填写已经推送到 origin 的 tag，例如 `v0.4.0`。
+3. `draft` 保持默认 `true`，创建待检查的草稿；选择 `false` 则直接创建公开 Release。
+4. 点击 **Run workflow**，查看任务日志与最终状态。
+
+该 workflow 会检出输入的 tag，验证 checkout 与 tag 精确匹配，按 `core/go.mod` 配置 Go，再运行 `make lint`、`make test` 和 `make release`。最后使用仓库的 `GITHUB_TOKEN` 创建 Release；失败时先查看失败步骤，不要把未成功的出包视为已发布。
+
+### 4. 检查草稿并发布
+
+在 GitHub 的 **Releases** 页面打开新草稿，检查 tag、标题、正文以及五个附件。以 `v0.4.0` 为例：
+
+```text
+sbx_v0.4.0_darwin_amd64.tar.gz
+sbx_v0.4.0_darwin_arm64.tar.gz
+sbx_v0.4.0_linux_amd64.tar.gz
+sbx_v0.4.0_linux_arm64.tar.gz
+SHA256SUMS
+```
+
+四个归档分别对应 macOS/Linux 和 amd64/arm64，每个归档内是 `sbx` 二进制；版本由构建时的 `git describe` 注入。下载附件与 `SHA256SUMS` 到同一目录后，可在 macOS 使用 `shasum -a 256 -c SHA256SUMS`，在 Linux 使用 `sha256sum -c SHA256SUMS` 校验。根据目标平台解压并运行 `./sbx --version` 做安装检查。
+
+核对无误后，在草稿页面点击 **Publish release**。如果手动触发时选择了 `draft=false`，workflow 成功后无需再发布草稿。
+
+### 本地出包
+
+需要本地检查构建产物时，在 `core/` 运行：
+
+```sh
+cd core
+make release
+ls dist
+```
+
+`make release` 会**先删除并重建 `core/dist/`**，再交叉编译四个平台并生成 `SHA256SUMS`。本地出包不会创建 GitHub Release；未处于 tag 的提交上时，版本名由 `git describe` 决定，不一定是正式 tag 名。
+
+## Wiki 静态站点
+
+下面的流程维护项目 Wiki，与 GitHub Releases 的二进制附件是两条独立发布路径。
 
 ## 本地预览
 

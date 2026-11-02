@@ -35,6 +35,7 @@ func TestStarterSelectsCodexAndTaskSession(t *testing.T) {
 case "$*" in
  *"tmux has-session"*) exit 1 ;;
  *"codex login status"*) exit 0 ;;
+ *"codex features list"*) printf "memories stable true\n"; exit 0 ;;
  *"tmux new-session"*) printf '%s' "$*" > "$TEST_STATE/launched"; printf '0' > "$TEST_STATE/run.exit"; exit 0 ;;
  *) echo "unexpected invocation" >&2; exit 2 ;;
 esac
@@ -77,6 +78,7 @@ func TestStarterAcceptsReadyHookOverwrittenByPromptHook(t *testing.T) {
 case "$*" in
  *"tmux has-session"*) test -f "$TEST_STATE/launched"; exit $? ;;
  *"codex login status"*) exit 0 ;;
+ *"codex features list"*) printf "memories stable true\n"; exit 0 ;;
  *"tmux new-session"*) touch "$TEST_STATE/launched"; printf '{"state":"running","event":"UserPromptSubmit"}' > "$TEST_STATE/status.json"; exit 0 ;;
  *) exit 2 ;;
 esac
@@ -89,5 +91,61 @@ esac
 	defer cancel()
 	if err := starter.Start(ctx, req.Task, req); err != nil {
 		t.Fatal("newer hook hid successful startup", err)
+	}
+}
+
+func TestManagedCodexStarterInjectsReviewedContext(t *testing.T) {
+	req, _, _ := memoryFixture(t)
+	shim := filepath.Join(t.TempDir(), "docker")
+	t.Setenv("TEST_STATE", req.Task.StateDir())
+	script := `#!/bin/sh
+case "$*" in
+ *"tmux has-session"*) exit 1 ;;
+ *"codex features list"*) printf 'memories stable true\n'; exit 0 ;;
+ *"codex login status"*) exit 0 ;;
+ *"tmux new-session"*) printf '%s' "$*" > "$TEST_STATE/launched"; printf '0' > "$TEST_STATE/run.exit"; exit 0 ;;
+ *) echo "unexpected invocation: $*" >&2; exit 2 ;;
+esac
+`
+	if e := os.WriteFile(shim, []byte(script), 0700); e != nil {
+		t.Fatal(e)
+	}
+	starter := AgentStarter{Docker: &docker.Client{Bin: shim}, APIKey: func() (APIKey, error) { return APIKey{}, nil }, ImportMemory: func(string) error { t.Fatal("managed task imported native memory"); return nil }, InstallRuntimes: func(task.Task, agent.Runtime) {}, Logf: func(string, ...any) {}, RotateLog: func(string) error { return nil }}
+	if e := starter.Start(context.Background(), req.Task, req); e != nil {
+		t.Fatal(e)
+	}
+	b, e := os.ReadFile(filepath.Join(req.Task.StateDir(), "launched"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	if !strings.Contains(string(b), "features.memories=false") || !strings.Contains(string(b), "/sbx/gen/memory-prompt.txt") {
+		t.Fatalf("uncontrolled launch: %s", b)
+	}
+	b, e = os.ReadFile(filepath.Join(req.Task.GenDir(), "memory-prompt.txt"))
+	if e != nil || !strings.Contains(string(b), "Check Docker") || !strings.Contains(string(b), req.Prompt) {
+		t.Fatal(string(b), e)
+	}
+	if _, e = ReadMemorySession(req.Task.Home, req.Task.ID()); e != nil {
+		t.Fatal(e)
+	}
+}
+
+func TestCodexStarterRejectsMissingMemoryCapability(t *testing.T) {
+	req, _, _ := memoryFixture(t)
+	shim := filepath.Join(t.TempDir(), "docker")
+	script := `#!/bin/sh
+case "$*" in
+ *"tmux has-session"*) exit 1 ;;
+ *"codex features list"*) printf 'other-feature stable true\n'; exit 0 ;;
+ *) echo "must not launch" >&2; exit 2 ;;
+esac
+`
+	os.WriteFile(shim, []byte(script), 0700)
+	starter := AgentStarter{Docker: &docker.Client{Bin: shim}}
+	if e := starter.Start(context.Background(), req.Task, req); e == nil || !strings.Contains(e.Error(), "memories feature") {
+		t.Fatal("unsupported runtime did not fail closed", e)
+	}
+	if _, e := ReadMemorySession(req.Task.Home, req.Task.ID()); !os.IsNotExist(e) {
+		t.Fatal("unsupported launch recorded as prepared", e)
 	}
 }

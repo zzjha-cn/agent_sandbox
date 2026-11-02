@@ -16,6 +16,7 @@ import (
 
 	"sandx/internal/external"
 	"sandx/internal/task"
+	"sandx/internal/taskmemory"
 	"sandx/internal/workspace"
 )
 
@@ -360,5 +361,10 @@ func (s *FileStore) Save(ctx context.Context, r *TaskRecord) error {
 		return err
 	}
 	r.Sequence = next.Sequence
+	// The execution journal is authoritative. Failure to write this derived
+	// sidecar must not turn a completed external operation into a retry signal.
+	if h, e := projectHandoff(r, ""); e == nil {
+		_ = taskmemory.SaveHandoff(filepath.Dir(filepath.Dir(filepath.Dir(s.dir))), h)
+	}
 	return nil
 }

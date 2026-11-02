@@ -4,6 +4,8 @@
 
 本文描述当前实现，机器输入与执行记录统一使用 v2。sbx 是一次性 CLI 驱动的受控 Agent 执行内核，支持 Claude Code 和 Codex。Git 交互与通用任务共用执行服务，但工作区选择和完成语义不同。
 
+项目记忆已提供 M1 本地审核与上下文注入，以及 M2 事实交接、无工具模型提取和独立后处理状态，支持 native/managed/off。使用方式见 [项目记忆手册](project-memory.md)，团队共享等后续方案见 [项目记忆与任务交接设计](project-memory-design.md)。
+
 ## 1. 从使用方式理解架构
 
 | 入口 | 输入与工作区 | 结果与使用场景 |
@@ -53,6 +55,8 @@ CLI 不自行决定产物已完成或外部写可以重试。执行服务掌握�
 | FileStore | 保存执行事实并阻断危险重放 | 版本化记录、校验摘要、原子保存、任务/记录锁 |
 | RuntimeManager | 停止、核对、清理专属资源 | stop/clean/recover；保留产物、工作副本、回执与历史 |
 | EventSink | 输出执行事件 | stdout JSONL；与产物 Sink 职责不同 |
+| ProjectMemoryStore / MemorySnapshot | 审核项目经验、冻结启动上下文 | 本地原子版本库、摘要绑定审核、固定快照；独立于 provider 原生记忆 |
+| TaskHandoff / ExtractionJob | 交接事实、冻结材料、生成候选 | 执行记录投影、人工备注、无工具 Responses/Messages API、有界幂等作业；提取失败不改变业务终态 |
 
 代码入口：`core/internal/cli`、`execution`、`agent`、`source`、`artifact`、`completion`、`sink`、`external`、`toolgate`、`governance`、`isolation`。
 

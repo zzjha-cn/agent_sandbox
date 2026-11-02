@@ -17,6 +17,7 @@ import (
 	"sandx/internal/agent"
 	"sandx/internal/config"
 	"sandx/internal/task"
+	"sandx/internal/taskmemory"
 )
 
 type Mode string
@@ -27,6 +28,8 @@ const (
 )
 
 type Request struct {
+	MemoryAttemptID string // execution-owned; not decoded from TaskSpec
+
 	OrganizationPolicyDigest string              // trusted managed-runtime binding; never decoded
 	Authorize                func(Request) error // trusted host policy, never decoded
 	Task                     task.Task
@@ -246,16 +249,17 @@ type Driver interface {
 }
 
 type Service struct {
-	driver        Driver
-	events        EventSink
-	eventErr      error
-	store         RecordStore
-	record        *TaskRecord
-	failureNotice *Event
-	persistFailed bool
-	started       bool
-	facts         *PipelineFacts
-	closeTools    func() error
+	extractionModel taskmemory.Model
+	driver          Driver
+	events          EventSink
+	eventErr        error
+	store           RecordStore
+	record          *TaskRecord
+	failureNotice   *Event
+	persistFailed   bool
+	started         bool
+	facts           *PipelineFacts
+	closeTools      func() error
 }
 
 func NewService(driver Driver, sinks ...EventSink) *Service {

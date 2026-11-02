@@ -11,7 +11,9 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"sandx/internal/execution"
 	"sandx/internal/memory"
+	"sandx/internal/task"
 )
 
 // hostClaudeDir 是宿主机的 ~/.claude；测试时可用 SBX_HOST_CLAUDE 覆盖。
@@ -123,6 +125,29 @@ func (a *App) pullPlan() (pullPlan, error) {
 	return p, nil
 }
 
+// Retain legacy Claude reminders, without querying unrelated native memory for
+// Codex or managed/off sessions. This is informational and never gates cleanup.
+func shouldRemindClaudeMemory(t task.Task) bool {
+	meta, ok, err := t.ReadMeta()
+	if err != nil || ok && meta.Agent != "" && meta.Agent != "claude" {
+		return false
+	}
+	session, err := execution.ReadMemorySession(t.Home, t.ID())
+	if os.IsNotExist(err) {
+		return true
+	}
+	return err == nil && session.Mode == "native" && (session.Provider == "claude" || session.Provider == "")
+}
+func (a *App) remindPullForTasks(names []string) {
+	for _, name := range names {
+		t, err := a.task(name)
+		if err == nil && shouldRemindClaudeMemory(t) {
+			a.remindPull()
+			return
+		}
+	}
+}
+
 // remindPull 在沙箱里有还没导回的记忆时提醒一句（sbx done 前调用，失败不影响 done）。
 func (a *App) remindPull() {
 	p, err := a.pullPlan()
@@ -163,7 +188,7 @@ func showDiff(name, oldLabel, newLabel string, old, new []byte, out io.Writer) {
 }
 
 func (a *App) memoryCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "memory", Short: "Claude project memory between your host and the sandbox (ADR 0016)"}
+	cmd := &cobra.Command{Use: "memory", Short: "Manage reviewed project memory and Claude host/sandbox synchronization"}
 	var yes bool
 	pull := &cobra.Command{
 		Use:   "pull",
@@ -171,6 +196,9 @@ func (a *App) memoryCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := a.load(); err != nil {
+				return err
+			}
+			if err := a.checkIsolation(cmd.Context(), true); err != nil {
 				return err
 			}
 			p, err := a.pullPlan()
@@ -213,5 +241,7 @@ func (a *App) memoryCmd() *cobra.Command {
 	}
 	pull.Flags().BoolVarP(&yes, "yes", "y", false, "write without asking")
 	cmd.AddCommand(pull)
+	a.addProjectMemoryCommands(cmd)
+	a.addExtractionCommands(cmd)
 	return cmd
 }

@@ -7,6 +7,7 @@ import shutil
 PUBLIC = (
     'index.html', '.nojekyll', 'PUBLISHING.md', 'walkthrough.md', 'design.md',
     'commands.md', 'glossary.md', 'cli-reference.md', 'general-tasks.md',
+    'project-memory-design.md', 'project-memory.md',
     'dynamic-tools.md', 'automation.md', 'boundary.md', 'architecture.md', 'CONTEXT.md',
 )
 

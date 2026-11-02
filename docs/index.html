@@ -280,7 +280,7 @@ footer code{font-size:12.5px}
 <div class="pillars">
 <div class="pil"><span class="k">01 / WALKTHROUGH</span><h3>Walkthrough</h3><p>Git coding, reports, read-only queries, external writes and recovery.</p><p class="fix"><a href="?doc=walkthrough.md">From setup to delivery →</a></p></div>
 <div class="pil"><span class="k">02 / COMMANDS</span><h3>Command guide</h3><p>Find commands by scenario, with prerequisites, parameters and effects.</p><p class="fix"><a href="?doc=commands.md">Explore commands →</a></p></div>
-<div class="pil"><span class="k">03 / DESIGN</span><h3>Architecture and terms</h3><p>Understand tasks, workspaces, artifacts, tool grants and recovery facts.</p><p class="fix"><a href="?doc=design.md">Design</a> · <a href="?doc=glossary.md">Glossary</a></p></div>
+<div class="pil"><span class="k">03 / DESIGN</span><h3>Architecture and terms</h3><p>Understand tasks, workspaces, artifacts, tool grants and recovery facts.</p><p class="fix"><a href="?doc=design.md">Design</a> · <a href="?doc=glossary.md">Glossary</a> · <a href="?doc=project-memory.md">Project memory</a> · <a href="?doc=project-memory-design.md">Memory design</a></p></div>
 </div><div class="term" style="margin-top:24px"><pre><span class="c"># Explicit tasks: admit, execute and inspect; no Git repository required</span>
 sbx admit --spec report-task.json
 sbx task run --spec report-task.json
@@ -1125,7 +1125,7 @@ scenarioTabs.forEach((tab, index) => {
   });
 });
 
-const allowed=new Set(['walkthrough.md','design.md','commands.md','glossary.md','general-tasks.md','dynamic-tools.md','automation.md','boundary.md','cli-reference.md','schemas/README.md','architecture.md','CONTEXT.md','PUBLISHING.md']);
+const allowed=new Set(['walkthrough.md','design.md','project-memory-design.md','project-memory.md','commands.md','glossary.md','general-tasks.md','dynamic-tools.md','automation.md','boundary.md','cli-reference.md','schemas/README.md','architecture.md','CONTEXT.md','PUBLISHING.md']);
 const esc=s=>s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function link(href,doc){try{const u=new URL(href,new URL(doc,location.href));if(!['http:','https:'].includes(u.protocol))return '#';if(u.origin===location.origin){const base=new URL('.',location.href);const path=u.pathname.slice(base.pathname.length);if(allowed.has(path))return '?doc='+encodeURIComponent(path)+u.hash;}return u.href;}catch{return '#';}}
 function inline(s,doc){const codes=[];s=s.replace(/`([^`]+)`/g,(_,v)=>'\u0000'+(codes.push('<code>'+esc(v)+'</code>')-1)+'\u0000');s=esc(s).replace(/\[([^\]]+)\]\(([^)]+)\)/g,(_,t,h)=>'<a href="'+esc(link(h.replace(/&amp;/g,'&'),doc))+'">'+t+'</a>').replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>').replace(/&lt;br\s*\/?&gt;/gi,'<br>');return s.replace(/\u0000(\d+)\u0000/g,(_,i)=>codes[+i]);}

@@ -17,6 +17,7 @@ import (
 	"sandx/internal/protocol"
 	"sandx/internal/proxy"
 	"sandx/internal/task"
+	"sandx/internal/taskmemory"
 	"sandx/internal/workspace"
 )
 
@@ -25,6 +26,7 @@ var Version = "dev"
 
 // App 持有一次命令执行的公共依赖。
 type App struct {
+	MemoryModel         taskmemory.Model // optional embedded text-only extraction adapter
 	Organization        governance.Snapshot
 	inspectionOrCleanup bool
 	Verbose             bool
@@ -83,7 +85,7 @@ func Execute() int {
 				}
 			}
 			switch top.Name() {
-			case "run", "admit", "version", "schema", "policy", "events", "execution", "task", "config", "trust", "isolation", "doctor", "completion", "help", "sbx":
+			case "memory", "run", "admit", "version", "schema", "policy", "events", "execution", "task", "config", "trust", "isolation", "doctor", "completion", "help", "sbx":
 				// Run/admit validate the envelope first and perform the same
 				// ownership check in execution admission; inspection stays read-only.
 				return nil

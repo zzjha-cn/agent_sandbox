@@ -88,7 +88,27 @@ type Agent struct {
 	APIKeyFile string `toml:"api_key_file"`
 }
 
+// MemoryExtraction bounds explicitly enabled host-side model post-processing.
+type MemoryExtraction struct {
+	Auto            bool   `toml:"auto"`
+	Model           string `toml:"model"`
+	TimeoutSeconds  int    `toml:"timeout_seconds"`
+	MaxOutputTokens int    `toml:"max_output_tokens"`
+	MaxCalls        int    `toml:"max_calls"`
+}
+
+// ProjectMemory is trusted host configuration; repositories cannot select a knowledge store.
+type ProjectMemory struct {
+	Extract  MemoryExtraction `toml:"extract"`
+	Mode     string           `toml:"mode"`
+	Project  string           `toml:"project"`
+	Snapshot string           `toml:"snapshot"`
+	Paths    []string         `toml:"paths"`
+	Tags     []string         `toml:"tags"`
+}
+
 type Config struct {
+	Memory       ProjectMemory    `toml:"memory"`
 	Isolation    isolation.Policy `toml:"isolation"`
 	DefaultAgent string           `toml:"default_agent"`
 	Profile      string           `toml:"profile"`
@@ -134,6 +154,7 @@ func ProfileMasks(profile string) []string {
 // Default 返回内置默认值（ADR 0012 修订后的 B 方案）。
 func Default() Config {
 	return Config{
+		Memory:       ProjectMemory{Extract: MemoryExtraction{TimeoutSeconds: 90, MaxOutputTokens: 2048, MaxCalls: 2}},
 		Isolation:    isolation.Policy{Boundary: isolation.DedicatedDaemon},
 		DefaultAgent: "claude",
 		Profile:      "web-go",
@@ -198,6 +219,23 @@ func fieldf(key, format string, args ...any) error {
 }
 
 func (c Config) Validate() error {
+	e := c.Memory.Extract
+	if e.TimeoutSeconds < 1 || e.TimeoutSeconds > 300 || e.MaxOutputTokens < 256 || e.MaxOutputTokens > 8192 || e.MaxCalls < 1 || e.MaxCalls > 3 {
+		return fieldf("memory.extract", "memory.extract limits: timeout_seconds 1-300, max_output_tokens 256-8192, max_calls 1-3")
+	}
+	if e.Auto && (c.Memory.Mode != "managed" || strings.TrimSpace(e.Model) == "") {
+		return fieldf("memory.extract.auto", "automatic extraction requires managed memory and an explicit model")
+	}
+
+	switch c.Memory.Mode {
+	case "", "native", "managed", "off":
+	default:
+		return fieldf("memory.mode", "memory.mode must be native, managed or off")
+	}
+	if c.Memory.Mode != "managed" && (c.Memory.Project != "" || c.Memory.Snapshot != "" || len(c.Memory.Paths) > 0 || len(c.Memory.Tags) > 0) {
+		return fieldf("memory", "memory.project/snapshot/paths/tags require mode = managed")
+	}
+
 	if err := c.Isolation.Validate(); err != nil {
 		return fieldf("isolation", "%s", err)
 	}

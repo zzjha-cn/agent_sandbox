@@ -39,7 +39,7 @@ type runOpts struct {
 func (o runOpts) headless() bool { return o.Prompt != "" }
 
 func (a *App) runCmd() *cobra.Command {
-	var base, netMode, proxyMode, prompt, envelopePath, agentName string
+	var base, netMode, proxyMode, prompt, envelopePath, agentName, memoryMode, memoryProject string
 	var detach, fresh, cloudMCP, jsonl bool
 	cmd := &cobra.Command{
 		Use:   "run [task]",
@@ -53,7 +53,7 @@ func (a *App) runCmd() *cobra.Command {
 				return a.writeProtocolFailure(&protocol.CodedError{Code: "invalid_task", Err: errors.New("--spec must name a file or -")})
 			}
 			if envelopePath != "" {
-				for _, flag := range []string{"prompt", "base", "fresh", "jsonl", "detach", "net", "proxy", "cloud-mcp", "agent"} {
+				for _, flag := range []string{"prompt", "base", "fresh", "jsonl", "detach", "net", "proxy", "cloud-mcp", "agent", "memory", "memory-project"} {
 					if cmd.Flags().Changed(flag) {
 						return a.writeProtocolFailure(&protocol.CodedError{Code: "invalid_task", Err: fmt.Errorf("--spec cannot be combined with --%s", flag)})
 					}
@@ -78,6 +78,24 @@ func (a *App) runCmd() *cobra.Command {
 			}
 			if cmd.Flags().Changed("agent") {
 				a.setRunAgent(agentName)
+			}
+			if cmd.Flags().Changed("memory") {
+				if memoryMode != "native" && memoryMode != "managed" && memoryMode != "off" {
+					return errors.New("--memory must be native, managed or off")
+				}
+				if memoryMode != "managed" {
+					a.Cfg.Memory = config.ProjectMemory{}
+					a.Loaded.Config.Memory = config.ProjectMemory{}
+				}
+				a.Cfg.Memory.Mode = memoryMode
+				a.Loaded.Config.Memory.Mode = memoryMode
+			}
+			if cmd.Flags().Changed("memory-project") {
+				a.Cfg.Memory.Project = memoryProject
+				a.Loaded.Config.Memory.Project = memoryProject
+			}
+			if err := a.Cfg.Validate(); err != nil {
+				return err
 			}
 			name := ""
 			if len(args) == 1 {
@@ -120,6 +138,8 @@ func (a *App) runCmd() *cobra.Command {
 			return a.run(runCtx, t, o)
 		},
 	}
+	cmd.Flags().StringVar(&memoryMode, "memory", "", "memory mode for this Git run: native, managed or off; mode changes require --fresh")
+	cmd.Flags().StringVar(&memoryProject, "memory-project", "", "trusted local project ID for managed memory (otherwise use repository binding)")
 	cmd.Flags().StringVar(&agentName, "agent", "", "agent for this run: claude or codex (overrides default_agent without changing config files)")
 	cmd.Flags().StringVar(&base, "base", "", "starting point for the new branch (default: current HEAD)")
 	cmd.Flags().BoolVarP(&detach, "detach", "d", false, "start the task without attaching to it")

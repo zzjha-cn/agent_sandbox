@@ -50,7 +50,7 @@ type VersionInfo struct {
 func Version(appVersion string) VersionInfo {
 	return VersionInfo{SchemaVersion: SchemaVersion, ApplicationVersion: appVersion,
 		Providers: []string{"claude", "codex"}, ArtifactDelivery: "local_directory,git_local",
-		Capabilities: []string{"task.v2", "admit.v2", "events.jsonl.v2", "timeout", "source.files", "source.git", "artifact.snapshot", "criteria.files", "criteria.tests", "criteria.manual", "criteria.external_state", "tools.records.get", "operations.record_http", "organization.ceilings", "events.team-outbox", "task.management"}, MaxTimeoutSeconds: MaxTimeoutSeconds, Schemas: SchemaNames(), CapabilityDetails: capabilityDetails(), RecordSchema: execution.RecordSchema, Compatibility: Compatibility{InputVersions: []string{SchemaVersion}, RecordVersions: []string{execution.RecordSchema}, V1Records: "preserve_and_reconcile_with_original_binary", AdditiveOutputFields: true}}
+		Capabilities: []string{"task.v2", "admit.v2", "events.jsonl.v2", "timeout", "source.files", "source.git", "artifact.snapshot", "criteria.files", "criteria.tests", "criteria.manual", "criteria.external_state", "tools.records.get", "operations.record_http", "organization.ceilings", "events.team-outbox", "task.management", "memory.project", "memory.modes", "memory.handoff", "memory.extraction"}, MaxTimeoutSeconds: MaxTimeoutSeconds, Schemas: SchemaNames(), CapabilityDetails: capabilityDetails(), RecordSchema: execution.RecordSchema, Compatibility: Compatibility{InputVersions: []string{SchemaVersion}, RecordVersions: []string{execution.RecordSchema}, V1Records: "preserve_and_reconcile_with_original_binary", AdditiveOutputFields: true}}
 }
 
 type CapabilityDetail struct {
@@ -67,6 +67,10 @@ type Compatibility struct {
 // Implementation constraints, not a grant of local authority.
 func capabilityDetails() []CapabilityDetail {
 	return []CapabilityDetail{
+		{Name: "memory.handoff", Requirements: []string{"durable execution records; offline fact projection and explicit operator notes", "open or handed-off attempts remain incomplete; no inferred test success", "retained outside runtime cleanup"}},
+		{Name: "memory.extraction", Requirements: []string{"personal host configuration; explicit provider API key and model", "tool-free Responses/Messages API; no subscription-session reuse", "default manual; automatic only for managed synchronous headless attempts", "frozen bounded material, explicit retries and candidate-only atomic publication"}},
+		{Name: "memory.project", Requirements: []string{"trusted host memory configuration; no TaskSpec fields", "local candidates require digest-bound operator approval", "project-bound deterministic snapshots; mode changes require a fresh conversation", "organization review mutations are not yet supported"}},
+		{Name: "memory.modes", Requirements: []string{"native, managed or off", "personal default native; organization default off", "managed/off Codex requires a runtime memories feature", "shared provider home is not a tenant isolation boundary"}},
 		{Name: "task.management", Requirements: []string{"task list/status/logs are offline", "stop uses attempt-scoped supervisor cancellation", "clean/recover require exclusive task locks and daemon ownership", "runtime cleanup retains workspace/artifacts/receipts; unknown effects forbid replay"}},
 		{Name: "organization.ceilings", Requirements: []string{"root-owned /etc/sbx/organization.toml", "synchronous TaskSpec only when managed", "dedicated Docker daemon/VM for mutually untrusted operators", "policy changes cancel within 250ms plus bounded cleanup; external effects require reconciliation"}},
 		{Name: "events.team-outbox", Requirements: []string{"managed policy", "private durable local outbox", "explicit events flush with per-operator collector credential", "collector authenticates subject and deduplicates stable event id"}},

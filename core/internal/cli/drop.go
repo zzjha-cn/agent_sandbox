@@ -28,7 +28,7 @@ func (a *App) dropCmd() *cobra.Command {
 			if err := a.confirmDrop(t, yes); err != nil {
 				return err
 			}
-			a.remindPull()
+			a.remindPullForTasks(args)
 			if err := a.done(t, force, true); err != nil {
 				return err
 			}

@@ -15,9 +15,10 @@ const (
 
 // HeadlessOpts 是一次 headless 运行的参数（M3-7）。
 type HeadlessOpts struct {
-	Tools    bool
-	Continue bool // 接上这个 Task 的上次对话
-	Notify   bool // 配了 on_exit：收尾时同步调一次通知
+	MemoryContext bool
+	Tools         bool
+	Continue      bool // 接上这个 Task 的上次对话
+	Notify        bool // 配了 on_exit：收尾时同步调一次通知
 }
 
 // HeadlessCmd 组装 tmux 窗口里跑的 headless 命令。
@@ -31,7 +32,11 @@ type HeadlessOpts struct {
 //     一份内存和一个 max_running 名额。容器主进程是 sleep infinity，不会自己退。
 //   - on_exit 必须在 kill 1 之前**同步**跑完，否则通知进程会被连带杀掉。
 func HeadlessCmd(o HeadlessOpts) string {
-	claude := "claude -p \"$(cat " + PromptFile + ")\" --dangerously-skip-permissions --settings /sbx/gen/settings.sbx.json"
+	prompt := PromptFile
+	if o.MemoryContext {
+		prompt = "/sbx/gen/memory-context.md " + PromptFile
+	}
+	claude := "claude -p \"$(cat " + prompt + ")\" --dangerously-skip-permissions --settings /sbx/gen/settings.sbx.json"
 	if o.Tools {
 		claude += " --strict-mcp-config --mcp-config /sbx/gen/tools-claude.json"
 	}

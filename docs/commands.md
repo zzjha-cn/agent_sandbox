@@ -457,7 +457,33 @@ sbx config show       # 生效配置 + 每个值来自哪一层
 sbx trust             # 确认这个仓库的 .sbx/ 内容（见下）
 ```
 
-**记忆是单向自动的**：每次 `sbx run` 把宿主机这个仓库的记忆（`~/.claude/projects/<key>/memory/`）导入沙箱；沙箱里新记的**不会自动回来**，要 `memory pull`。它先按文件列出差异（`add` / `update` / `merge` / `conflict` / `keep`），确认后才写；两边都改过的标 `conflict`，不自动合，留给你手处理。`sbx done` 时会提醒一次。
+**Claude 原生记忆同步**：在 native 模式下，每次 Claude `sbx run` 把宿主机这个仓库的记忆（`~/.claude/projects/<key>/memory/`）导入沙箱；沙箱里新记的**不会自动回来**，要 `memory pull`。它先按文件列出差异（`add` / `update` / `merge` / `conflict` / `keep`），确认后才写；两边都改过的标 `conflict`，不自动合，留给你手处理。`sbx done` 时会提醒一次。
+
+### 项目记忆与运行模式
+
+Git 启动支持 `--memory native|managed|off` 与 `--memory-project <id>`；后者仅用于 managed。切换已有会话模式先 stop，再 --fresh。关闭记忆不会删除旧上下文。通用任务使用可信宿主 `[memory]` 配置，不增加 TaskSpec 字段。
+
+| 命令 | 场景与参数 |
+|---|---|
+| `memory project create <project>` | 创建稳定本地项目 ID |
+| `memory project bind --project <id> --repo <dir>` | 显式绑定主仓库及其 worktree |
+| `memory project show <project>` | JSON 查看完整修订历史 |
+| `memory add --project <id> --file entry.json` | 提交 kind/title/content/source，始终是候选 |
+| `memory candidates/list --project <id>` | 查看候选或所有当前条目 |
+| `memory show <entry> --project <id>` | 核对正文、来源、状态与当前 digest |
+| `memory approve/reject/archive <entry>` | 均需 --project、--digest、--reviewer、--reason；拒绝过期摘要 |
+| `memory snapshot --project <id> [--paths ...] [--tags ...]` | 冻结已审核经验，输出可固定引用的 digest |
+| `memory status <task> [--scope git|general] [--attempt <id>]` | 离线读取启动上下文准备记录，不查询原生后台进度 |
+| `memory handoff <task> [--scope git|general] [--attempt <id>] [--summary file]` | 从执行记录重建交接；可附加人工安全目标/进度/下一步，不把备注当测试事实 |
+| `memory extract <task> [--project <id>] [--scope ...] [--attempt ...] [--summary file]` | 冻结交接与显式安全摘要，以任务 provider API 生成待审候选；可能产生额外费用 |
+| `memory jobs` / `memory job <job-id>` | 离线读取全部提取作业或单个作业；包含冻结材料、模型判断、调用计数和候选引用 |
+| `memory processing <task> [--scope ...] [--attempt ...]` | 单独查询显式启用的自动后处理；不替代业务 status |
+| `memory recover <job-id>` | 取得作业锁后把孤立 running 标记 interrupted；不调用模型 |
+| `memory retry <job-id>` | 明确重试冻结材料，可能再次计费；不恢复 Agent、不重放业务操作 |
+
+项目库与任务上下文保存在独立宿主目录，done/clean 不删除。M2 已提供显式提取和可选自动提取；团队共享留待 M3。组织模式暂不允许修改本地项目记忆。完整可复制流程、配置、选择条件与清理边界见 [项目记忆手册](project-memory.md)。
+
+提取默认关闭，需要在可信宿主 `[memory.extract]` 配置 model，并通过 `agents.<provider>.api_key_env/api_key_file` 配置 API key；订阅登录态不直接复用。仅 `auto=true` 且 managed 同步 headless 运行在 attempt 关闭后自动提取；交互/detached 使用 extract 手动触发。默认每作业 90 秒、2048 输出 tokens、最多 2 次调用预留。摘要上限 16 KiB、材料 64 KiB，每批最多 5 条；候选仍需 digest-bound 审核。失败或中断后运行 job → recover（必要时）→ retry；unknown 业务操作仍须按 task reconcile 流程核对。
 
 **`sbx upgrade`** 在 Profile 镜像里 `npm view` 查最新版，重建 Agent 层，把版本号记在 `~/.sbx/claude-version`。容器里的 claude 不会自动更新，**已有 Task 仍用旧镜像**，`done` 之后重新 `run` 才换上。配置里固定了 `agents.claude.version` 时它会拒绝执行，让你改配置。这条命令不要求在 Git 仓库内执行；它目前只升级 Claude，Codex 用 agents.codex.version。
 
@@ -1434,7 +1460,7 @@ sbx: 已经有 3 个 Task 在跑，达到 max_running = 3：shop-e76272.main、s
 
 计数是**跨 Workspace 的**——`max_running` 管的是 Docker VM 的内存，而那是所有仓库共用的；限额本身取自你当前所在仓库的配置。`sbx run` 一个已经在跑的 Task 只是 attach，不占新名额，不会被自己挡住。启动一个已停止的 Task 同样要过这一关。
 
-**内存预算**：`max_running × resources.memory` 超过 Docker VM 内存的 95% 时警告一次，不拒绝——`--memory` 是上限不是预留，用不满是常态。
+**内存预算**：`max_running × resources.memory` 超过 Docker VM 内存的 95% 时警告一次，不拒绝——Docker 的内存限制是上限不是预留，用不满是常态。
 
 ```
 警告: max_running(4) × resources.memory(3g) = 12.0g，超过 Docker VM 内存 9.7g 的 95%。
