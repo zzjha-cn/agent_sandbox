@@ -594,8 +594,12 @@ Available Commands:
   approve     Record an explicit review bound to the displayed entry digest
   archive     Record an explicit review bound to the displayed entry digest
   candidates  Read project memory entries as JSON
+  check       Validate authoritative history and derive current views without a separate index (JSON)
+  export      Print a portable bundle of explicitly selected approved experience (JSON)
   extract     Freeze safe task material and call a tool-free model to propose candidates (may incur API charges)
   handoff     Rebuild a task handoff from durable facts without running the task (JSON)
+  import      Map a portable bundle to a local project as unapproved candidates
+  inspect     Report duplicate/conflict hints, review expiry and storage usage (JSON)
   job         Inspect a frozen extraction job (JSON)
   jobs        List locally persisted extraction jobs without Docker (JSON)
   list        Read project memory entries as JSON
@@ -604,9 +608,11 @@ Available Commands:
   pull        Bring memory written in the sandbox back to the host (shows the diff, then asks)
   recover     Mark an abandoned extraction interrupted without a model call
   reject      Record an explicit review bound to the displayed entry digest
+  renew       Record an explicit review bound to the displayed entry digest
   retry       Retry extraction using frozen material; may incur another API charge
   show        Read project memory entries as JSON
   snapshot    Freeze approved project knowledge and print a reusable snapshot (JSON)
+  stats       Print project memory occupancy and current status counts (JSON)
   status      Read the recorded memory mode and snapshot without Docker (JSON)
 
 Flags:
@@ -644,11 +650,13 @@ Usage:
   sbx memory approve <entry> [flags]
 
 Flags:
-      --digest string     current entry digest from show/candidates
-  -h, --help              help for approve
-      --project string    registered project
-      --reason string     review explanation
-      --reviewer string   local operator declaration (not authenticated team identity)
+      --digest string       current entry digest from show/candidates
+  -h, --help                help for approve
+      --project string      registered project
+      --reason string       review explanation
+      --review-due string   future RFC3339 expiry for approval/renewal
+      --reviewer string     personal review declaration; organization identity comes from the host UID
+      --sequence uint       expected project sequence (required for organization reviews)
 
 Global Flags:
   -v, --verbose   print every docker and git command sbx runs
@@ -663,11 +671,13 @@ Usage:
   sbx memory archive <entry> [flags]
 
 Flags:
-      --digest string     current entry digest from show/candidates
-  -h, --help              help for archive
-      --project string    registered project
-      --reason string     review explanation
-      --reviewer string   local operator declaration (not authenticated team identity)
+      --digest string       current entry digest from show/candidates
+  -h, --help                help for archive
+      --project string      registered project
+      --reason string       review explanation
+      --review-due string   future RFC3339 expiry for approval/renewal
+      --reviewer string     personal review declaration; organization identity comes from the host UID
+      --sequence uint       expected project sequence (required for organization reviews)
 
 Global Flags:
   -v, --verbose   print every docker and git command sbx runs
@@ -684,6 +694,39 @@ Usage:
 Flags:
   -h, --help             help for candidates
       --project string   registered project
+
+Global Flags:
+  -v, --verbose   print every docker and git command sbx runs
+```
+
+## sbx memory check
+
+```text
+Validate authoritative history and derive current views without a separate index (JSON)
+
+Usage:
+  sbx memory check [flags]
+
+Flags:
+  -h, --help             help for check
+      --project string   registered project
+
+Global Flags:
+  -v, --verbose   print every docker and git command sbx runs
+```
+
+## sbx memory export
+
+```text
+Print a portable bundle of explicitly selected approved experience (JSON)
+
+Usage:
+  sbx memory export [flags]
+
+Flags:
+      --entries strings   explicit approved entry IDs, comma-separated (1-20)
+  -h, --help              help for export
+      --project string    source local project
 
 Global Flags:
   -v, --verbose   print every docker and git command sbx runs
@@ -721,6 +764,39 @@ Flags:
   -h, --help             help for handoff
       --scope string     task namespace: git or general (default "git")
       --summary string   attach operator-authored safe goal/progress/next steps JSON
+
+Global Flags:
+  -v, --verbose   print every docker and git command sbx runs
+```
+
+## sbx memory import
+
+```text
+Map a portable bundle to a local project as unapproved candidates
+
+Usage:
+  sbx memory import [flags]
+
+Flags:
+      --file string      reviewed portable bundle JSON, max 256 KiB
+  -h, --help             help for import
+      --project string   explicit destination local project
+
+Global Flags:
+  -v, --verbose   print every docker and git command sbx runs
+```
+
+## sbx memory inspect
+
+```text
+Report duplicate/conflict hints, review expiry and storage usage (JSON)
+
+Usage:
+  sbx memory inspect [flags]
+
+Flags:
+  -h, --help             help for inspect
+      --project string   registered project
 
 Global Flags:
   -v, --verbose   print every docker and git command sbx runs
@@ -898,11 +974,34 @@ Usage:
   sbx memory reject <entry> [flags]
 
 Flags:
-      --digest string     current entry digest from show/candidates
-  -h, --help              help for reject
-      --project string    registered project
-      --reason string     review explanation
-      --reviewer string   local operator declaration (not authenticated team identity)
+      --digest string       current entry digest from show/candidates
+  -h, --help                help for reject
+      --project string      registered project
+      --reason string       review explanation
+      --review-due string   future RFC3339 expiry for approval/renewal
+      --reviewer string     personal review declaration; organization identity comes from the host UID
+      --sequence uint       expected project sequence (required for organization reviews)
+
+Global Flags:
+  -v, --verbose   print every docker and git command sbx runs
+```
+
+## sbx memory renew
+
+```text
+Record an explicit review bound to the displayed entry digest
+
+Usage:
+  sbx memory renew <entry> [flags]
+
+Flags:
+      --digest string       current entry digest from show/candidates
+  -h, --help                help for renew
+      --project string      registered project
+      --reason string       review explanation
+      --review-due string   future RFC3339 expiry for approval/renewal
+      --reviewer string     personal review declaration; organization identity comes from the host UID
+      --sequence uint       expected project sequence (required for organization reviews)
 
 Global Flags:
   -v, --verbose   print every docker and git command sbx runs
@@ -952,6 +1051,22 @@ Flags:
       --paths strings    relative affected paths
       --project string   registered project
       --tags strings     matching tags
+
+Global Flags:
+  -v, --verbose   print every docker and git command sbx runs
+```
+
+## sbx memory stats
+
+```text
+Print project memory occupancy and current status counts (JSON)
+
+Usage:
+  sbx memory stats [flags]
+
+Flags:
+  -h, --help             help for stats
+      --project string   registered project
 
 Global Flags:
   -v, --verbose   print every docker and git command sbx runs

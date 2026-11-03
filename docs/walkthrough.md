@@ -126,7 +126,22 @@ sbx memory candidates --project my-project
 # 核对内容/来源并按当前 digest 审核；下一项新任务才会选用已批准经验。
 ```
 
-提取单独调用模型 API，可能额外计费，订阅会话不直接复用。失败任务也能提取；证据不足可以零候选。失败/中断时用 memory job 查看、memory recover 标记孤立作业、memory retry 明确重试；这些命令不运行原任务。只有显式 auto=true 的 managed 同步 headless 任务才自动触发，memory processing 单独查询后处理。团队同步仍待 M3。完整可复制摘要与配置见 [项目记忆手册](project-memory.md)。
+提取单独调用模型 API，可能额外计费，订阅会话不直接复用。失败任务也能提取；证据不足可以零候选。失败/中断时用 memory job 查看、memory recover 标记孤立作业、memory retry 明确重试；这些命令不运行原任务。只有显式 auto=true 的 managed 同步 headless 任务才自动触发，memory processing 单独查询后处理。团队共享使用显式 export/import，导入后重新本地审核；不提供实时同步。完整可复制摘要与配置见 [项目记忆手册](project-memory.md)。
+
+### 把已验证的经验交给同事
+
+```sh
+# 发送方显式选择，检查导出的标题与正文后再共享文件。
+sbx memory export --project my-project --entries <approved-entry> > shared-memory.json
+# 接收方显式映射到自己的已有项目，导入不会自动批准。
+sbx memory import --project local-project --file shared-memory.json
+sbx memory candidates --project local-project
+sbx memory approve <entry> --project local-project --digest <local-digest> \
+  --reviewer local-operator --reason '本项目验证通过' --review-due '2027-06-01T00:00:00Z'
+sbx memory inspect --project local-project
+```
+
+到期的经验暂停注入，用 renew 在重新验证后续期；历史保留。安装组织策略时，管理员用宿主 UID 授权明确项目，审核时还需 --sequence，身份不采用 --reviewer 声明。配置与完整流程见 [项目记忆手册](project-memory.md)。
 
 ## Git 日常流程：从启动到 review 合并
 

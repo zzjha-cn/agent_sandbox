@@ -2,7 +2,7 @@
 
 [首页](index.html) · [设计](design.md) · [命令](commands.md) · [完整设计与后续路线](project-memory-design.md)
 
-当前完成 M1 与 M2：本地项目记忆、候选审核、固定快照、Codex/Claude 启动适配，以及任务交接、隔离模型提取和独立后处理状态。原生记忆导入、团队共享和原生记忆备份尚未实现。
+当前完成 M1–M3：本地项目记忆、候选审核与固定快照、Codex/Claude 启动适配、任务交接与隔离提取，以及到期复核、维护检查、显式共享和受管审核身份。原生记忆导入、原生记忆备份与中心共享服务尚未实现。
 
 ## 1. 先选择模式
 
@@ -12,7 +12,7 @@
 | managed | 关闭原生自动记忆；注入 sbx 已审核的项目记忆快照 | 多 provider 复用、可追溯执行 |
 | off | 关闭原生自动记忆，不注入项目记忆 | 临时、敏感或不应积累经验的任务 |
 
-个人配置未指定模式时默认为 native。安装组织策略的受管执行默认 off，拒绝 native；可以通过可信宿主配置选择 managed。这里的 managed 记忆模式与组织受管模式是两个不同概念。本阶段审核身份仅为本地操作者声明，组织模式下不开放项目记忆修改命令；未来需接入经过认证的审核身份。
+个人配置未指定模式时默认为 native。安装组织策略的受管执行默认 off，拒绝 native；可以通过可信宿主配置选择 managed。这里的 managed 记忆模式与组织受管模式是两个不同概念。个人审核身份为本地操作者声明；组织模式的修改与导出需要管理员配置宿主 UID 和项目授权，身份来自系统进程而非 --reviewer。配置见第 10 节。
 
 Codex 启动前检查运行时是否提供 memories feature；不支持时升级任务镜像，不静默忽略模式。native 不保证每次任务结束立即产生经验，实际生成时机、额度限制和后台处理由 Codex 决定。当前未提供原生记忆内容同步或按项目分库。
 
@@ -243,7 +243,7 @@ max_output_tokens = 2048
 max_calls = 2
 ```
 
-先完成第 8 节的 API key 配置。自动流程读取事实投影和该 attempt 已附加的安全备注，默认不会自动扫描测试日志。交互与 detached 运行没有后台提取守护进程；使用 memory extract 手动触发。verify/approve/deliver/reconcile 之后可显式重新提取，不因证据变化自动再次调用模型。组织受管执行仍不允许自动提取或项目记忆写入，认证审核留待 M3。
+先完成第 8 节的 API key 配置。自动流程读取事实投影和该 attempt 已附加的安全备注，默认不会自动扫描测试日志。交互与 detached 运行没有后台提取守护进程；使用 memory extract 手动触发。verify/approve/deliver/reconcile 之后可显式重新提取，不因证据变化自动再次调用模型。组织受管执行仍不允许模型提取或附加人工任务摘要；M3 的项目维护/审核授权不包含任务材料外发。
 
 ```sh
 sbx memory processing fix-login
@@ -263,13 +263,84 @@ sbx memory retry <job-id>
 
 模型请求已发出但未落盘时可能已经计费，重试不保证模型只调用一次。已校验输出先持久化，再原子发布候选；若在发布后崩溃，重试可以复用输出，稳定候选 ID 避免重复发布，也不会覆盖后来完成的人工审核。
 
-## 10. 验证与后续工作
+## 10. M3：长期维护与团队共享
+
+### 10.1 到期复核、归档与维护检查
+
+```sh
+# 审核时可明确有效期；时间必须晚于当前时间。
+sbx memory approve <entry> --project my-project --digest <current-digest> \
+  --reviewer local-operator --reason '已核对当前版本' \
+  --review-due '2027-06-01T00:00:00Z'
+# 过期后重新验证事实，再续期；使用 show 返回的最新 digest。
+sbx memory renew <entry> --project my-project --digest <current-digest> \
+  --reviewer local-operator --reason '升级后重新验证' \
+  --review-due '2027-12-01T00:00:00Z'
+sbx memory inspect --project my-project
+sbx memory stats --project my-project
+sbx memory check --project my-project
+```
+
+省略 review-due 的批准没有自动到期时间。到期不抹掉 approved 历史，但选择与固定快照复用都会拒绝到期条目；inspect 返回 review_due 提示。renew 只作用于 approved 条目，要求未来期限并增加修订，旧快照仍可读取追溯，但不能无声改成新内容继续启动。到期与续期均不重放任务或外部业务写；verify/deliver/reconcile 仍按原业务证据运行。归档使用既有 archive 命令，保留历史并停止注入。
+
+inspect、stats、check 返回同一个 memory-maintenance/v1 报告：项目 sequence、当前状态计数、历史修订数、项目 JSON 文件实际字节和 8 MiB 上限，以及维护提示。占用量只统计项目权威文件，不包含快照、提取作业或 Docker 卷。三个命令均验证完整历史；check 不修改数据。当前视图直接从历史推导，没有独立索引需要重建；权威记录损坏时明确报错，需从可信备份恢复，不能自动把损坏内容变成有效记录。
+
+重复提示对同 kind、同路径/标签范围的正文做大小写和空白归一化；相同标题、范围但正文不同则提示 possible_conflict。这些是词法提示，不证明经验语义重复或互相矛盾，也不自动合并、撤销或批准。需要修订时按 supersedes 流程创建候选；批准替代版本后旧条目及快照继续可追溯。
+
+### 10.2 在两台机器或成员之间显式共享
+
+```sh
+# 发送方：必须逐项选择已批准且未到期的条目，最多 20 条。
+sbx memory export --project my-project --entries <entry-1>,<entry-2> > shared-memory.json
+# 查看共享包，按团队已有的评审与文件传递流程分享。
+# 接收方：显式选择已有的本地项目；外部项目名不会创建或映射本地项目。
+sbx memory project create local-project
+sbx memory import --project local-project --file shared-memory.json
+sbx memory candidates --project local-project
+# 核对每条候选，再用本地 digest/reviewer/reason 批准。
+sbx memory approve <imported-entry> --project local-project --digest <local-digest> \
+  --reviewer local-operator --reason '本项目已验证适用'
+sbx memory snapshot --project local-project
+```
+
+共享包为 memory-bundle/v1，最大 256 KiB；导入拒绝未知字段、重复 JSON key、null、尾随对象、无效摘要、越界路径与 supersedes。导出只包含所选条目的 kind/title/content/paths/tags、通用来源标签、来源项目 ID 和内容摘要，不包含宿主原始 source、日志、提取 task/job、审核身份、完整历史或原批准权限。**正文与标题按选中内容原样导出**，其中若有内部路径、业务信息或凭据，需要发送前自行检查；字段裁剪不等于内容脱敏。
+
+来源项目名和包摘要用于追溯、完整性和重放去重，不证明发送者身份；团队传递与评审渠道由部署者提供。导入在锁内原子生成本地 candidate，保存 import_origin，不继承源端 approved、身份、到期时间或授权。重复导入相同来源项目与条目内容返回现有条目，不增加修订，也不覆盖后来批准、拒绝或归档的结果。它不是项目库完整备份或跨机器实时同步。新增的到期、导入与身份字段会写入修订；旧二进制可能因严格解码而拒绝读取，降级前应保留原始备份并使用支持 M3 的版本读取，不能删字段伪造兼容。
+
+### 10.3 受管审核身份与并发版本
+
+管理员在既有、固定的 `/etc/sbx/organization.toml` 中增加：
+
+```toml
+# 保留 schema_version、organization、revision、enabled、expires_at 等原字段。
+# 501 只是示例；管理员应使用该机器 id -u 得到的实际 UID。
+[memory_reviewers."501"]
+subject = "alice"
+projects = ["my-project", "local-project"]
+```
+
+策略文件及父目录沿用 root 归属、不可被组/其他用户写入和拒绝 symlink 的现有校验。只接受明确 UID 与项目 ID，没有通配授权；未配置、过期、禁用的策略均不允许记忆修改。subject 是管理员绑定的操作者名称；实际身份依据宿主进程 UID，--reviewer 不能覆盖。root 也需要显式列入授权。命令会记录 subject、organization、policy_digest，以便追溯当时的授权依据。
+
+```sh
+sbx memory project show my-project
+# 从上一步读取 sequence，从 show/candidates 读取待审核条目的 digest。
+sbx memory approve <entry> --project my-project --digest <current-digest> \
+  --sequence <current-project-sequence> --reason '按团队标准验证'
+```
+
+受管 approve/reject/archive/renew 必须提供 sequence；个人模式也可提供以检测项目级并发。digest 与 sequence 在同一存储锁内比较，任一改变都返回冲突，应重读后审核。受管创建、绑定、添加、审核、快照、导入与导出仅限获准项目；这些权限不会授权模型外发任务材料。离线本地读取保留，不把审核写入权限当作保密访问控制。
+
+这是管理员授权的本机审核机制，存储仍由可信宿主操作者拥有；不能抵御宿主管理员或存储所有者直接编辑文件。跨机器 UID 需分别配置，不提供签名审计、中心身份服务或恶意租户隔离。更换 SBX_HOME 不能更换固定管理员策略，但也不提供跨不同 Home 的统一审核库。
+
+## 11. 验证与后续工作
 
 当前验收覆盖：项目隔离、审核摘要与并发冲突、选择预算、固定快照、撤销拒绝、会话切换、清理后保留，以及两种 provider 的新会话/恢复、交互/headless 启动脚本。脚本测试使用受控 CLI，验证正文作为数据传递，不执行正文中的 shell 表达式。
 
 M2 验收覆盖事实投影、人工备注保留、受控 HTTP → CLI 提取 → 审核 → 快照闭环、失败任务提取、自动后处理失败隔离、独占锁、调用预算、进程被杀后的恢复，以及发布后崩溃重试不覆盖已有审核。HTTP 测试使用受控响应，不发起付费调用。
 
-本轮未完成真实容器与真实模型验收，真实账户权限、网络可达性及模型产出质量仍需用用户配置验证。M3 将增加组织审核身份、导入导出和长期维护。完整目标见 [设计提案](project-memory-design.md)。
+M3 验收覆盖显式导出、私有元数据排除、不可信包验证、原子候选导入、并发与重复导入不覆盖审核、到期停止选择/固定快照复用、续期与归档、项目 sequence 冲突、UID 项目授权和身份防冒用，以及 CLI 全流程。管理员策略授权使用受控快照测试，未在本机安装或修改 /etc 策略。
+
+本轮未完成真实容器与真实模型验收，真实账户权限、网络可达性及模型产出质量仍需用用户配置验证。原生导入桥、中心共享服务、更广的产物摘要提取仍属后续目标。完整目标见 [设计提案](project-memory-design.md)。
 
 原生开关依据：[Codex 配置参考](https://learn.chatgpt.com/docs/config-file/config-reference)、[Codex 原生记忆](https://learn.chatgpt.com/docs/customization/memories)、[Claude 自动记忆](https://code.claude.com/docs/en/memory)。它们控制原生行为，不提供 sbx 项目审批和版本契约。
 

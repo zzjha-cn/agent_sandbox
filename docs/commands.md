@@ -471,7 +471,10 @@ Git 启动支持 `--memory native|managed|off` 与 `--memory-project <id>`；后
 | `memory add --project <id> --file entry.json` | 提交 kind/title/content/source，始终是候选 |
 | `memory candidates/list --project <id>` | 查看候选或所有当前条目 |
 | `memory show <entry> --project <id>` | 核对正文、来源、状态与当前 digest |
-| `memory approve/reject/archive <entry>` | 均需 --project、--digest、--reviewer、--reason；拒绝过期摘要 |
+| `memory approve/reject/archive/renew <entry>` | 需 --project、--digest、--reason；个人还需 --reviewer，组织从宿主 UID 解析身份并强制 --sequence；approve 可选 --review-due，renew 必须指定未来期限 |
+| `memory inspect/stats/check --project <id>` | 从权威历史生成完整性、占用、归一化重复/可能冲突与到期提示；不修改条目 |
+| `memory export --project <id> --entries <ids>` | 显式选择 1–20 条已批准且未到期经验，stdout 输出可携带的共享包 |
+| `memory import --project <id> --file <bundle.json>` | 显式映射已有本地项目，仅导入候选；同来源内容重放不覆盖审核 |
 | `memory snapshot --project <id> [--paths ...] [--tags ...]` | 冻结已审核经验，输出可固定引用的 digest |
 | `memory status <task> [--scope git|general] [--attempt <id>]` | 离线读取启动上下文准备记录，不查询原生后台进度 |
 | `memory handoff <task> [--scope git|general] [--attempt <id>] [--summary file]` | 从执行记录重建交接；可附加人工安全目标/进度/下一步，不把备注当测试事实 |
@@ -481,9 +484,11 @@ Git 启动支持 `--memory native|managed|off` 与 `--memory-project <id>`；后
 | `memory recover <job-id>` | 取得作业锁后把孤立 running 标记 interrupted；不调用模型 |
 | `memory retry <job-id>` | 明确重试冻结材料，可能再次计费；不恢复 Agent、不重放业务操作 |
 
-项目库与任务上下文保存在独立宿主目录，done/clean 不删除。M2 已提供显式提取和可选自动提取；团队共享留待 M3。组织模式暂不允许修改本地项目记忆。完整可复制流程、配置、选择条件与清理边界见 [项目记忆手册](project-memory.md)。
+项目库与任务上下文保存在独立宿主目录，done/clean 不删除。M2 已提供显式提取和可选自动提取；M3 已提供到期复核、维护检查、显式共享与受管审核身份。组织项目修改/导出按固定策略中的 memory_reviewers 授权；审核人来自宿主 UID，项目审核权限不包含模型外发。完整可复制流程、配置、选择条件与清理边界见 [项目记忆手册](project-memory.md)。
 
 提取默认关闭，需要在可信宿主 `[memory.extract]` 配置 model，并通过 `agents.<provider>.api_key_env/api_key_file` 配置 API key；订阅登录态不直接复用。仅 `auto=true` 且 managed 同步 headless 运行在 attempt 关闭后自动提取；交互/detached 使用 extract 手动触发。默认每作业 90 秒、2048 输出 tokens、最多 2 次调用预留。摘要上限 16 KiB、材料 64 KiB，每批最多 5 条；候选仍需 digest-bound 审核。失败或中断后运行 job → recover（必要时）→ retry；unknown 业务操作仍须按 task reconcile 流程核对。
+
+M3 共享示例：`sbx memory export --project demo --entries <entry> > shared.json`，接收方用 `sbx memory import --project local --file shared.json` 后逐条本地审核。包最大 256 KiB；正文按显式选择原样携带，默认排除宿主 source、任务/作业引用与审核身份。摘要只校验完整性，不认证来源。受管审核先读取 project show 的 sequence，批准时传入 --sequence；策略例子、复核与占用范围见 [M3 使用流程](project-memory.md#10-m3长期维护与团队共享)。
 
 **`sbx upgrade`** 在 Profile 镜像里 `npm view` 查最新版，重建 Agent 层，把版本号记在 `~/.sbx/claude-version`。容器里的 claude 不会自动更新，**已有 Task 仍用旧镜像**，`done` 之后重新 `run` 才换上。配置里固定了 `agents.claude.version` 时它会拒绝执行，让你改配置。这条命令不要求在 Git 仓库内执行；它目前只升级 Claude，Codex 用 agents.codex.version。
 

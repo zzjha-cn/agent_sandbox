@@ -4,7 +4,7 @@
 
 本文描述当前实现，机器输入与执行记录统一使用 v2。sbx 是一次性 CLI 驱动的受控 Agent 执行内核，支持 Claude Code 和 Codex。Git 交互与通用任务共用执行服务，但工作区选择和完成语义不同。
 
-项目记忆已提供 M1 本地审核与上下文注入，以及 M2 事实交接、无工具模型提取和独立后处理状态，支持 native/managed/off。使用方式见 [项目记忆手册](project-memory.md)，团队共享等后续方案见 [项目记忆与任务交接设计](project-memory-design.md)。
+项目记忆已提供 M1 本地审核与上下文注入，以及 M2 事实交接、无工具模型提取和独立后处理状态，支持 native/managed/off。使用方式见 [项目记忆手册](project-memory.md)，M3 已提供到期复核、显式共享与受管 UID 审核。更广的后续方案见 [项目记忆与任务交接设计](project-memory-design.md)。
 
 ## 1. 从使用方式理解架构
 

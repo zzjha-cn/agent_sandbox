@@ -90,5 +90,10 @@
 | **provenance / evidence** | 候选的作业、task/attempt、提取器与材料/输出摘要，以及引用的 handoff/summary；可追溯不等于已验证正确。 |
 | **processing** | 自动提取的独立后处理状态；失败不改变已完成的业务终态或回执。 |
 | **interrupted / 调用预留** | worker 中断、结果可能尚未落盘；请求可能已计费。调用前持久化计数，显式重试仍受冻结预算限制。 |
+| **review_due / renew** | 批准的复核截止时间及显式续期；到期暂停选择和固定快照复用，续期增加修订，不删除历史。 |
+| **memory-bundle / import_origin** | 显式选择经验的共享包及本地导入来源摘要；导入仅产生候选，摘要不认证发送者。 |
+| **memory_reviewers / ReviewIdentity** | 固定管理员策略中的宿主 UID → subject/项目授权，及审核记录里的组织/策略摘要；不是任意 --reviewer 字符串或跨机器签名身份。 |
+| **project sequence** | 项目每次持久化变更递增的版本；审核在锁内与条目 digest 一起比较，受管审核强制提供。 |
+| **memory-maintenance** | 从校验后的完整历史生成的状态计数、项目文件占用与重复/可能冲突/到期提示；无独立索引，不会自动合并或修复权威记录。 |
 
 使用方式与当前范围见 [项目记忆手册](project-memory.md)，完整路线见 [设计提案](project-memory-design.md)。

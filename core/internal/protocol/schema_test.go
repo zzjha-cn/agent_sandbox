@@ -37,7 +37,7 @@ func TestPublishedSchemasMatchWireTypes(t *testing.T) {
 				t.Fatal(err)
 			}
 			if !reflect.DeepEqual(a, b) {
-				t.Fatal("schema drift; run scripts/check-schemas.py --sbx <binary> --write and verify consumers")
+				t.Fatal("schema drift; regenerate using sbx schema as documented in docs/schemas/README.md and verify consumers")
 			}
 		})
 	}

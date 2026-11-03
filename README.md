@@ -128,7 +128,7 @@ An administrator may install a fixed, root-owned `/etc/sbx/organization.toml` to
 |---|---|
 | [Website & Wiki](https://zzjha-cn.github.io/agent_sandbox/) | Architecture diagrams and scenarios for personal, team and infrastructure use |
 | [Walkthrough](docs/walkthrough.md) | Setup, Git and general tasks, tools, review, delivery and recovery |
-| [Project memory](docs/project-memory.md) | Memory modes, reviewed context, task handoffs and bounded extraction |
+| [Project memory](docs/project-memory.md) | Memory modes, reviewed context, task handoffs, extraction and explicit sharing |
 | [Design](docs/design.md) | Execution flow, abstractions, trust and deployment boundaries |
 | [Commands](docs/commands.md) · [CLI reference](docs/cli-reference.md) | Scenario-oriented command guide and full CLI help |
 | [Glossary](docs/glossary.md) | Task, attempt, grant, receipt, recovery and related terms |

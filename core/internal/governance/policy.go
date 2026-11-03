@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"sandx/internal/config"
 	"sandx/internal/execution"
+	"sandx/internal/projectmemory"
 	"sandx/internal/proxy"
 )
 
@@ -43,19 +45,24 @@ type Tool struct {
 type Events struct {
 	Endpoint string `toml:"endpoint" json:"endpoint"`
 }
+type MemoryReviewer struct {
+	Subject  string   `toml:"subject" json:"subject"`
+	Projects []string `toml:"projects" json:"projects"`
+}
 type Policy struct {
-	SchemaVersion    string              `toml:"schema_version" json:"schema_version"`
-	Organization     string              `toml:"organization" json:"organization"`
-	Revision         string              `toml:"revision" json:"revision"`
-	Enabled          bool                `toml:"enabled" json:"enabled"`
-	ExpiresAt        time.Time           `toml:"expires_at" json:"expires_at"`
-	NetworkHosts     []string            `toml:"network_hosts" json:"network_hosts"`
-	Forward          []string            `toml:"forward" json:"forward"`
-	AllowEmptySource bool                `toml:"allow_empty_source" json:"allow_empty_source"`
-	Sources          map[string]Resource `toml:"sources" json:"sources"`
-	Sinks            map[string]Resource `toml:"sinks" json:"sinks"`
-	Tools            map[string]Tool     `toml:"tools" json:"tools"`
-	Events           Events              `toml:"events" json:"events"`
+	MemoryReviewers  map[string]MemoryReviewer `toml:"memory_reviewers" json:"memory_reviewers,omitempty"`
+	SchemaVersion    string                    `toml:"schema_version" json:"schema_version"`
+	Organization     string                    `toml:"organization" json:"organization"`
+	Revision         string                    `toml:"revision" json:"revision"`
+	Enabled          bool                      `toml:"enabled" json:"enabled"`
+	ExpiresAt        time.Time                 `toml:"expires_at" json:"expires_at"`
+	NetworkHosts     []string                  `toml:"network_hosts" json:"network_hosts"`
+	Forward          []string                  `toml:"forward" json:"forward"`
+	AllowEmptySource bool                      `toml:"allow_empty_source" json:"allow_empty_source"`
+	Sources          map[string]Resource       `toml:"sources" json:"sources"`
+	Sinks            map[string]Resource       `toml:"sinks" json:"sinks"`
+	Tools            map[string]Tool           `toml:"tools" json:"tools"`
+	Events           Events                    `toml:"events" json:"events"`
 }
 type Snapshot struct {
 	Managed bool   `json:"managed"`
@@ -137,6 +144,18 @@ func trusted(info os.FileInfo, owner uint32) error {
 	return nil
 }
 func (p Policy) Validate() error {
+	for uid, reviewer := range p.MemoryReviewers {
+		n, e := strconv.ParseUint(uid, 10, 32)
+		if e != nil || strconv.FormatUint(n, 10) != uid || strings.TrimSpace(reviewer.Subject) == "" || len(reviewer.Subject) > 256 || len(reviewer.Projects) == 0 || len(reviewer.Projects) > 100 {
+			return errors.New("memory reviewer requires numeric UID, subject and explicit projects")
+		}
+		for _, project := range reviewer.Projects {
+			if !projectmemory.ValidID(project) {
+				return errors.New("invalid organization memory project")
+			}
+		}
+	}
+
 	if p.SchemaVersion != "sbx.organization/v1" || p.Organization == "" || len(p.Organization) > 80 || p.Revision == "" || len(p.Revision) > 80 || p.ExpiresAt.IsZero() {
 		return errors.New("organization policy requires schema, organization, revision and expiry")
 	}

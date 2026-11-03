@@ -50,7 +50,7 @@ type VersionInfo struct {
 func Version(appVersion string) VersionInfo {
 	return VersionInfo{SchemaVersion: SchemaVersion, ApplicationVersion: appVersion,
 		Providers: []string{"claude", "codex"}, ArtifactDelivery: "local_directory,git_local",
-		Capabilities: []string{"task.v2", "admit.v2", "events.jsonl.v2", "timeout", "source.files", "source.git", "artifact.snapshot", "criteria.files", "criteria.tests", "criteria.manual", "criteria.external_state", "tools.records.get", "operations.record_http", "organization.ceilings", "events.team-outbox", "task.management", "memory.project", "memory.modes", "memory.handoff", "memory.extraction"}, MaxTimeoutSeconds: MaxTimeoutSeconds, Schemas: SchemaNames(), CapabilityDetails: capabilityDetails(), RecordSchema: execution.RecordSchema, Compatibility: Compatibility{InputVersions: []string{SchemaVersion}, RecordVersions: []string{execution.RecordSchema}, V1Records: "preserve_and_reconcile_with_original_binary", AdditiveOutputFields: true}}
+		Capabilities: []string{"task.v2", "admit.v2", "events.jsonl.v2", "timeout", "source.files", "source.git", "artifact.snapshot", "criteria.files", "criteria.tests", "criteria.manual", "criteria.external_state", "tools.records.get", "operations.record_http", "organization.ceilings", "events.team-outbox", "task.management", "memory.project", "memory.modes", "memory.handoff", "memory.extraction", "memory.maintenance", "memory.sharing", "memory.organization-review"}, MaxTimeoutSeconds: MaxTimeoutSeconds, Schemas: SchemaNames(), CapabilityDetails: capabilityDetails(), RecordSchema: execution.RecordSchema, Compatibility: Compatibility{InputVersions: []string{SchemaVersion}, RecordVersions: []string{execution.RecordSchema}, V1Records: "preserve_and_reconcile_with_original_binary", AdditiveOutputFields: true}}
 }
 
 type CapabilityDetail struct {
@@ -67,6 +67,9 @@ type Compatibility struct {
 // Implementation constraints, not a grant of local authority.
 func capabilityDetails() []CapabilityDetail {
 	return []CapabilityDetail{
+		{Name: "memory.maintenance", Requirements: []string{"digest-bound review, optional expiry and explicit renewal", "history-derived duplicate/conflict hints and storage statistics; no separate index"}},
+		{Name: "memory.sharing", Requirements: []string{"explicit approved entry selection and local destination mapping", "bounded untrusted bundles import as candidates only; no approval or execution authority"}},
+		{Name: "memory.organization-review", Requirements: []string{"fixed root-owned organization policy mapping host UID to explicit projects and subject", "project sequence required; local operator-owned storage, not a hostile multi-tenant service"}},
 		{Name: "memory.handoff", Requirements: []string{"durable execution records; offline fact projection and explicit operator notes", "open or handed-off attempts remain incomplete; no inferred test success", "retained outside runtime cleanup"}},
 		{Name: "memory.extraction", Requirements: []string{"personal host configuration; explicit provider API key and model", "tool-free Responses/Messages API; no subscription-session reuse", "default manual; automatic only for managed synchronous headless attempts", "frozen bounded material, explicit retries and candidate-only atomic publication"}},
 		{Name: "memory.project", Requirements: []string{"trusted host memory configuration; no TaskSpec fields", "local candidates require digest-bound operator approval", "project-bound deterministic snapshots; mode changes require a fresh conversation", "organization review mutations are not yet supported"}},

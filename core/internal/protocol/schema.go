@@ -14,7 +14,7 @@ import (
 type JSONSchema map[string]any
 
 func SchemaNames() []string {
-	return []string{"task", "event", "result", "task-status", "execution-status", "version", "admission", "retention", "team-event", "task-list", "task-maintenance", "memory-input", "memory-entry", "memory-project", "memory-context", "memory-session", "task-handoff", "memory-extraction", "memory-summary", "memory-processing"}
+	return []string{"task", "event", "result", "task-status", "execution-status", "version", "admission", "retention", "team-event", "task-list", "task-maintenance", "memory-input", "memory-entry", "memory-project", "memory-context", "memory-session", "task-handoff", "memory-extraction", "memory-summary", "memory-processing", "memory-bundle", "memory-maintenance"}
 }
 
 // Schema derives wire shapes from the actual CLI types. Input objects are
@@ -22,6 +22,10 @@ func SchemaNames() []string {
 func Schema(name string) (JSONSchema, error) {
 	var value any
 	switch name {
+	case "memory-bundle":
+		value = projectmemory.Bundle{}
+	case "memory-maintenance":
+		value = projectmemory.Maintenance{}
 	case "memory-processing":
 		value = taskmemory.Processing{}
 	case "task-handoff":
@@ -63,11 +67,33 @@ func Schema(name string) (JSONSchema, error) {
 	default:
 		return nil, fmt.Errorf("unknown schema %q; use sbx schema to list names", name)
 	}
-	s := shape(reflect.TypeOf(value), name == "task" || name == "memory-input" || name == "memory-summary")
+	s := shape(reflect.TypeOf(value), name == "task" || name == "memory-input" || name == "memory-summary" || name == "memory-bundle")
 	s["$schema"] = "https://json-schema.org/draft/2020-12/schema"
 	s["$id"] = "urn:sbx:schema:" + name + ":v2"
 	s["title"] = "sbx " + name
 	switch name {
+	case "memory-bundle":
+		s["$id"] = "urn:sbx:schema:memory-bundle:v1"
+		prop(s, "schema_version")["const"] = projectmemory.BundleSchema
+		prop(s, "entries")["minItems"] = 1
+		prop(s, "entries")["maxItems"] = projectmemory.MaxEntries
+		require(s, "schema_version", "source_project", "entries", "digest")
+		prop(s, "source_project")["pattern"] = `^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$`
+		prop(s, "digest")["pattern"] = `^sha256:[0-9a-f]{64}$`
+		shared := item(prop(s, "entries"))
+		require(shared, "input", "digest")
+		prop(shared, "digest")["pattern"] = `^sha256:[0-9a-f]{64}$`
+		in := prop(shared, "input")
+		require(in, "kind", "title", "content", "source")
+		prop(in, "kind")["enum"] = []string{"testing", "environment", "constraint", "troubleshooting", "workflow"}
+		prop(in, "supersedes")["const"] = ""
+		for _, key := range []string{"title", "content", "source"} {
+			nonempty(prop(in, key))
+		}
+		s["$comment"] = "Runtime additionally verifies canonical SHA256 digests, UTF-8, duplicate keys, no null fields, depth <=32, total <=256 KiB, entry <=8 KiB and relative selector semantics. Bundle digests are not signatures or approval authority."
+	case "memory-maintenance":
+		s["$id"] = "urn:sbx:schema:memory-maintenance:v1"
+		prop(s, "schema_version")["const"] = "sbx.memory-maintenance/v1"
 	case "memory-processing":
 		s["$id"] = "urn:sbx:schema:memory-processing:v1"
 		prop(s, "schema_version")["const"] = taskmemory.ProcessingSchema

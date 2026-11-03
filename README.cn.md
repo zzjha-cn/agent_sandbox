@@ -127,7 +127,7 @@ Git worktree 和依赖卷有助于隔离日常工作，但仓库 Git 数据及�
 | 文档 | 内容 |
 |---|---|
 | [项目主页与 Wiki](https://zzjha-cn.github.io/agent_sandbox/) | 架构图，以及个人、团队和基础设施使用场景 |
-| [项目记忆](docs/project-memory.md) | 记忆模式、经验审核、任务交接与有界提取 |
+| [项目记忆](docs/project-memory.md) | 记忆模式、经验审核、任务交接、有界提取与显式共享 |
 | [场景教程](docs/walkthrough.md) | 准备、Git 与通用任务、工具、审核、交付和恢复 |
 | [设计文档](docs/design.md) | 执行流程、抽象职责、信任与部署边界 |
 | [命令手册](docs/commands.md) · [CLI 参数参考](docs/cli-reference.md) | 按场景查命令及完整 CLI 帮助 |

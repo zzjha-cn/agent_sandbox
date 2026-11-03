@@ -60,7 +60,7 @@ func (a *App) extractionModel(cfg config.Config, provider string) (taskmemory.Mo
 func (a *App) addExtractionCommands(root *cobra.Command) {
 	var ps, pa string
 	processing := &cobra.Command{Use: "processing <task>", Short: "Inspect automatic memory post-processing independently of business status (JSON)", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-		if _, e := a.memoryStore(false); e != nil {
+		if _, e := a.memoryExtractionStore(false); e != nil {
 			return e
 		}
 		t, e := a.memoryTask(args[0], ps)
@@ -93,7 +93,7 @@ func (a *App) addExtractionCommands(root *cobra.Command) {
 	root.AddCommand(processing)
 	var hs, ha, hsummary string
 	handoff := &cobra.Command{Use: "handoff <task>", Short: "Rebuild a task handoff from durable facts without running the task (JSON)", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-		if _, e := a.memoryStore(hsummary != ""); e != nil {
+		if _, e := a.memoryExtractionStore(hsummary != ""); e != nil {
 			return e
 		}
 		t, e := a.memoryTask(args[0], hs)
@@ -129,7 +129,7 @@ func (a *App) addExtractionCommands(root *cobra.Command) {
 	root.AddCommand(handoff)
 	var scope, attempt, project, summary string
 	extract := &cobra.Command{Use: "extract <task>", Short: "Freeze safe task material and call a tool-free model to propose candidates (may incur API charges)", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-		store, e := a.memoryStore(true)
+		store, e := a.memoryExtractionStore(true)
 		if e != nil {
 			return e
 		}
@@ -203,7 +203,7 @@ func (a *App) addExtractionCommands(root *cobra.Command) {
 	for _, action := range []string{"job", "retry", "recover"} {
 		action := action
 		c := &cobra.Command{Use: action + " <job>", Short: map[string]string{"job": "Inspect a frozen extraction job (JSON)", "retry": "Retry extraction using frozen material; may incur another API charge", "recover": "Mark an abandoned extraction interrupted without a model call"}[action], Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-			if _, e := a.memoryStore(action != "job"); e != nil {
+			if _, e := a.memoryExtractionStore(action != "job"); e != nil {
 				return e
 			}
 			jobs := taskmemory.Jobs{Home: a.Home}
@@ -236,7 +236,7 @@ func (a *App) addExtractionCommands(root *cobra.Command) {
 		root.AddCommand(c)
 	}
 	root.AddCommand(&cobra.Command{Use: "jobs", Short: "List locally persisted extraction jobs without Docker (JSON)", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
-		if _, e := a.memoryStore(false); e != nil {
+		if _, e := a.memoryExtractionStore(false); e != nil {
 			return e
 		}
 		entries, e := os.ReadDir(filepath.Join(a.Home, "memory-extractions"))
@@ -278,4 +278,17 @@ func (m lazyExtractionModel) Generate(ctx context.Context, j taskmemory.Job) ([]
 		return nil, e
 	}
 	return model.Generate(ctx, j)
+}
+
+// M3 grants local project maintenance, not sending organization task material
+// to a model API. That requires a separate data-egress policy.
+func (a *App) memoryExtractionStore(mutate bool) (projectmemory.Store, error) {
+	store, e := a.memoryStore(mutate)
+	if e != nil {
+		return projectmemory.Store{}, e
+	}
+	if mutate && store.Actor != nil {
+		return projectmemory.Store{}, errors.New("organization task extraction and summary mutation require a separate data-egress policy; use personal mode")
+	}
+	return store, nil
 }

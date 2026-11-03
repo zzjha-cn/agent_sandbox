@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/spf13/cobra"
 	"sandx/internal/execution"
@@ -16,8 +17,7 @@ import (
 	"sandx/internal/workspace"
 )
 
-// Local memory commands never require Docker or a Git working directory. Shared
-// governance identities are not yet implemented; managed profiles are read-only.
+// Local memory commands never require Docker or a Git working directory.
 func (a *App) memoryStore(mutate bool) (projectmemory.Store, error) {
 	if a.Home == "" {
 		if e := a.setHome(); e != nil {
@@ -28,10 +28,7 @@ func (a *App) memoryStore(mutate bool) (projectmemory.Store, error) {
 	if e != nil {
 		return projectmemory.Store{}, e
 	}
-	if org.Managed && mutate {
-		return projectmemory.Store{}, errors.New("project-memory mutation requires authenticated organization review (not available yet); use a personal profile")
-	}
-	return projectmemory.Store{Home: a.Home}, nil
+	return org.MemoryStore(a.Home, os.Getuid(), mutate)
 }
 func (a *App) addProjectMemoryCommands(root *cobra.Command) {
 	project := &cobra.Command{Use: "project", Short: "Register and bind local project knowledge"}
@@ -156,15 +153,27 @@ func (a *App) addProjectMemoryCommands(root *cobra.Command) {
 		_ = c.MarkFlagRequired("project")
 		root.AddCommand(c)
 	}
-	for name, status := range map[string]string{"approve": "approved", "reject": "rejected", "archive": "archived"} {
+	for name, status := range map[string]string{"approve": "approved", "reject": "rejected", "archive": "archived", "renew": "renewed"} {
 		name, status := name, status
-		var project, digest, reviewer, reason string
+		var project, digest, reviewer, reason, reviewDue string
+		var sequence uint64
 		c := &cobra.Command{Use: name + " <entry>", Short: "Record an explicit review bound to the displayed entry digest", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 			s, e := a.memoryStore(true)
 			if e != nil {
 				return e
 			}
-			entry, e := s.Review(project, args[0], digest, status, reviewer, reason)
+			var due *time.Time
+			if reviewDue != "" {
+				parsed, err := time.Parse(time.RFC3339, reviewDue)
+				if err != nil {
+					return err
+				}
+				due = &parsed
+			}
+			if s.Actor != nil && sequence == 0 {
+				return errors.New("organization review requires --sequence from project show")
+			}
+			entry, e := s.ReviewAt(project, args[0], digest, status, reviewer, reason, sequence, due)
 			if e != nil {
 				return e
 			}
@@ -172,9 +181,11 @@ func (a *App) addProjectMemoryCommands(root *cobra.Command) {
 		}}
 		c.Flags().StringVar(&project, "project", "", "registered project")
 		c.Flags().StringVar(&digest, "digest", "", "current entry digest from show/candidates")
-		c.Flags().StringVar(&reviewer, "reviewer", "", "local operator declaration (not authenticated team identity)")
+		c.Flags().StringVar(&reviewer, "reviewer", "", "personal review declaration; organization identity comes from the host UID")
+		c.Flags().StringVar(&reviewDue, "review-due", "", "future RFC3339 expiry for approval/renewal")
+		c.Flags().Uint64Var(&sequence, "sequence", 0, "expected project sequence (required for organization reviews)")
 		c.Flags().StringVar(&reason, "reason", "", "review explanation")
-		for _, f := range []string{"project", "digest", "reviewer", "reason"} {
+		for _, f := range []string{"project", "digest", "reason"} {
 			_ = c.MarkFlagRequired(f)
 		}
 		root.AddCommand(c)
