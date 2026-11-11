@@ -57,6 +57,18 @@ jobs:
       # 一个 ubuntu runner 就够，不需要 matrix。
       - run: make release
 
+      - name: verify and package sbx configure skill
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          make build VERSION="$TAG"
+          python3 ../sbx_skills/sbx-configure/scripts/knowledge.py check --repo ..
+          SBX_SKILL_TEST_BINARY="$PWD/bin/sbx" python3 scripts/test-configure-skill.py
+          python3 scripts/check-wiki-cli.py --sbx bin/sbx
+          python3 scripts/package-configure-skill.py --sbx bin/sbx --release-dir dist --version "$TAG" --output "dist/sbx-configure_$TAG.tar.gz"
+          cd dist
+          shasum -a 256 *.tar.gz > SHA256SUMS
+
       # 用预装的 gh，不引第三方 action：这个仓库把供应链写进了威胁模型，
       # 少一个外部依赖就少一处要盯的地方。
       - name: publish

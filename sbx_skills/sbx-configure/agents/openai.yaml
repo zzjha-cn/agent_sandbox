@@ -1,0 +1,4 @@
+interface:
+  display_name: "sbx 项目配置"
+  short_description: "调查项目依赖，通过对话生成与维护 sbx 配置，核对版本并验证运行结果"
+  default_prompt: "使用 $sbx-configure 调查当前项目，询问缺失信息并生成、验证合适的 sbx 配置。"

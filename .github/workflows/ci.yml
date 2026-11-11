@@ -30,3 +30,10 @@ jobs:
 
       # 不是 test-docker：那个要 Docker 环境、超时设的是 40 分钟，留在本地跑。
       - run: make test
+
+      - name: check sbx configure skill
+        run: |
+          make build
+          python3 ../sbx_skills/sbx-configure/scripts/knowledge.py check --repo ..
+          SBX_SKILL_TEST_BINARY="$PWD/bin/sbx" python3 scripts/test-configure-skill.py
+          python3 scripts/check-wiki-cli.py --sbx bin/sbx
