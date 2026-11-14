@@ -52,13 +52,26 @@ func validateMemory(req Request) error {
 }
 
 func selectMemory(req Request, store projectmemory.Store, id string) (projectmemory.Snapshot, error) {
-	if req.Config.Memory.Snapshot != "" {
-		if len(req.Config.Memory.Paths) > 0 || len(req.Config.Memory.Tags) > 0 {
-			return projectmemory.Snapshot{}, errors.New("pinned memory cannot be combined with paths/tags")
-		}
-		return store.Pinned(id, req.Config.Memory.Snapshot)
+	q, err := memorySelection(req)
+	if err != nil {
+		return projectmemory.Snapshot{}, err
 	}
-	return store.Select(id, projectmemory.Selection{Paths: req.Config.Memory.Paths, Tags: req.Config.Memory.Tags})
+	if req.Config.Memory.Snapshot != "" {
+		if len(req.Config.Memory.Paths) > 0 || len(req.Config.Memory.Tags) > 0 || req.Config.Memory.Query != "" {
+			return projectmemory.Snapshot{}, errors.New("pinned memory cannot be combined with paths/tags/query")
+		}
+		v, e := store.Pinned(id, req.Config.Memory.Snapshot)
+		if e == nil {
+			e = store.CheckFacts(v, q.Facts)
+		}
+		return v, e
+	}
+	return store.Select(id, q)
+}
+
+func memorySelection(req Request) (projectmemory.Selection, error) {
+	facts, err := projectmemory.ObserveFiles(req.Task.Worktree(), req.Config.Memory.Watch, req.Config.Memory.Facts)
+	return projectmemory.Selection{Paths: req.Config.Memory.Paths, Tags: req.Config.Memory.Tags, Query: req.Config.Memory.Query, Facts: facts}, err
 }
 
 type MemorySession struct {
@@ -126,12 +139,15 @@ func prepareMemory(req Request, active bool) (MemorySession, error) {
 		if e != nil {
 			return v, e
 		}
-		q := projectmemory.Selection{Paths: req.Config.Memory.Paths, Tags: req.Config.Memory.Tags}
+		q, err := memorySelection(req)
+		if err != nil {
+			return v, err
+		}
 		if resume && known {
 			if v.Snapshot.Project != id || v.Pinned == "" && projectmemory.Digest(v.Snapshot.Selection) != projectmemory.Digest(q) {
 				return v, errors.New("memory project/selectors changed; use --fresh or a new task")
 			}
-			if e = store.Check(*v.Snapshot); e != nil {
+			if e = store.CheckFacts(*v.Snapshot, q.Facts); e != nil {
 				return v, e
 			}
 		} else {

@@ -29,12 +29,14 @@ func (l Limits) Validate() error {
 }
 
 type Candidate struct {
-	Kind     string   `json:"kind"`
-	Title    string   `json:"title"`
-	Content  string   `json:"content"`
-	Paths    []string `json:"paths,omitempty"`
-	Tags     []string `json:"tags,omitempty"`
-	Evidence []string `json:"evidence"`
+	Kind       string                    `json:"kind"`
+	Title      string                    `json:"title"`
+	Content    string                    `json:"content"`
+	Paths      []string                  `json:"paths,omitempty"`
+	Tags       []string                  `json:"tags,omitempty"`
+	Evidence   []string                  `json:"evidence"`
+	MemoryType string                    `json:"memory_type,omitempty"`
+	Experience *projectmemory.Experience `json:"experience,omitempty"`
 }
 
 // Model output has no execution facts, approval, ID, source or supersedes field.
@@ -255,7 +257,7 @@ func (s Jobs) Run(ctx context.Context, id string, model Model, retry bool) (Job,
 	inputs := []projectmemory.Input{}
 	refs := []projectmemory.Provenance{}
 	for _, c := range j.Output.Candidates {
-		inputs = append(inputs, projectmemory.Input{Kind: c.Kind, Title: c.Title, Content: c.Content, Paths: c.Paths, Tags: c.Tags, Source: "extraction:" + j.ID})
+		inputs = append(inputs, projectmemory.Input{Kind: c.Kind, Title: c.Title, Content: c.Content, Paths: c.Paths, Tags: c.Tags, Source: "extraction:" + j.ID, MemoryType: c.MemoryType, Experience: c.Experience})
 		refs = append(refs, projectmemory.Provenance{Job: j.ID, Task: j.Material.Handoff.TaskKey, Attempt: j.Material.Handoff.Attempt, Extractor: j.Extractor, MaterialDigest: j.MaterialDigest, OutputDigest: j.OutputDigest, Evidence: c.Evidence})
 	}
 	j.Candidates, e = (projectmemory.Store{Home: s.Home}).PublishExtraction(j.Project, inputs, refs)
@@ -279,7 +281,7 @@ func validateOutput(o Output, m Material) error {
 		allowed["summary:"+projectmemory.Digest(m.Summary)] = true
 	}
 	for _, c := range o.Candidates {
-		v := projectmemory.Input{Kind: c.Kind, Title: c.Title, Content: c.Content, Paths: c.Paths, Tags: c.Tags, Source: "extraction"}
+		v := projectmemory.Input{Kind: c.Kind, Title: c.Title, Content: c.Content, Paths: c.Paths, Tags: c.Tags, Source: "extraction", MemoryType: c.MemoryType, Experience: c.Experience}
 		if e := v.Validate(); e != nil {
 			return e
 		}

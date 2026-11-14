@@ -7,6 +7,31 @@
       "minLength": 1,
       "type": "string"
     },
+    "experience": {
+      "additionalProperties": false,
+      "properties": {
+        "actions": {
+          "type": "string"
+        },
+        "conditions": {
+          "type": "string"
+        },
+        "observations": {
+          "type": "string"
+        },
+        "symptoms": {
+          "type": "string"
+        },
+        "unknowns": {
+          "type": "string"
+        },
+        "validation": {
+          "type": "string"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
     "kind": {
       "enum": [
         "testing",
@@ -17,11 +42,27 @@
       ],
       "type": "string"
     },
+    "memory_type": {
+      "enum": [
+        "",
+        "episodic",
+        "semantic",
+        "procedural"
+      ],
+      "type": "string"
+    },
     "paths": {
       "items": {
         "type": "string"
       },
       "type": "array"
+    },
+    "requires": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "maxProperties": 32,
+      "type": "object"
     },
     "source": {
       "minLength": 1,

@@ -15,6 +15,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"sandx/internal/isolation"
+	"sandx/internal/projectmemory"
 )
 
 type Network struct {
@@ -99,12 +100,15 @@ type MemoryExtraction struct {
 
 // ProjectMemory is trusted host configuration; repositories cannot select a knowledge store.
 type ProjectMemory struct {
-	Extract  MemoryExtraction `toml:"extract"`
-	Mode     string           `toml:"mode"`
-	Project  string           `toml:"project"`
-	Snapshot string           `toml:"snapshot"`
-	Paths    []string         `toml:"paths"`
-	Tags     []string         `toml:"tags"`
+	Extract  MemoryExtraction  `toml:"extract"`
+	Mode     string            `toml:"mode"`
+	Project  string            `toml:"project"`
+	Snapshot string            `toml:"snapshot"`
+	Paths    []string          `toml:"paths"`
+	Tags     []string          `toml:"tags"`
+	Query    string            `toml:"query"`
+	Facts    map[string]string `toml:"facts"`
+	Watch    []string          `toml:"watch"`
 }
 
 type Config struct {
@@ -232,8 +236,19 @@ func (c Config) Validate() error {
 	default:
 		return fieldf("memory.mode", "memory.mode must be native, managed or off")
 	}
-	if c.Memory.Mode != "managed" && (c.Memory.Project != "" || c.Memory.Snapshot != "" || len(c.Memory.Paths) > 0 || len(c.Memory.Tags) > 0) {
-		return fieldf("memory", "memory.project/snapshot/paths/tags require mode = managed")
+	if c.Memory.Mode != "managed" && (c.Memory.Project != "" || c.Memory.Snapshot != "" || len(c.Memory.Paths) > 0 || len(c.Memory.Tags) > 0 || c.Memory.Query != "" || len(c.Memory.Facts) > 0 || len(c.Memory.Watch) > 0) {
+		return fieldf("memory", "memory.project/snapshot/paths/tags/query/facts/watch require mode = managed")
+	}
+	if err := (projectmemory.Selection{Query: c.Memory.Query, Facts: c.Memory.Facts}).Validate(); err != nil {
+		return fieldf("memory", "%s", err)
+	}
+	if err := projectmemory.ValidateWatch(c.Memory.Watch); err != nil {
+		return fieldf("memory.watch", "%s", err)
+	}
+	for key := range c.Memory.Facts {
+		if strings.HasPrefix(key, "file:") {
+			return fieldf("memory.facts", "file facts must be observed via memory.watch")
+		}
 	}
 
 	if err := c.Isolation.Validate(); err != nil {

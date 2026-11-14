@@ -126,7 +126,8 @@ def seal(args):
     repo = args.repo.resolve()
     commit = run(["git", "rev-parse", "HEAD"], repo).decode().strip()
     # Disallow blessing references against changed runtime semantics.
-    if run(["git", "diff", "HEAD", "--", "core"], repo):
+    dirty = bool(run(["git", "diff", "HEAD", "--", "core"], repo))
+    if dirty and not args.reviewed_worktree:
         raise ValueError("tracked core changes must be committed before sealing")
     observed = probe_binary(args.sbx)
     builds = [{"binary_sha256": observed["binary_sha256"], "execution_checked": True,
@@ -147,6 +148,7 @@ def seal(args):
             raise ValueError("expected four cross-platform sbx archives")
     manifest = {"format": "sbx.skill-knowledge/v1", "knowledge_revision": args.revision,
                 "source_commit": commit, "reviewed_at": datetime.now(timezone.utc).isoformat(),
+                "source_dirty": dirty,
                 "application_version": observed["application_version"],
                 "schema_version": observed["schema_version"], "help_sha256": observed["help_sha256"],
                 "builds": builds, "files_sha256": inventory(ROOT),
@@ -169,6 +171,8 @@ def main():
     maint.add_argument("--revision", required=True)
     maint.add_argument("--reviewed", action="store_true")
     maint.add_argument("--release-dir", type=Path)
+    maint.add_argument("--reviewed-worktree", action="store_true",
+                       help="maintainer-only development binding; records uncommitted source identity")
     args = parser.parse_args()
     try:
         if args.command == "probe":

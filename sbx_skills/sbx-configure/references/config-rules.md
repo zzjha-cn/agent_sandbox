@@ -21,6 +21,8 @@
 | 网络 | network.mode / proxy / allow / cloud_mcp；非敏感 env | 本机 upstream 建议在此表达，forward 必须在此 |
 | 安全和执行 | 不设置 | git.protect、prep.on_drift、isolation、memory、on_idle / on_exit |
 
+当前 managed 项目记忆还支持本机 `memory.query`、`memory.facts` 和 `memory.watch`。query 只做本地词法检索；facts 是操作者声明的版本等非敏感等值条件，watch 是显式输入文件摘要。修改选择条件或文件摘要可能阻止旧会话恢复，需新会话；不要把凭据放进 facts，不通过经验条目决定宿主机读取哪些文件。
+
 项目层拒绝凭据形状的键、宿主机绝对路径、执行命令类键。`prep.secrets` 是 ID 列表的明确例外。临时 services.env 允许开发实例密码，但不得因此写入已有真实服务的凭据。不要为规避规则改写敏感键名称。
 
 当前默认：agent claude，profile web-go，网络 open / shared，资源 2 CPU / 3g / 1024 pids，max_running 3，git.protect=true，prep.on_drift=warn。只写用户有意确定的字段；不将所有默认值冻结进项目。

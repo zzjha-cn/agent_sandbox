@@ -1,0 +1,478 @@
+{
+  "description": "Synthetic ranking benchmark, not production accuracy. Frozen development and acceptance partitions. ID baseline uses identical eligibility and budgets.",
+  "entries": [
+    {
+      "id": "a-noise",
+      "kind": "testing",
+      "title": "Docker daemon availability",
+      "content": "Check the Docker daemon before container integration tests.",
+      "source": "synthetic fixture"
+    },
+    {
+      "id": "b-near-code",
+      "kind": "troubleshooting",
+      "title": "E4010 billing",
+      "content": "A distinct billing identifier.",
+      "source": "synthetic fixture"
+    },
+    {
+      "id": "c-candidate",
+      "status": "candidate",
+      "kind": "workflow",
+      "title": "UNREVIEWED_TOKEN",
+      "content": "Must never be selected.",
+      "source": "synthetic fixture"
+    },
+    {
+      "id": "d-expired",
+      "expired": true,
+      "kind": "environment",
+      "title": "OLD_RUNTIME",
+      "content": "Expired runtime advice.",
+      "source": "synthetic fixture"
+    },
+    {
+      "id": "prep",
+      "kind": "troubleshooting",
+      "title": "prep cache GOMODCACHE",
+      "content": "Go 模块下载失败：检查 prep 依赖播种路径和 GOMODCACHE。 GOPRIVATE private module download.",
+      "paths": [
+        "core/**"
+      ],
+      "requires": {
+        "go.version": "1.27"
+      },
+      "source": "synthetic failure"
+    },
+    {
+      "id": "database",
+      "kind": "environment",
+      "title": "PostgreSQL ECONNREFUSED",
+      "content": "Check db service readiness at db:5432 before tests. 数据库连接失败。",
+      "requires": {
+        "postgres.version": "16"
+      },
+      "source": "synthetic fixture"
+    },
+    {
+      "id": "redis",
+      "kind": "testing",
+      "title": "Redis timeout",
+      "content": "Use redis:6379 in the web integration suite. Redis 服务超时。",
+      "paths": [
+        "web/**"
+      ],
+      "tags": [
+        "integration"
+      ],
+      "source": "synthetic fixture"
+    },
+    {
+      "id": "tls",
+      "kind": "troubleshooting",
+      "title": "CERT_HAS_EXPIRED TLS",
+      "content": "Check certificate expiry and trusted CA. 证书过期先验证 TLS。",
+      "source": "synthetic fixture"
+    },
+    {
+      "id": "git",
+      "kind": "troubleshooting",
+      "title": "staged rename worktree",
+      "content": "Check Git staged deletion and rename input consistency. 暂存删除需要检查源输入。",
+      "source": "synthetic failure"
+    },
+    {
+      "id": "protocol",
+      "kind": "workflow",
+      "title": "JSONL final result",
+      "content": "Validate process exit and final protocol record separately.",
+      "source": "synthetic fixture"
+    },
+    {
+      "id": "budget",
+      "kind": "workflow",
+      "title": "ErrExceedMaxIterations",
+      "content": "Preserve partial results when iteration budget is exhausted.",
+      "source": "synthetic failure"
+    },
+    {
+      "id": "npm",
+      "kind": "troubleshooting",
+      "title": "npm E401",
+      "content": "Use a build secret for private registry authentication.",
+      "source": "synthetic fixture"
+    }
+  ],
+  "cases": [
+    {
+      "name": "exact-error",
+      "split": "development",
+      "selection": {
+        "query": "E401",
+        "limit": 1
+      },
+      "expected": [
+        "npm"
+      ]
+    },
+    {
+      "name": "near-error",
+      "split": "development",
+      "selection": {
+        "query": "E4010",
+        "limit": 1
+      },
+      "expected": [
+        "b-near-code"
+      ]
+    },
+    {
+      "name": "prep-variable",
+      "split": "development",
+      "selection": {
+        "query": "GOMODCACHE",
+        "limit": 1,
+        "paths": [
+          "core/a.go"
+        ],
+        "facts": {
+          "go.version": "1.27"
+        }
+      },
+      "expected": [
+        "prep"
+      ]
+    },
+    {
+      "name": "private-domain-policy",
+      "split": "development",
+      "selection": {
+        "query": "GOPRIVATE",
+        "limit": 1,
+        "paths": [
+          "core/go.mod"
+        ],
+        "facts": {
+          "go.version": "1.27"
+        }
+      },
+      "expected": [
+        "prep"
+      ]
+    },
+    {
+      "name": "unknown-version",
+      "split": "development",
+      "selection": {
+        "query": "GOMODCACHE",
+        "limit": 1,
+        "paths": [
+          "core/a.go"
+        ]
+      },
+      "expected": []
+    },
+    {
+      "name": "changed-version",
+      "split": "development",
+      "selection": {
+        "query": "GOMODCACHE",
+        "limit": 1,
+        "paths": [
+          "core/a.go"
+        ],
+        "facts": {
+          "go.version": "1.28"
+        }
+      },
+      "expected": []
+    },
+    {
+      "name": "out-of-scope",
+      "split": "development",
+      "selection": {
+        "query": "GOMODCACHE",
+        "limit": 1,
+        "paths": [
+          "web/a.ts"
+        ],
+        "facts": {
+          "go.version": "1.27"
+        }
+      },
+      "expected": []
+    },
+    {
+      "name": "db-connection",
+      "split": "development",
+      "selection": {
+        "query": "ECONNREFUSED",
+        "limit": 1,
+        "facts": {
+          "postgres.version": "16"
+        }
+      },
+      "expected": [
+        "database"
+      ]
+    },
+    {
+      "name": "db-unknown",
+      "split": "development",
+      "selection": {
+        "query": "PostgreSQL",
+        "limit": 1
+      },
+      "expected": []
+    },
+    {
+      "name": "db-changed",
+      "split": "development",
+      "selection": {
+        "query": "PostgreSQL",
+        "limit": 1,
+        "facts": {
+          "postgres.version": "17"
+        }
+      },
+      "expected": []
+    },
+    {
+      "name": "redis-scope",
+      "split": "development",
+      "selection": {
+        "query": "Redis",
+        "limit": 1,
+        "paths": [
+          "web/app.ts"
+        ]
+      },
+      "expected": [
+        "redis"
+      ]
+    },
+    {
+      "name": "redis-tag",
+      "split": "development",
+      "selection": {
+        "query": "Redis",
+        "limit": 1,
+        "paths": [
+          "web/app.ts"
+        ],
+        "tags": [
+          "integration"
+        ]
+      },
+      "expected": [
+        "redis"
+      ]
+    },
+    {
+      "name": "redis-outside",
+      "split": "development",
+      "selection": {
+        "query": "Redis",
+        "limit": 1,
+        "paths": [
+          "core/a.go"
+        ]
+      },
+      "expected": []
+    },
+    {
+      "name": "certificate-code",
+      "split": "development",
+      "selection": {
+        "query": "CERT_HAS_EXPIRED",
+        "limit": 1
+      },
+      "expected": [
+        "tls"
+      ]
+    },
+    {
+      "name": "unreviewed",
+      "split": "development",
+      "selection": {
+        "query": "UNREVIEWED_TOKEN",
+        "limit": 1
+      },
+      "expected": []
+    },
+    {
+      "name": "expired",
+      "split": "development",
+      "selection": {
+        "query": "OLD_RUNTIME",
+        "limit": 1
+      },
+      "expected": []
+    },
+    {
+      "name": "unknown-topic",
+      "split": "development",
+      "selection": {
+        "query": "quantum banana",
+        "limit": 1
+      },
+      "expected": []
+    },
+    {
+      "name": "protocol-format",
+      "split": "development",
+      "selection": {
+        "query": "JSONL",
+        "limit": 1
+      },
+      "expected": [
+        "protocol"
+      ]
+    },
+    {
+      "name": "iteration-error",
+      "split": "development",
+      "selection": {
+        "query": "ErrExceedMaxIterations",
+        "limit": 1
+      },
+      "expected": [
+        "budget"
+      ]
+    },
+    {
+      "name": "git-event",
+      "split": "development",
+      "selection": {
+        "query": "staged rename",
+        "limit": 1
+      },
+      "expected": [
+        "git"
+      ]
+    },
+    {
+      "name": "chinese-prep",
+      "split": "acceptance",
+      "selection": {
+        "query": "下载失败",
+        "limit": 1,
+        "paths": [
+          "core/cache.go"
+        ],
+        "facts": {
+          "go.version": "1.27"
+        }
+      },
+      "expected": [
+        "prep"
+      ]
+    },
+    {
+      "name": "chinese-database",
+      "split": "acceptance",
+      "selection": {
+        "query": "连接失败",
+        "limit": 1,
+        "facts": {
+          "postgres.version": "16"
+        }
+      },
+      "expected": [
+        "database"
+      ]
+    },
+    {
+      "name": "chinese-certificate",
+      "split": "acceptance",
+      "selection": {
+        "query": "证书过期",
+        "limit": 1
+      },
+      "expected": [
+        "tls"
+      ]
+    },
+    {
+      "name": "chinese-git",
+      "split": "acceptance",
+      "selection": {
+        "query": "暂存删除",
+        "limit": 1
+      },
+      "expected": [
+        "git"
+      ]
+    },
+    {
+      "name": "auth-operation",
+      "split": "acceptance",
+      "selection": {
+        "query": "authentication",
+        "limit": 1
+      },
+      "expected": [
+        "npm"
+      ]
+    },
+    {
+      "name": "output-check",
+      "split": "acceptance",
+      "selection": {
+        "query": "final protocol",
+        "limit": 1
+      },
+      "expected": [
+        "protocol"
+      ]
+    },
+    {
+      "name": "partial-results",
+      "split": "acceptance",
+      "selection": {
+        "query": "partial results",
+        "limit": 1
+      },
+      "expected": [
+        "budget"
+      ]
+    },
+    {
+      "name": "unseen-synonym-known-limitation",
+      "split": "acceptance",
+      "selection": {
+        "query": "包拿不到",
+        "limit": 1,
+        "paths": [
+          "core/a.go"
+        ],
+        "facts": {
+          "go.version": "1.27"
+        }
+      },
+      "expected": [
+        "prep"
+      ]
+    },
+    {
+      "name": "new-code-no-answer",
+      "split": "acceptance",
+      "selection": {
+        "query": "E999999",
+        "limit": 1
+      },
+      "expected": []
+    },
+    {
+      "name": "docker-prerequisite",
+      "split": "acceptance",
+      "selection": {
+        "query": "Docker",
+        "limit": 1
+      },
+      "expected": [
+        "a-noise"
+      ]
+    }
+  ]
+}

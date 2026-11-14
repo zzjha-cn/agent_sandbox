@@ -205,6 +205,8 @@ func bindings(c *Config) []binding {
 		{Key: "memory.snapshot", Str: &c.Memory.Snapshot},
 		{Key: "memory.paths", List: &c.Memory.Paths},
 		{Key: "memory.tags", List: &c.Memory.Tags},
+		{Key: "memory.query", Str: &c.Memory.Query},
+		{Key: "memory.watch", List: &c.Memory.Watch},
 		{Key: "profile", Str: &c.Profile},
 		{Key: "image", Str: &c.Image},
 		{Key: "max_running", Int: &c.MaxRunning},
@@ -248,6 +250,13 @@ func mergeLayer(dst *Config, src Config, md toml.MetaData, layer string, srcs ma
 			*d.List = union(*d.List, *s.List)
 		}
 		mark(srcs, d.Key, layer, d.List != nil)
+	}
+	for k, v := range src.Memory.Facts {
+		if dst.Memory.Facts == nil {
+			dst.Memory.Facts = map[string]string{}
+		}
+		dst.Memory.Facts[k] = v
+		mark(srcs, "memory.facts."+k, layer, false)
 	}
 	// env 和 prep.secret 一样逐键合并：后面的层改一个变量，不该把前面的整份顶掉。
 	for k, v := range src.Env {
@@ -373,6 +382,10 @@ func union(old, add []string) []string {
 // Show 把生效配置渲染成「key / 值 / 来源」三列，给 sbx config show 用。
 func (ld Loaded) Show() [][3]string {
 	var rows [][3]string
+	for _, k := range sortedMapKeys(ld.Config.Memory.Facts) {
+		key := "memory.facts." + k
+		rows = append(rows, [3]string{key, strconv.Quote(ld.Config.Memory.Facts[k]), ld.Sources[key].String()})
+	}
 	for _, b := range bindings(&ld.Config) {
 		rows = append(rows, [3]string{b.Key, b.render(), ld.Sources[b.Key].String()})
 	}

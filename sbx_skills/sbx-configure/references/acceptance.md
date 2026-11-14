@@ -1,4 +1,12 @@
-# 首版验收记录
+# 配置 skill 验收记录
+
+## M4–M5 开发构建同步
+
+2026-11-13：配置参考补充宿主侧 `memory.query / facts / watch` 的使用边界，知识包 revision 2 绑定本地 `memory-m4-m5-dev` 二进制及当前工作区源码摘要，清单标记 `source_dirty: true`。这是维护者显式复核后的开发绑定；正式发布仍要求干净源码，配置 agent 不可自行重封以绕过版本不匹配。
+
+CLI 参考已核对 95 个实际帮助入口，23 份发布 schema 与本地二进制一致，skill 格式校验及 17 项受控测试通过（包括显式开发绑定、源码漂移和封包往返）。记忆模块实现与验收范围见仓库 `docs/project-memory-m4-m5-acceptance.md`；真实 Docker、私网及模型对话仍未验收。以下首版记录是历史结果，不代表本次重跑了所有跨平台场景。
+
+## 首版验收
 
 记录日期：2026-11-09。语义基线为知识清单中的 source_commit 与 source_files_sha256；二进制身份见 builds。安装和使用方式见 maintenance.md。
 

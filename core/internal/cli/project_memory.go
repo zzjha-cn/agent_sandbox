@@ -73,12 +73,23 @@ func (a *App) addProjectMemoryCommands(root *cobra.Command) {
 	root.AddCommand(project)
 	var snapProject string
 	var snapPaths, snapTags []string
+	var snapQuery, snapRepo string
+	var snapFacts map[string]string
+	var snapWatch []string
+	var snapLimit, snapBytes int
 	snapshot := &cobra.Command{Use: "snapshot", Short: "Freeze approved project knowledge and print a reusable snapshot (JSON)", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
 		s, e := a.memoryStore(true)
 		if e != nil {
 			return e
 		}
-		v, e := s.Select(snapProject, projectmemory.Selection{Paths: snapPaths, Tags: snapTags})
+		if _, e = s.Load(snapProject); e != nil {
+			return e
+		}
+		facts, e := projectmemory.ObserveFiles(snapRepo, snapWatch, snapFacts)
+		if e != nil {
+			return e
+		}
+		v, e := s.Select(snapProject, projectmemory.Selection{Paths: snapPaths, Tags: snapTags, Query: snapQuery, Facts: facts, Limit: snapLimit, Bytes: snapBytes})
 		if e != nil {
 			return e
 		}
@@ -90,8 +101,15 @@ func (a *App) addProjectMemoryCommands(root *cobra.Command) {
 	snapshot.Flags().StringVar(&snapProject, "project", "", "registered project")
 	snapshot.Flags().StringSliceVar(&snapPaths, "paths", nil, "relative affected paths")
 	snapshot.Flags().StringSliceVar(&snapTags, "tags", nil, "matching tags")
+	snapshot.Flags().StringVar(&snapQuery, "query", "", "bounded lexical query; empty preserves stable ID order")
+	snapshot.Flags().StringToStringVar(&snapFacts, "facts", nil, "operator-observed equality facts, key=value; never credentials")
+	snapshot.Flags().StringSliceVar(&snapWatch, "watch", nil, "explicit relative input files to hash (max 16)")
+	snapshot.Flags().StringVar(&snapRepo, "repo", ".", "root for explicit watch files")
+	snapshot.Flags().IntVar(&snapLimit, "limit", 0, "entry budget, 1-20 (zero uses 20)")
+	snapshot.Flags().IntVar(&snapBytes, "max-bytes", 0, "context byte budget, 256-16384 (zero uses 16384)")
 	_ = snapshot.MarkFlagRequired("project")
 	root.AddCommand(snapshot)
+	a.addMemoryRetrievalCommands(root)
 	var addProject, file string
 	add := &cobra.Command{Use: "add", Short: "Submit a manual experience candidate (never automatically approved)", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
 		s, e := a.memoryStore(true)

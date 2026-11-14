@@ -19,7 +19,7 @@ import (
 
 const HandoffSchema = "sbx.task-handoff/v1"
 const JobSchema = "sbx.memory-extraction/v1"
-const ExtractorVersion = "sbx-extractor/v1"
+const ExtractorVersion = "sbx-extractor/v2"
 const MaxMaterial = 64 << 10
 
 type Check struct {

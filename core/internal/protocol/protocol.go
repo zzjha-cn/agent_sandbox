@@ -50,7 +50,7 @@ type VersionInfo struct {
 func Version(appVersion string) VersionInfo {
 	return VersionInfo{SchemaVersion: SchemaVersion, ApplicationVersion: appVersion,
 		Providers: []string{"claude", "codex"}, ArtifactDelivery: "local_directory,git_local",
-		Capabilities: []string{"task.v2", "admit.v2", "events.jsonl.v2", "timeout", "source.files", "source.git", "artifact.snapshot", "criteria.files", "criteria.tests", "criteria.manual", "criteria.external_state", "tools.records.get", "operations.record_http", "organization.ceilings", "events.team-outbox", "task.management", "memory.project", "memory.modes", "memory.handoff", "memory.extraction", "memory.maintenance", "memory.sharing", "memory.organization-review"}, MaxTimeoutSeconds: MaxTimeoutSeconds, Schemas: SchemaNames(), CapabilityDetails: capabilityDetails(), RecordSchema: execution.RecordSchema, Compatibility: Compatibility{InputVersions: []string{SchemaVersion}, RecordVersions: []string{execution.RecordSchema}, V1Records: "preserve_and_reconcile_with_original_binary", AdditiveOutputFields: true}}
+		Capabilities: []string{"task.v2", "admit.v2", "events.jsonl.v2", "timeout", "source.files", "source.git", "artifact.snapshot", "criteria.files", "criteria.tests", "criteria.manual", "criteria.external_state", "tools.records.get", "operations.record_http", "organization.ceilings", "events.team-outbox", "task.management", "memory.project", "memory.modes", "memory.handoff", "memory.extraction", "memory.maintenance", "memory.sharing", "memory.organization-review", "memory.retrieval", "memory.applicability", "memory.feedback"}, MaxTimeoutSeconds: MaxTimeoutSeconds, Schemas: SchemaNames(), CapabilityDetails: capabilityDetails(), RecordSchema: execution.RecordSchema, Compatibility: Compatibility{InputVersions: []string{SchemaVersion}, RecordVersions: []string{execution.RecordSchema}, V1Records: "preserve_and_reconcile_with_original_binary", AdditiveOutputFields: true}}
 }
 
 type CapabilityDetail struct {
@@ -67,6 +67,9 @@ type Compatibility struct {
 // Implementation constraints, not a grant of local authority.
 func capabilityDetails() []CapabilityDetail {
 	return []CapabilityDetail{
+		{Name: "memory.retrieval", Requirements: []string{"bounded local lexical query, scoped paths/tags and stable ranking; no embeddings or model calls", "episodic/semantic/procedural are content types, not approval or execution authority", "no-query selection preserves ID ordering; snapshots record selector version and decisions"}},
+		{Name: "memory.applicability", Requirements: []string{"explicit trusted equality facts and bounded input-root file watches", "missing conditions are unknown and excluded; mismatch does not rewrite review history", "resume and pinned reuse recheck conditions; no TaskSpec memory fields"}},
+		{Name: "memory.feedback", Requirements: []string{"explicit operator assertions bound to exact entry revision digest", "feedback is atomic project history, not approval, renewal, proof or task success attribution"}},
 		{Name: "memory.maintenance", Requirements: []string{"digest-bound review, optional expiry and explicit renewal", "history-derived duplicate/conflict hints and storage statistics; no separate index"}},
 		{Name: "memory.sharing", Requirements: []string{"explicit approved entry selection and local destination mapping", "bounded untrusted bundles import as candidates only; no approval or execution authority"}},
 		{Name: "memory.organization-review", Requirements: []string{"fixed root-owned organization policy mapping host UID to explicit projects and subject", "project sequence required; local operator-owned storage, not a hostile multi-tenant service"}},

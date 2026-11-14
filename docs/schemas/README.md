@@ -17,6 +17,7 @@
 | [memory-processing](memory-processing.schema.json) | 自动提取的独立后处理结果 |
 | [memory-bundle](memory-bundle.schema.json) | M3 可携带共享包输入/输出；闭合字段、显式选择，始终重新本地审核 |
 | [memory-maintenance](memory-maintenance.schema.json) | M3 历史完整性、项目文件占用、重复/可能冲突与到期提示 |
+| [memory-feedback](memory-feedback.schema.json) | M5 绑定历史条目摘要的人工反馈声明，不是审批或验证证明 |
 | [task](task.schema.json) | TaskSpec，包含 Source、tools、operations、outputs、criteria、Sink、limits |
 | [event](event.schema.json) | JSONL 单行：生命周期事件或无 attempt 的早期失败 |
 | [result](result.schema.json) | 完整执行/验证/交付/清理维度和阶段结果 |

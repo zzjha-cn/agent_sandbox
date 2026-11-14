@@ -101,6 +101,26 @@ class KnowledgeTests(unittest.TestCase):
         self.assertEqual(self.invoke("seal", "--sbx", str(self.binary), "--repo", str(REPO),
                                      "--revision", "test")[0], 1)
 
+    def test_dirty_source_requires_explicit_development_binding(self):
+        repo = self.root / "repository"
+        repo.mkdir()
+        for name in ("core/go.mod", "core/go.sum", "core/cmd/sbx/main.go"):
+            path = repo / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("fixture")
+        subprocess.run(["git", "-c", "init.templateDir=", "init", "-q", str(repo)], check=True)
+        subprocess.run(["git", "add", "."], cwd=repo, check=True)
+        subprocess.run(["git", "-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid",
+                        "-c", "commit.gpgsign=false", "commit", "-qm", "fixture"], cwd=repo, check=True)
+        (repo / "core/go.mod").write_text("changed")
+        args = ["seal", "--sbx", str(self.binary), "--repo", str(repo),
+                "--revision", "test-dev", "--reviewed"]
+        self.assertEqual(self.invoke(*args)[0], 1)
+        self.assertEqual(self.invoke(*args, "--reviewed-worktree")[0], 0)
+        manifest = json.loads((self.package / knowledge.MANIFEST).read_text())
+        self.assertEqual(manifest["source_dirty"], True)
+        self.assertEqual(self.invoke("check", "--repo", str(repo))[0], 0)
+
     def test_source_drift_detected(self):
         fake = self.root / "source"
         for directory in knowledge.SOURCE_DIRS:
@@ -231,6 +251,8 @@ class ConfigFixtures(unittest.TestCase):
         command = [sys.executable, str(REPO / "core/scripts/package-configure-skill.py"),
                    "--sbx", self.sbx, "--release-dir", str(archives),
                    "--version", version, "--output", str(output)]
+        if subprocess.check_output(["git", "diff", "HEAD", "--", "core"], cwd=REPO):
+            command.append("--development")
         result = subprocess.run(command, capture_output=True, text=True, check=False, timeout=30)
         self.assertEqual(result.returncode, 0, result.stderr)
         with tarfile.open(output) as tar:

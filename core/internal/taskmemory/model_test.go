@@ -13,6 +13,33 @@ import (
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestExtractorPromptVersionSurvivesOldJobRetry(t *testing.T) {
+	for _, version := range []string{"sbx-extractor/v1", ExtractorVersion, "future"} {
+		_, j := fixture(t)
+		j.Extractor = version
+		calls := 0
+		client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			calls++
+			data, _ := io.ReadAll(r.Body)
+			var request map[string]any
+			json.Unmarshal(data, &request)
+			prompt, _ := request["instructions"].(string)
+			if strings.Contains(prompt, "memory_type") != (version == ExtractorVersion) {
+				t.Fatal("extractor prompt changed across retry", version)
+			}
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"{}"}]}]}`))}, nil
+		})}
+		_, err := (HTTPModel{APIKey: "test-provider-key", Client: client}).Generate(context.Background(), j)
+		if version == "future" {
+			if err == nil || calls != 0 {
+				t.Fatal("unknown extractor invoked provider")
+			}
+		} else if err != nil || calls != 1 {
+			t.Fatal(version, err, calls)
+		}
+	}
+}
 func TestHTTPModelsAreBoundedTextOnlyAndRejectTruncation(t *testing.T) {
 	for _, provider := range []string{"codex", "claude"} {
 		t.Run(provider, func(t *testing.T) {

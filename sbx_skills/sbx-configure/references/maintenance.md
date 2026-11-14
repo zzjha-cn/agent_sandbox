@@ -28,6 +28,8 @@ check 检查包内知识文件。维护者在源码仓库使用 `check --repo <r
 
 封包前更新 [验收记录](acceptance.md)。seal 在当前清单中将真实 Docker 和私网状态保守记录为 not_executed，不根据交叉编译或脚本测试推断；未来真实执行后应扩展成可追溯的验收记录格式。
 
+开发期间如需验证尚未提交的实现，维护者可在完成相关审核后显式附加 `--reviewed-worktree`，清单会记录 `source_dirty=true`，同时绑定实际源文件摘要；不能将它当作对应 commit 的干净发布。默认 seal 仍拒绝未提交的 core 变化，运行配置的 agent 仍不得自行 seal。开发封包需显式 `--development`；正式 release 工作流不传此选项，要求 clean core 并重新绑定最终构建。
+
 ## CI 和发布
 
 仓库 CI 检查知识依赖漂移、脚本行为和 skill 链接。源码依赖改变后检查失败，需要维护者更新知识并 reseal。

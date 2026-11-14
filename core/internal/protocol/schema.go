@@ -14,7 +14,7 @@ import (
 type JSONSchema map[string]any
 
 func SchemaNames() []string {
-	return []string{"task", "event", "result", "task-status", "execution-status", "version", "admission", "retention", "team-event", "task-list", "task-maintenance", "memory-input", "memory-entry", "memory-project", "memory-context", "memory-session", "task-handoff", "memory-extraction", "memory-summary", "memory-processing", "memory-bundle", "memory-maintenance"}
+	return []string{"task", "event", "result", "task-status", "execution-status", "version", "admission", "retention", "team-event", "task-list", "task-maintenance", "memory-input", "memory-entry", "memory-project", "memory-context", "memory-session", "task-handoff", "memory-extraction", "memory-summary", "memory-processing", "memory-bundle", "memory-maintenance", "memory-feedback"}
 }
 
 // Schema derives wire shapes from the actual CLI types. Input objects are
@@ -22,6 +22,8 @@ func SchemaNames() []string {
 func Schema(name string) (JSONSchema, error) {
 	var value any
 	switch name {
+	case "memory-feedback":
+		value = projectmemory.Feedback{}
 	case "memory-bundle":
 		value = projectmemory.Bundle{}
 	case "memory-maintenance":
@@ -72,6 +74,9 @@ func Schema(name string) (JSONSchema, error) {
 	s["$id"] = "urn:sbx:schema:" + name + ":v2"
 	s["title"] = "sbx " + name
 	switch name {
+	case "memory-feedback":
+		s["$id"] = "urn:sbx:schema:memory-feedback:v1"
+		prop(s, "kind")["enum"] = []string{"retrieved", "injected", "helpful", "validated", "counterexample"}
 	case "memory-bundle":
 		s["$id"] = "urn:sbx:schema:memory-bundle:v1"
 		prop(s, "schema_version")["const"] = projectmemory.BundleSchema
@@ -178,7 +183,28 @@ func Schema(name string) (JSONSchema, error) {
 		prop(s, "type")["const"] = "admitted"
 		prop(s, "admitted")["const"] = true
 	}
+	knowledgeRules(s)
 	return s, nil
+}
+
+// Apply additive knowledge constraints wherever memory types are embedded.
+func knowledgeRules(s JSONSchema) {
+	if props, ok := s["properties"].(map[string]any); ok {
+		if v, ok := props["memory_type"].(JSONSchema); ok {
+			v["enum"] = []string{"", "episodic", "semantic", "procedural"}
+		}
+		if v, ok := props["requires"].(JSONSchema); ok {
+			v["maxProperties"] = 32
+		}
+		for _, v := range props {
+			if child, ok := v.(JSONSchema); ok {
+				knowledgeRules(child)
+			}
+		}
+	}
+	if child, ok := s["items"].(JSONSchema); ok {
+		knowledgeRules(child)
+	}
 }
 
 func shape(t reflect.Type, input bool) JSONSchema {

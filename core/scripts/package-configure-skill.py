@@ -22,6 +22,8 @@ def main():
     parser.add_argument("--release-dir", required=True, type=Path)
     parser.add_argument("--version", required=True)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--development", action="store_true",
+                        help="explicit local development package; records uncommitted source state")
     args = parser.parse_args()
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", args.version):
         parser.error("invalid version")
@@ -50,10 +52,13 @@ def main():
         with tempfile.TemporaryDirectory() as directory:
             package = Path(directory) / "sbx-configure"
             shutil.copytree(SKILL, package, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
-            subprocess.run([sys.executable, str(package / "scripts/knowledge.py"), "seal",
+            command = [sys.executable, str(package / "scripts/knowledge.py"), "seal",
                             "--sbx", str(args.sbx.resolve()), "--repo", str(REPO),
                             "--revision", template["knowledge_revision"], "--reviewed",
-                            "--release-dir", str(args.release_dir.resolve())], check=True)
+                            "--release-dir", str(args.release_dir.resolve())]
+            if args.development:
+                command.append("--reviewed-worktree")
+            subprocess.run(command, check=True)
             subprocess.run([sys.executable, str(package / "scripts/knowledge.py"), "check",
                             "--repo", str(REPO)], check=True)
             subprocess.run([sys.executable, str(package / "scripts/knowledge.py"), "probe",

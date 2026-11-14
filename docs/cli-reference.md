@@ -597,6 +597,7 @@ Available Commands:
   check       Validate authoritative history and derive current views without a separate index (JSON)
   export      Print a portable bundle of explicitly selected approved experience (JSON)
   extract     Freeze safe task material and call a tool-free model to propose candidates (may incur API charges)
+  feedback    Record or inspect explicit operator feedback; never changes approval
   handoff     Rebuild a task handoff from durable facts without running the task (JSON)
   import      Map a portable bundle to a local project as unapproved candidates
   inspect     Report duplicate/conflict hints, review expiry and storage usage (JSON)
@@ -610,6 +611,7 @@ Available Commands:
   reject      Record an explicit review bound to the displayed entry digest
   renew       Record an explicit review bound to the displayed entry digest
   retry       Retry extraction using frozen material; may incur another API charge
+  search      Explain approved memory relevance and applicability without pinning a snapshot (JSON)
   show        Read project memory entries as JSON
   snapshot    Freeze approved project knowledge and print a reusable snapshot (JSON)
   stats       Print project memory occupancy and current status counts (JSON)
@@ -746,6 +748,64 @@ Flags:
       --project string   target local project (required for general tasks)
       --scope string     task namespace: git or general (default "git")
       --summary string   explicitly authorized, scrubbed summary JSON (max 16 KiB)
+
+Global Flags:
+  -v, --verbose   print every docker and git command sbx runs
+```
+
+## sbx memory feedback
+
+```text
+Record or inspect explicit operator feedback; never changes approval
+
+Usage:
+  sbx memory feedback [command]
+
+Available Commands:
+  add         Record a personal assertion bound to an exact entry digest (not verification)
+  list        List digest-bound feedback assertions (JSON)
+
+Flags:
+  -h, --help   help for feedback
+
+Global Flags:
+  -v, --verbose   print every docker and git command sbx runs
+
+Use "sbx memory feedback [command] --help" for more information about a command.
+```
+
+## sbx memory feedback add
+
+```text
+Record a personal assertion bound to an exact entry digest (not verification)
+
+Usage:
+  sbx memory feedback add <entry> [flags]
+
+Flags:
+      --actor string     personal declaration; managed identity comes from host UID (default "operator")
+      --digest string    exact displayed entry revision digest
+  -h, --help             help for add
+      --kind string      retrieved|injected|helpful|validated|counterexample (operator assertion)
+      --note string      bounded safe explanation, no raw logs or credentials
+      --project string   registered project
+      --task string      optional task reference (operator declaration)
+
+Global Flags:
+  -v, --verbose   print every docker and git command sbx runs
+```
+
+## sbx memory feedback list
+
+```text
+List digest-bound feedback assertions (JSON)
+
+Usage:
+  sbx memory feedback list [flags]
+
+Flags:
+  -h, --help             help for list
+      --project string   registered project
 
 Global Flags:
   -v, --verbose   print every docker and git command sbx runs
@@ -1022,6 +1082,30 @@ Global Flags:
   -v, --verbose   print every docker and git command sbx runs
 ```
 
+## sbx memory search
+
+```text
+Explain approved memory relevance and applicability without pinning a snapshot (JSON)
+
+Usage:
+  sbx memory search [flags]
+
+Flags:
+      --facts stringToString   operator-observed equality facts, key=value; never credentials (default [])
+  -h, --help                   help for search
+      --limit int              entry budget, 1-20 (zero uses 20)
+      --max-bytes int          context byte budget, 256-16384 (zero uses 16384)
+      --paths strings          relative affected paths
+      --project string         registered authorized project
+      --query string           lexical query (max 2048 bytes / 64 terms); empty explains applicability
+      --repo string            input root for watch files (default ".")
+      --tags strings           matching tags
+      --watch strings          explicit relative files to hash within repo
+
+Global Flags:
+  -v, --verbose   print every docker and git command sbx runs
+```
+
 ## sbx memory show
 
 ```text
@@ -1047,10 +1131,16 @@ Usage:
   sbx memory snapshot [flags]
 
 Flags:
-  -h, --help             help for snapshot
-      --paths strings    relative affected paths
-      --project string   registered project
-      --tags strings     matching tags
+      --facts stringToString   operator-observed equality facts, key=value; never credentials (default [])
+  -h, --help                   help for snapshot
+      --limit int              entry budget, 1-20 (zero uses 20)
+      --max-bytes int          context byte budget, 256-16384 (zero uses 16384)
+      --paths strings          relative affected paths
+      --project string         registered project
+      --query string           bounded lexical query; empty preserves stable ID order
+      --repo string            root for explicit watch files (default ".")
+      --tags strings           matching tags
+      --watch strings          explicit relative input files to hash (max 16)
 
 Global Flags:
   -v, --verbose   print every docker and git command sbx runs
@@ -1332,6 +1422,7 @@ Flags:
       --jsonl                   write machine-readable execution events and result to stdout (headless only)
       --memory string           memory mode for this Git run: native, managed or off; mode changes require --fresh
       --memory-project string   trusted local project ID for managed memory (otherwise use repository binding)
+      --memory-query string     lexical query for managed memory; changed selectors require a new conversation
       --net string              network mode for this run: open (default, everything allowed) or allowlist
   -p, --prompt string           headless: run this prompt and exit instead of opening the session ("-" reads stdin)
       --proxy string            egress proxy for this task: shared (default, one squid for everyone) or dedicated (its own sidecar)

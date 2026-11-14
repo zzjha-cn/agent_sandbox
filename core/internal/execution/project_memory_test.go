@@ -74,6 +74,54 @@ func TestMemorySessionFrozenRevokedFreshAndCleanup(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+
+func TestMemoryQueryAndWatchInvalidateResumeAndPinnedContext(t *testing.T) {
+	req, s, _ := memoryFixture(t)
+	root := req.Task.Worktree()
+	if err := os.MkdirAll(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module first"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	facts, err := projectmemory.ObserveFiles(root, []string{"go.mod"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := s.Add("demo", projectmemory.Input{Kind: "troubleshooting", Title: "GOMODCACHE", Content: "Check prep seed location", Source: "operator", Requires: map[string]string{"file:go.mod": facts["file:go.mod"]}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Review("demo", v.ID, v.Digest, "approved", "operator", "verified"); err != nil {
+		t.Fatal(err)
+	}
+	req.Config.Memory.Query = "GOMODCACHE"
+	req.Config.Memory.Watch = []string{"go.mod"}
+	first, err := prepareMemory(req, false)
+	if err != nil || len(first.Snapshot.Entries) != 1 {
+		t.Fatal(first, err)
+	}
+	if err = os.WriteFile(filepath.Join(req.Task.StateDir(), "codex-session"), []byte("prior-session"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	req.MemoryAttemptID = "attempt2"
+	if _, err = prepareMemory(req, false); err != nil {
+		t.Fatal("stable observation did not resume", err)
+	}
+	if err = os.WriteFile(filepath.Join(root, "go.mod"), []byte("module second"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	req.MemoryAttemptID = "attempt3"
+	if _, err = prepareMemory(req, false); err == nil {
+		t.Fatal("changed file reused old context")
+	}
+	req.Fresh = true
+	req.Config.Memory.Snapshot = first.Snapshot.Digest
+	req.Config.Memory.Query = ""
+	if _, err = prepareMemory(req, false); err == nil {
+		t.Fatal("pinned old conditions accepted")
+	}
+}
 func TestModeChangesAndActiveTaskCannotPretendToSwitch(t *testing.T) {
 	req, _, _ := memoryFixture(t)
 	if _, e := prepareMemory(req, false); e != nil {

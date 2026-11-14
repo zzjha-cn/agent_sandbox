@@ -2,7 +2,7 @@
 
 [首页](index.html) · [设计](design.md) · [命令](commands.md) · [完整设计与后续路线](project-memory-design.md)
 
-当前完成 M1–M3：本地项目记忆、候选审核与固定快照、Codex/Claude 启动适配、任务交接与隔离提取，以及到期复核、维护检查、显式共享和受管审核身份。原生记忆导入、原生记忆备份与中心共享服务尚未实现。
+当前完成 M1–M3，并新增 M4–M5 的结构化经验、本地词法检索、显式适用条件及人工反馈；新增能力和验证范围见第 12 节。原生记忆导入、原生记忆备份与中心共享服务尚未实现。
 
 ## 1. 先选择模式
 
@@ -345,3 +345,99 @@ M3 验收覆盖显式导出、私有元数据排除、不可信包验证、原�
 原生开关依据：[Codex 配置参考](https://learn.chatgpt.com/docs/config-file/config-reference)、[Codex 原生记忆](https://learn.chatgpt.com/docs/customization/memories)、[Claude 自动记忆](https://code.claude.com/docs/en/memory)。它们控制原生行为，不提供 sbx 项目审批和版本契约。
 
 提取 API 依据：[OpenAI Responses](https://developers.openai.com/api/docs/guides/migrate-to-responses)、[Anthropic Messages](https://platform.claude.com/docs/en/api/messages)。提取路径不提供业务工具调用。
+
+## 12. M4–M5：经验结构、相关度与适用性
+
+### 12.1 分类和结构化候选
+
+手动候选可选增加 memory_type（episodic / semantic / procedural），省略或空字符串表示未分类。它不改变原有 kind 主题、status 审核状态及权限。experience 可选填写 conditions、symptoms、actions、observations、validation、unknowns，每项最多 2048 UTF-8 字节，整个输入仍受原 8 KiB 限制。
+
+```json
+{
+  "kind": "troubleshooting",
+  "title": "GOMODCACHE 与 prep 播种目录",
+  "content": "模块缓存应位于 task 能取得的播种路径，变更后在新 task 内验证编译。",
+  "source": "operator: checked local task compilation",
+  "memory_type": "episodic",
+  "experience": {
+    "symptoms": "prep 构建成功但 task 找不到模块",
+    "actions": "将模块缓存定位到 /sbx/cache/go-mod",
+    "observations": "新 task 编译通过",
+    "validation": "操作者核对编译记录",
+    "unknowns": "尚未证明最初目录错误的完整原因"
+  },
+  "requires": {"go.version": "1.27"}
+}
+```
+
+requires 是非敏感等值条件，不执行表达式或命令，不做 semver 范围推理。最多 32 项，值最多 256 字节。凭据形状的键会被拒绝；不要将密钥或私人数据伪装成版本事实。
+
+新提取作业使用 sbx-extractor/v2，可生成类型及结构化经验，但仍只能产生 candidate，不能决定 requires、审核或替代关系。旧 v1 作业恢复保留原提取指令；旧条目/快照缺少新增字段时仍可读取和校验摘要。含新增字段的存储不保证被旧二进制读取，升级前保留备份，降级不要自动重写历史。
+
+### 12.2 查询与选择解释
+
+```sh
+sbx memory search --project my-project --query 'GOMODCACHE' \
+  --paths core/main.go --facts go.version=1.27 --limit 5
+sbx memory snapshot --project my-project --query 'GOMODCACHE' \
+  --paths core/main.go --facts go.version=1.27 --limit 5
+```
+
+search 不修改项目或固定快照；snapshot 按原有流程保存可固定引用的结果。两者都支持 tags、watch、repo、max-bytes。只读本地查询不需要 Docker、模型 API 或向量数据库。
+
+先按审核、期限、路径/标签及适用条件过滤，再按词法分数选择。标题匹配权重 8，标签 6，正文及经验字段 2；路径限定与显式标签范围各提供 4 分范围加权；同分按 ID 稳定排序。ASCII 标识符精确匹配，中文支持字面子串，不承诺同义理解。无 query 时保留 ID 顺序，不会自动把整个用户 prompt 当作查询。
+
+输出包含 selector_version、decisions、decision_counts。原因包括 selected、no_query_match、not_approved、review_due、conditions_unknown / mismatch、evidence_unavailable、entry_budget、byte_budget。decisions 只列匹配路径/标签范围的条目元数据，最多保留 128 条普通解释，另保证所选条目的解释可见；counts 汇总全部范围内决定。解释不是注入正文，不输出到公共执行事件。
+
+evidence_status 区分 manual_source、imported_source、available、unavailable。对由提取作业产生的本地记忆，只核对已登记作业中的项目身份及冻结材料/输出摘要；缺失或不符时排除选择并阻止恢复，不扫描候选声称的任意宿主路径。材料仍在只证明来源绑定，不证明结论正确；人工及导入来源仍依赖本地审核，不假称有本地任务执行证据。
+
+limit 最大 20，max-bytes 最大 16384、最小 256，0 表示默认值。上下文按完整条目截取；预算不足时可以少选或不选，不截断经验正文。
+
+### 12.3 事实、文件变化和恢复
+
+requires 的键缺少实际观察时为 unknown，有任何已知不符时为 mismatch，全部相等才为 satisfied。前两者不自动注入，但条目仍保留 approved 历史，可通过 search 检查原因。
+
+facts 是可信本机操作者提供的声明，不代表 sbx 已执行版本命令。文件摘要则只由显式 watch 计算：
+
+```sh
+sbx memory search --project my-project --query 'GOMODCACHE' \
+  --watch go.mod,go.sum --repo /path/to/input --facts go.version=1.27
+```
+
+对应条件键为 `file:go.mod`、`file:go.sum`，值为 sha256 摘要。不要通过 facts 自行声称 file 条件。watch 不从记忆正文或导入条目自动推导，最多 16 个相对文件，每个最多 1 MiB；拒绝保留敏感路径、外部路径、symlink 和特殊文件。缺失文件为未知。该检查不是通用秘密扫描器，操作者仍须只选择允许读取的材料。
+
+运行期配置只能放在全局或工作区层，例如：
+
+```toml
+[memory]
+mode = "managed"
+project = "my-project"
+query = "GOMODCACHE"
+paths = ["core/main.go"]
+watch = ["go.mod", "go.sum"]
+
+[memory.facts]
+"go.version" = "1.27"
+```
+
+也可在 Git 运行入口使用 `sbx run <task> --memory managed --memory-query GOMODCACHE`。TaskSpec 未新增记忆字段，--spec 不与该 Git flag 混用。观察以 task 的实际工作目录为根，不能通过源材料排除规则之外的宿主路径补读。
+
+query / facts / watch 沿用可信配置层语义：query 后层覆盖，facts 按键覆盖，watch 取并集。改变选择条件或观察文件会阻止旧会话直接恢复；固定快照也要与当前事实重新比较，不重新选择正文。开始新会话后才能采用新上下文。自动检测发生在新选择和启动/恢复边界，本轮未增加运行中后台监听。
+
+### 12.4 人工反馈
+
+```sh
+sbx memory feedback add <entry> --project my-project --digest <entry-digest> \
+  --kind helpful --task <task-reference> --note '已核对当前任务，减少重复排查'
+sbx memory feedback list --project my-project
+```
+
+kind 可选 retrieved、injected、helpful、validated、counterexample。全部是操作者声明，不是系统自动证明；task 参数也是人工关联，不伪造任务证据。个人 actor 是本地声明，组织身份由授权宿主 UID 绑定。写入需要现有项目维护权限。
+
+反馈与精确的历史条目摘要绑定，在同一项目原子历史内追加，保留并发更新；不会批准、续期、归档记忆，也不会自动将任务成功归因于它。note 最多 1024 字节，不放原始日志或凭据；导出经验包不携带反馈记录。
+
+### 12.5 验收边界
+
+30 个合成案例分为 20 个开发案例和 10 个验收案例。相同过滤和条数预算下，ID 顺序基线与词法选择分别得到：开发集准确匹配 1/20 与 20/20；验收集 1/10 与 9/10。验收集有答案的 9 例中 Recall@1 为 1/9 与 8/9；词法选择仍遗漏一例同义表达。这是特意覆盖噪声和边界的夹具，不代表真实项目准确率。
+
+本轮无运行中召回工具、规则/skill 自动提炼或语义向量服务；M6–M8 保留待实施。受控测试、机器 schema 及真实 CLI 验收结果见 [M4–M5 验收记录](project-memory-m4-m5-acceptance.md)。

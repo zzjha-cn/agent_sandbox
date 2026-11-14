@@ -39,7 +39,7 @@ type runOpts struct {
 func (o runOpts) headless() bool { return o.Prompt != "" }
 
 func (a *App) runCmd() *cobra.Command {
-	var base, netMode, proxyMode, prompt, envelopePath, agentName, memoryMode, memoryProject string
+	var base, netMode, proxyMode, prompt, envelopePath, agentName, memoryMode, memoryProject, memoryQuery string
 	var detach, fresh, cloudMCP, jsonl bool
 	cmd := &cobra.Command{
 		Use:   "run [task]",
@@ -53,7 +53,7 @@ func (a *App) runCmd() *cobra.Command {
 				return a.writeProtocolFailure(&protocol.CodedError{Code: "invalid_task", Err: errors.New("--spec must name a file or -")})
 			}
 			if envelopePath != "" {
-				for _, flag := range []string{"prompt", "base", "fresh", "jsonl", "detach", "net", "proxy", "cloud-mcp", "agent", "memory", "memory-project"} {
+				for _, flag := range []string{"prompt", "base", "fresh", "jsonl", "detach", "net", "proxy", "cloud-mcp", "agent", "memory", "memory-project", "memory-query"} {
 					if cmd.Flags().Changed(flag) {
 						return a.writeProtocolFailure(&protocol.CodedError{Code: "invalid_task", Err: fmt.Errorf("--spec cannot be combined with --%s", flag)})
 					}
@@ -93,6 +93,10 @@ func (a *App) runCmd() *cobra.Command {
 			if cmd.Flags().Changed("memory-project") {
 				a.Cfg.Memory.Project = memoryProject
 				a.Loaded.Config.Memory.Project = memoryProject
+			}
+			if cmd.Flags().Changed("memory-query") {
+				a.Cfg.Memory.Query = memoryQuery
+				a.Loaded.Config.Memory.Query = memoryQuery
 			}
 			if err := a.Cfg.Validate(); err != nil {
 				return err
@@ -140,6 +144,7 @@ func (a *App) runCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&memoryMode, "memory", "", "memory mode for this Git run: native, managed or off; mode changes require --fresh")
 	cmd.Flags().StringVar(&memoryProject, "memory-project", "", "trusted local project ID for managed memory (otherwise use repository binding)")
+	cmd.Flags().StringVar(&memoryQuery, "memory-query", "", "lexical query for managed memory; changed selectors require a new conversation")
 	cmd.Flags().StringVar(&agentName, "agent", "", "agent for this run: claude or codex (overrides default_agent without changing config files)")
 	cmd.Flags().StringVar(&base, "base", "", "starting point for the new branch (default: current HEAD)")
 	cmd.Flags().BoolVarP(&detach, "detach", "d", false, "start the task without attaching to it")

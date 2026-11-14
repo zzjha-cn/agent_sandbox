@@ -50,3 +50,27 @@ func TestExtractionTrustedDefaultsLimitsAndLayers(t *testing.T) {
 		}
 	}
 }
+
+func TestMemoryRetrievalTrustedConfigurationAndMerge(t *testing.T) {
+	for _, text := range []string{"[memory]\nquery='E401'", "[memory]\nwatch=['go.mod']", "[memory.facts]\nversion='1'"} {
+		if checkProject(text, "project") == nil {
+			t.Fatal("project chose observations", text)
+		}
+	}
+	dir := t.TempDir()
+	ld, err := LoadLayers([]Layer{write(t, dir, LayerGlobal, "[memory]\nmode='managed'\nquery='prep'\nwatch=['go.mod']\n[memory.facts]\nnode='20'\ngo='1.27'", false), write(t, dir, LayerWorkspace, "[memory]\nquery='GOMODCACHE'\n[memory.facts]\nnode='24'", false)})
+	if err != nil || ld.Config.Memory.Query != "GOMODCACHE" || ld.Config.Memory.Facts["node"] != "24" || ld.Config.Memory.Facts["go"] != "1.27" || ld.Sources["memory.facts.node"].Last() != LayerWorkspace {
+		t.Fatal(ld, err)
+	}
+	c := Default()
+	c.Memory.Mode = "managed"
+	c.Memory.Watch = []string{".env"}
+	if c.Validate() == nil {
+		t.Fatal("secret observation")
+	}
+	c.Memory.Watch = nil
+	c.Memory.Facts = map[string]string{"file:go.mod": "forged"}
+	if c.Validate() == nil {
+		t.Fatal("asserted file hash")
+	}
+}

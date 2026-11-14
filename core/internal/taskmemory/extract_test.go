@@ -17,6 +17,25 @@ import (
 	"sandx/internal/projectmemory"
 )
 
+func TestStructuredExperienceRemainsCandidateAndDoesNotInventRequirements(t *testing.T) {
+	s, j := fixture(t)
+	var output Output
+	if err := json.Unmarshal(goodOutput(j), &output); err != nil {
+		t.Fatal(err)
+	}
+	output.Candidates[0].MemoryType = "episodic"
+	output.Candidates[0].Experience = &projectmemory.Experience{Actions: "workaround", Observations: "test passed", Unknowns: "root cause not demonstrated"}
+	if err := validateOutput(output, j.Material); err != nil {
+		t.Fatal(err)
+	}
+	bad := []byte(`{"explanation":"x","suggestions":[],"candidates":[{"kind":"testing","title":"x","content":"x","requires":{"version":"fake"},"evidence":[]}]}`)
+	var decoded Output
+	if err := decode(bad, &decoded); err == nil {
+		t.Fatal("model invented applicability policy")
+	}
+	_ = s
+}
+
 type modelFunc func(context.Context, Job) ([]byte, error)
 
 func (f modelFunc) Generate(c context.Context, j Job) ([]byte, error) { return f(c, j) }
