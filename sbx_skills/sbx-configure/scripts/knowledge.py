@@ -70,7 +70,7 @@ def probe_binary(value):
 
 def inventory(root):
     paths = [root / "SKILL.md"]
-    for name in ("agents", "references", "scripts"):
+    for name in ("agents", "references", "scripts", "assets"):
         paths.extend(p for p in (root / name).rglob("*")
                      if p.is_file() and "__pycache__" not in p.parts and p.suffix != ".pyc")
     return {str(p.relative_to(root)): file_hash(p) for p in sorted(paths)}

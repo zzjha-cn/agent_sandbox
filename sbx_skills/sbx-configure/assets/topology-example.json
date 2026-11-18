@@ -1,0 +1,301 @@
+{
+  "title": "sbx 配置拓扑 · 功能演示",
+  "scope": "纯演示数据，不代表当前仓库配置或运行状态。入口：独立 task；sbx 版本待调查；未执行任何构建或服务连接。",
+  "generated_at": "2026-11-18T00:00:00+08:00",
+  "nodes": [
+    {
+      "id": "config",
+      "lane": 0,
+      "title": "配置层与生效来源",
+      "status": "proposed",
+      "details": [
+        "默认 → 全局 → 项目 → 工作区；示例选择 profile=web-go、agent=codex",
+        "项目：.sbx/sandbox.toml；forward 与 secret 映射来自本机层；真实来源待 config show"
+      ],
+      "evidence": [
+        "演示数据：未读取真实项目，未执行配置或容器命令"
+      ]
+    },
+    {
+      "id": "inputs",
+      "lane": 0,
+      "title": "仓库与构建输入",
+      "status": "proposed",
+      "details": [
+        "Git 根为构建上下文；COPY go.mod / go.sum；watch 覆盖这两个输入",
+        "仅展示文件名与 secret ID=netrc，不包含凭据正文"
+      ],
+      "evidence": [
+        "演示数据：未读取真实项目，未执行配置或容器命令"
+      ]
+    },
+    {
+      "id": "base",
+      "lane": 1,
+      "title": "运行基础镜像 → sbx agent 层",
+      "status": "proposed",
+      "details": [
+        "profile=web-go；示例没有固定实际 tag/digest",
+        "sbx 构建 agent 层后得到运行镜像；容器内工具版本未验证"
+      ],
+      "evidence": [
+        "演示数据：未读取真实项目，未执行配置或容器命令"
+      ]
+    },
+    {
+      "id": "prep",
+      "lane": 1,
+      "title": "Prep 构建镜像（独立于运行镜像）",
+      "status": "proposed",
+      "details": [
+        ".sbx/prep.Dockerfile；FROM golang:1.27；WORKDIR /src",
+        "RUN go mod download；GOMODCACHE=/sbx/cache/go-mod；构建时注入 netrc secret",
+        "构建网络：宿主 Docker → 私有依赖源；示例未构建、未检查 tag/漂移"
+      ],
+      "evidence": [
+        "演示数据：未读取真实项目，未执行配置或容器命令"
+      ]
+    },
+    {
+      "id": "task",
+      "lane": 2,
+      "title": "独立 task · codex",
+      "status": "proposed",
+      "details": [
+        "Git worktree；示例资源为 2 CPU / 3g；实际值待确认",
+        "忽略文件不会自动携带；现有 task 不因 prep 重建而自动更新"
+      ],
+      "evidence": [
+        "演示数据：未读取真实项目，未执行配置或容器命令"
+      ]
+    },
+    {
+      "id": "cache",
+      "lane": 2,
+      "title": "依赖 volume 与共享 cache",
+      "status": "proposed",
+      "details": [
+        "WORKDIR 下命中 deps.mask 的目录 → task 依赖 volume",
+        "/sbx/cache/go-mod → 共享 sbx-cache；不复制整个 prep 文件系统",
+        "新 task 播种；旧 task reseed 会覆盖依赖 volume，需明确授权"
+      ],
+      "evidence": [
+        "演示数据：未读取真实项目，未执行配置或容器命令"
+      ]
+    },
+    {
+      "id": "redis",
+      "lane": 3,
+      "title": "临时服务 · redis",
+      "status": "proposed",
+      "details": [
+        "image=redis:7；task 地址 redis:6379",
+        "随 task 生命周期管理；配置声明不证明 readiness"
+      ],
+      "evidence": [
+        "演示数据：未读取真实项目，未执行配置或容器命令"
+      ]
+    },
+    {
+      "id": "forward",
+      "lane": 3,
+      "title": "本机 forward · dev-db",
+      "status": "proposed",
+      "details": [
+        "task 访问 dev-db:5432 → 本机转发 → db.internal.example:5432",
+        "示例目标；DNS/TCP/TLS/认证/业务请求均未执行"
+      ],
+      "evidence": [
+        "演示数据：未读取真实项目，未执行配置或容器命令"
+      ]
+    },
+    {
+      "id": "db",
+      "lane": 3,
+      "title": "已有内部 PostgreSQL",
+      "status": "proposed",
+      "details": [
+        "db.internal.example:5432；非 sbx 创建的实例",
+        "认证仅引用环境变量名 DATABASE_URL；不展示连接串或密码"
+      ],
+      "evidence": [
+        "演示数据：未读取真实项目，未执行配置或容器命令"
+      ]
+    },
+    {
+      "id": "network",
+      "lane": 3,
+      "title": "运行期代理与依赖源",
+      "status": "proposed",
+      "details": [
+        "示例 network.mode=allowlist；放行域名不证明可达",
+        "运行路径：task → sbx 代理 → 本机 upstream（如需要）→ API / 依赖源",
+        "构建网络与运行期代理分别配置、分别验证"
+      ],
+      "evidence": [
+        "演示数据：未读取真实项目，未执行配置或容器命令"
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "source": "config",
+      "target": "base",
+      "label": "profile / image 选择运行基础镜像",
+      "status": "proposed",
+      "evidence": "演示关系，未实测"
+    },
+    {
+      "source": "inputs",
+      "target": "prep",
+      "label": "COPY / watch / BuildKit secret 输入",
+      "status": "proposed",
+      "evidence": "演示关系，未实测"
+    },
+    {
+      "source": "config",
+      "target": "task",
+      "label": "按来源合并后的配置创建新 task",
+      "status": "proposed",
+      "evidence": "演示关系，未实测"
+    },
+    {
+      "source": "base",
+      "target": "task",
+      "label": "agent 层镜像创建运行容器",
+      "status": "proposed",
+      "evidence": "演示关系，未实测"
+    },
+    {
+      "source": "prep",
+      "target": "cache",
+      "label": "仅播种 deps.mask 目录与 /sbx/cache/*",
+      "status": "proposed",
+      "evidence": "演示关系，未实测"
+    },
+    {
+      "source": "cache",
+      "target": "task",
+      "label": "volume 覆盖对应依赖与缓存路径",
+      "status": "proposed",
+      "evidence": "演示关系，未实测"
+    },
+    {
+      "source": "task",
+      "target": "redis",
+      "label": "TCP redis:6379（临时实例）",
+      "status": "proposed",
+      "evidence": "演示关系，未实测"
+    },
+    {
+      "source": "task",
+      "target": "forward",
+      "label": "TCP dev-db:5432（已有服务入口）",
+      "status": "proposed",
+      "evidence": "演示关系，未实测"
+    },
+    {
+      "source": "forward",
+      "target": "db",
+      "label": "转发到 db.internal.example:5432",
+      "status": "proposed",
+      "evidence": "演示关系，未实测"
+    },
+    {
+      "source": "task",
+      "target": "network",
+      "label": "运行期 HTTP(S) 出网",
+      "status": "proposed",
+      "evidence": "演示关系，未实测"
+    }
+  ],
+  "notes": [
+    "全部节点和关系均为方案示例；真实报告应使用本次调查结果与生成时间。",
+    "Prep 构建网络和 task 运行网络不可互相推断；TCP 成功也不等于认证或业务成功。",
+    "未读取真实配置，未启动 Docker、创建 task、访问内部服务或执行迁移。"
+  ],
+  "language": "zh-CN",
+  "display": {
+    "theme": "light",
+    "density": "comfortable"
+  },
+  "configuration": [
+    {
+      "key": "profile",
+      "value": "web-go",
+      "source": ".sbx/sandbox.toml · 方案",
+      "status": "proposed",
+      "evidence": "演示值；未执行 config show，不能视为实际生效配置。"
+    },
+    {
+      "key": "default_agent",
+      "value": "codex",
+      "source": ".sbx/sandbox.toml · 方案",
+      "status": "proposed",
+      "evidence": "演示值；未执行 config show，不能视为实际生效配置。"
+    },
+    {
+      "key": "resources.cpus",
+      "value": 2,
+      "source": ".sbx/sandbox.toml · 方案",
+      "status": "proposed",
+      "evidence": "演示值；未执行 config show，不能视为实际生效配置。"
+    },
+    {
+      "key": "resources.memory",
+      "value": "3g",
+      "source": ".sbx/sandbox.toml · 方案",
+      "status": "proposed",
+      "evidence": "演示值；未执行 config show，不能视为实际生效配置。"
+    },
+    {
+      "key": "prep.file",
+      "value": ".sbx/prep.Dockerfile",
+      "source": ".sbx/sandbox.toml · 方案",
+      "status": "proposed",
+      "evidence": "演示值；未执行 config show，不能视为实际生效配置。"
+    },
+    {
+      "key": "prep.watch",
+      "value": "[\"go.mod\", \"go.sum\"]",
+      "source": ".sbx/sandbox.toml · 方案",
+      "status": "proposed",
+      "evidence": "演示值；未执行 config show，不能视为实际生效配置。"
+    },
+    {
+      "key": "prep.secrets",
+      "value": "[\"netrc\"]",
+      "source": ".sbx/sandbox.toml · 方案",
+      "status": "proposed",
+      "evidence": "演示值；未执行 config show，不能视为实际生效配置。"
+    },
+    {
+      "key": "services[name=redis].image",
+      "value": "redis:7",
+      "source": ".sbx/sandbox.toml · 方案",
+      "status": "proposed",
+      "evidence": "演示值；未执行 config show，不能视为实际生效配置。"
+    },
+    {
+      "key": "services[name=redis].port",
+      "value": 6379,
+      "source": ".sbx/sandbox.toml · 方案",
+      "status": "proposed",
+      "evidence": "演示值；未执行 config show，不能视为实际生效配置。"
+    },
+    {
+      "key": "forward[name=dev-db].to",
+      "value": "db.internal.example:5432",
+      "source": "本机工作区配置 · 方案",
+      "status": "proposed",
+      "evidence": "演示值；未执行 config show，不能视为实际生效配置。"
+    },
+    {
+      "key": "network.mode",
+      "value": "allowlist",
+      "source": ".sbx/sandbox.toml · 方案",
+      "status": "proposed",
+      "evidence": "演示值；未执行 config show，不能视为实际生效配置。"
+    }
+  ]
+}

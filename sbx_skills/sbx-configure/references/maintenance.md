@@ -4,7 +4,7 @@
 
 本目录是完整 skill 包，需要 Python 3.9+。将整个 sbx-configure 文件夹交给支持 SKILL.md 的 agent 加载，保持 references、scripts、manifest 的相对位置。
 
-Codex 的本次会话可直接指向文件，例如：“使用 `/绝对路径/sbx_skills/sbx-configure/SKILL.md` 为当前项目配置 sbx。”持久安装由用户将整个目录安装到其 skills 目录，后续用 `$sbx-configure` 调用；不要只复制 SKILL.md。不同 agent 的安装与重新加载方式按其实际能力核对，不在本 skill 内自动修改全局安装。
+Codex 的本次会话可直接指向文件，例如：“使用 `/绝对路径/sbx_skills/sbx-configure/SKILL.md` 为当前项目配置 sbx。”持久安装由用户将整个目录安装到其 skills 目录，后续用 `$sbx-configure` 调用；不要只复制 SKILL.md。包含 HTML 模板和示例数据的 assets 目录也属于完整性检查范围。不同 agent 的安装与重新加载方式按其实际能力核对，不在本 skill 内自动修改全局安装。
 
 本机 `sbx` 不在匹配列表时，配置 agent 报告不匹配并继续调查，不运行下面的维护命令。知识清单并非数字签名，不是对不可信下载的真实性保证；从可信发布渠道取得整个包。
 

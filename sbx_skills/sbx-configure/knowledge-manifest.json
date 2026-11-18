@@ -1,10 +1,10 @@
 {
   "format": "sbx.skill-knowledge/v1",
-  "knowledge_revision": "2",
-  "source_commit": "c7ef1e79c4adac09fc462b3ad06a0d3abed6cda4",
-  "reviewed_at": "2026-11-13T09:39:24.498279+00:00",
-  "source_dirty": true,
-  "application_version": "memory-m4-m5-dev",
+  "knowledge_revision": "6",
+  "source_commit": "14e5391b5135e65cc8e796b1cde1031aa2d11fc0",
+  "reviewed_at": "2026-11-18T08:03:42.376751+00:00",
+  "source_dirty": false,
+  "application_version": "m4-m5-acceptance-14e5391",
   "schema_version": "sbx.execution/v2",
   "help_sha256": {
     "root": "beeb5e13ce1698a031399475b87c75286a78e9c65441bd35ff76a409fb286ae6",
@@ -23,7 +23,7 @@
   },
   "builds": [
     {
-      "binary_sha256": "6106fe7496efc8c4c340cde938a36e4a9893f13bdc3b1c7b3ede57d9fb0411a6",
+      "binary_sha256": "5cbfeecc72452b6fec4caaa88b87721aa23c07d0e9c356c4491d09f7355ce3e3",
       "execution_checked": true,
       "execution_scope": [
         "version",
@@ -32,13 +32,19 @@
     }
   ],
   "files_sha256": {
-    "SKILL.md": "13bb23f5c86e5075f27c8617c3fc1b2212c54af57145dafa5b21bb79b7a1b404",
-    "agents/openai.yaml": "1de24ac3382fb12611b6882981aa8802e41b8c5fdb612e51bf1ec51d4ce835f8",
-    "references/acceptance.md": "bcf89d31f5837d0e99cfb078dbc23069479ef1080f0ebacfba331d8f46e41166",
-    "references/config-rules.md": "b1e784e208bc32d6d87b1df3e068a440ac6f9104110962d495ebd819f8991b4a",
-    "references/maintenance.md": "ff2ed184bbb908788e0b0a02a332461b6d5e7ccbc2786fc78e5eb419e4624fad",
+    "SKILL.md": "5aaa798605105b43b81a670571519aa23b8421687a23669053eaec2328a50bfc",
+    "agents/openai.yaml": "064a5ca2788a6b9cbd0361e85b3c6b838e0ebca3fc33680fb1f658d0f2525aa4",
+    "assets/topology-example.json": "85118899c17da18e9e59db541a4bb4d6645cdebbe74dd3cbc4a1385cb6204be2",
+    "assets/topology-locales.json": "6bdf00dd07b6f160dd02f722ad76343c5a28f2cc899897fc107f7581abb3f21a",
+    "assets/topology.html": "40e0e05028d5551de4a59755038e535b5ed20a52672f192ecf632ab7971f36b3",
+    "references/acceptance.md": "3f5d47809654d068f31faaf5a121c80478d5a7dd418ac36215c73c2f4d856372",
+    "references/config-rules.md": "a8bf4acd2f45f86101a3eb1b1810446caf644cef72c2d2bfb68d1ae45b840294",
+    "references/custom-image.md": "da0945dc7075340dfbc77cc5ffa1c6a0694f024c1b89338793fb83d3c72d22aa",
+    "references/maintenance.md": "4d13e9624e61203c658d464aaec273b2c674843b3dda3f4d306ffdc9b04f5866",
     "references/prep-network.md": "3eb1432e3b37d72a6c2e74024e2712a085d95466846fd0fb552f2cf7648a2dd1",
-    "scripts/knowledge.py": "5624cf153deb6f5a50a177ac334a4b6805f2354ff1efac3b96c4cbd4a8907145"
+    "references/topology.md": "c4abbecf5685cedac0d542837da3c46ae56cca62761d6bb9f9e8e17ead3f3d29",
+    "scripts/knowledge.py": "3c23d4b5b011d7b3158d14a4a92c28e1372dbbc6545d7b441b4c81702545be84",
+    "scripts/render-topology.py": "408cd9edd61f7c59163fbae86f05537711e278501a7c44160cd27b220004af93"
   },
   "source_files_sha256": {
     "core/assets/agent-layer/Dockerfile": "cf28bd4ba3f5d984c54609b315fabe9f27f12013fc966780f9eb1115851a7a6a",
