@@ -4,6 +4,7 @@ package projectmemory
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -543,34 +544,10 @@ type Snapshot struct {
 
 func snapshotDigest(v Snapshot) string { v.Digest = ""; return Digest(v) }
 func (s Store) Select(id string, q Selection) (Snapshot, error) {
-	return s.selectRanked(id, q)
+	return s.Queries().Search(context.Background(), id, q)
 }
 func (s Store) Check(v Snapshot) error {
-	if v.Schema != "sbx.memory-context/v1" || v.Digest != snapshotDigest(v) || len(v.Context) > MaxBytes || len(v.Entries) > MaxEntries {
-		return errors.New("invalid memory snapshot")
-	}
-	p, e := s.Load(v.Project)
-	if e != nil {
-		return e
-	}
-	for _, entry := range v.Entries {
-		if entry.Digest != entryDigest(entry) {
-			return errors.New("invalid snapshot entry digest")
-		}
-		if s.EvidenceStatus(v.Project, entry) == "unavailable" {
-			return errors.New("snapshot evidence unavailable; review sources before resuming")
-		}
-		found := false
-		for _, now := range p.Latest() {
-			if now.ID == entry.ID && now.Status == "approved" && !expired(now, time.Now()) && now.Digest == entry.Digest {
-				found = true
-			}
-		}
-		if !found {
-			return errors.New("snapshot contains revoked or superseded memory; start a fresh task/conversation")
-		}
-	}
-	return nil
+	return s.Queries().ValidateSnapshot(context.Background(), v)
 }
 func SaveSnapshot(name string, v Snapshot) error {
 	if v.Digest != snapshotDigest(v) {

@@ -26,7 +26,7 @@ func (a *App) addMemoryRetrievalCommands(root *cobra.Command) {
 		}
 		selection := q
 		selection.Facts = facts
-		v, e := s.Select(project, selection)
+		v, e := s.Queries().Search(cmd.Context(), project, selection)
 		if e != nil {
 			return e
 		}

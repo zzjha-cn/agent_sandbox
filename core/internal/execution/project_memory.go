@@ -1,6 +1,7 @@
 package execution
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,6 +25,10 @@ func EffectiveMemoryMode(req Request) string {
 	return "native"
 }
 func validateMemory(req Request) error {
+	return validateMemoryContext(context.Background(), req)
+}
+
+func validateMemoryContext(ctx context.Context, req Request) error {
 	mode := EffectiveMemoryMode(req)
 	if req.Config.Memory.Extract.Auto && req.OrganizationPolicyDigest != "" {
 		return errors.New("automatic memory extraction requires personal review; organization mutation is not yet supported")
@@ -47,11 +52,15 @@ func validateMemory(req Request) error {
 			return errors.New("memory.paths must contain relative paths")
 		}
 	}
-	_, e = selectMemory(req, store, id)
+	_, e = selectMemoryContext(ctx, req, store, id)
 	return e
 }
 
 func selectMemory(req Request, store projectmemory.Store, id string) (projectmemory.Snapshot, error) {
+	return selectMemoryContext(context.Background(), req, store, id)
+}
+
+func selectMemoryContext(ctx context.Context, req Request, store projectmemory.Store, id string) (projectmemory.Snapshot, error) {
 	q, err := memorySelection(req)
 	if err != nil {
 		return projectmemory.Snapshot{}, err
@@ -62,11 +71,11 @@ func selectMemory(req Request, store projectmemory.Store, id string) (projectmem
 		}
 		v, e := store.Pinned(id, req.Config.Memory.Snapshot)
 		if e == nil {
-			e = store.CheckFacts(v, q.Facts)
+			e = store.Queries().ValidateSnapshotFacts(ctx, v, q.Facts)
 		}
 		return v, e
 	}
-	return store.Select(id, q)
+	return store.Queries().Search(ctx, id, q)
 }
 
 func memorySelection(req Request) (projectmemory.Selection, error) {
@@ -103,10 +112,14 @@ func ReadMemorySession(home, key string) (MemorySession, error) {
 // Per-session context remains frozen even when a new CLI call records a new
 // attempt. A fresh conversation selects a new snapshot; old snapshots survive done.
 func prepareMemory(req Request, active bool) (MemorySession, error) {
+	return prepareMemoryContext(context.Background(), req, active)
+}
+
+func prepareMemoryContext(ctx context.Context, req Request, active bool) (MemorySession, error) {
 	if active && req.Fresh {
 		return MemorySession{}, errors.New("stop the active task before starting a fresh conversation")
 	}
-	if e := validateMemory(req); e != nil {
+	if e := validateMemoryContext(ctx, req); e != nil {
 		return MemorySession{}, e
 	}
 	mode := EffectiveMemoryMode(req)
@@ -147,11 +160,11 @@ func prepareMemory(req Request, active bool) (MemorySession, error) {
 			if v.Snapshot.Project != id || v.Pinned == "" && projectmemory.Digest(v.Snapshot.Selection) != projectmemory.Digest(q) {
 				return v, errors.New("memory project/selectors changed; use --fresh or a new task")
 			}
-			if e = store.CheckFacts(*v.Snapshot, q.Facts); e != nil {
+			if e = store.Queries().ValidateSnapshotFacts(ctx, *v.Snapshot, q.Facts); e != nil {
 				return v, e
 			}
 		} else {
-			snap, e := selectMemory(req, store, id)
+			snap, e := selectMemoryContext(ctx, req, store, id)
 			if e != nil {
 				return v, e
 			}

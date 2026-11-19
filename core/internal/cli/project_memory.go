@@ -89,7 +89,7 @@ func (a *App) addProjectMemoryCommands(root *cobra.Command) {
 		if e != nil {
 			return e
 		}
-		v, e := s.Select(snapProject, projectmemory.Selection{Paths: snapPaths, Tags: snapTags, Query: snapQuery, Facts: facts, Limit: snapLimit, Bytes: snapBytes})
+		v, e := s.Queries().Search(cmd.Context(), snapProject, projectmemory.Selection{Paths: snapPaths, Tags: snapTags, Query: snapQuery, Facts: facts, Limit: snapLimit, Bytes: snapBytes})
 		if e != nil {
 			return e
 		}

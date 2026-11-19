@@ -44,7 +44,7 @@ func (s AgentStarter) Start(ctx context.Context, t task.Task, o Request) error {
 			return fmt.Errorf("Codex does not expose the memories feature; upgrade the task image before using sbx memory modes")
 		}
 	}
-	memory, err := prepareMemory(o, hasSession && !taskAgentExited(t))
+	memory, err := prepareMemoryContext(ctx, o, hasSession && !taskAgentExited(t))
 	if err != nil {
 		return fmt.Errorf("project memory: %w", err)
 	}
