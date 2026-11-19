@@ -1079,6 +1079,7 @@ protect = true                # 把 .git/hooks 和 .git/config 只读挂载。
 
 [agents.codex]
 version = "latest"            # 固定版本会改变镜像 hash；新建容器使用新镜像
+disabled = false              # true 时新镜像不安装此 Agent；默认 Agent 必须保持启用
 # api_key_env = "CODEX_API_KEY" # Codex API key 当前只支持 headless
 
 # 仅个人全局 config.toml 可以写；复制项目模板时请删掉本表
@@ -1088,11 +1089,14 @@ boundary = "dedicated-daemon" # shared-daemon 会被拒绝
 
 [agents.claude]
 version      = "latest"       # 写死版本会让 sbx upgrade 拒绝执行
+disabled     = false          # 只用 Codex 时设为 true，并在顶层设 default_agent = "codex"
 # api_key_env  = "ANTHROPIC_API_KEY"   # 从宿主机环境变量读，优先于订阅登录
 # api_key_file = "~/.keys/anthropic"   # 或者从文件读。两者只能二选一
 ```
 
 **生效优先级**：命令行 flag（`--agent`、`--net`、`--proxy`）> 配置文件 > 内置默认值。这些 flag 只改这一次执行，不落盘；`sbx net allow` 落盘。
+
+仅安装 Codex 时，在个人全局 `~/.sbx/config.toml` 的顶层设置 `default_agent = "codex"`，在 `[agents.claude]` 下设置 `disabled = true`。未配置 `disabled` 时仍安装两种 Agent；关闭安装会改变运行镜像 tag，复用原有 Profile 层。新建任务或 `sbx login codex --status` 会构建新镜像，已有任务保持原镜像；共享卷里的登录态、会话和记忆不会删除。`sbx login` 不带名称时使用 `default_agent`。关闭 Claude 后，`sbx upgrade` 会拒绝执行，因为该命令目前只负责升级 Claude。
 
 **改了配置什么时候生效**：`network.allow` 对运行中的 Task 可以用 `net allow` 热加载；`resources`、`deps.mask`、`git.protect`、`env`、`forward` 的 `host`、`profile`、`network.proxy` 是建容器时定的，要 `done` 后重建；`mode` 和 `upstream` 下次 `run` 时重新渲染 proxy 配置；`services` 和 `forward` 的增减在下次 `run` 时生效（已经起着的伴生容器原样留着）。
 

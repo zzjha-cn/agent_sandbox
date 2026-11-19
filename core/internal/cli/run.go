@@ -79,6 +79,9 @@ func (a *App) runCmd() *cobra.Command {
 			if cmd.Flags().Changed("agent") {
 				a.setRunAgent(agentName)
 			}
+			if a.Cfg.Agents[a.Cfg.DefaultAgent].Disabled {
+				return fmt.Errorf("agent %s is disabled", a.Cfg.DefaultAgent)
+			}
 			if cmd.Flags().Changed("memory") {
 				if memoryMode != "native" && memoryMode != "managed" && memoryMode != "off" {
 					return errors.New("--memory must be native, managed or off")

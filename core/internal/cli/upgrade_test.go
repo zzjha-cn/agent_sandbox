@@ -22,3 +22,17 @@ func TestClaudeVersion(t *testing.T) {
 		t.Fatalf("pinned config should win: %q", v)
 	}
 }
+
+func TestCodexOnlyImageInputs(t *testing.T) {
+	a := &App{Home: t.TempDir(), Cfg: config.Default()}
+	a.Cfg.DefaultAgent = "codex"
+	a.Cfg.Agents["claude"] = config.Agent{Disabled: true}
+	a.Cfg.Agents["codex"] = config.Agent{Version: "0.169.0"}
+	in, err := a.imageInputs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !in.DisableClaude || in.DisableCodex || in.CodexVersion != "0.169.0" {
+		t.Fatalf("unexpected image selection: %+v", in)
+	}
+}

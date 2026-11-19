@@ -26,6 +26,8 @@ type Inputs struct {
 	Entrypoint    []byte
 	CodexVersion  string
 	ClaudeVersion string
+	DisableClaude bool
+	DisableCodex  bool
 	UID, GID      int
 }
 
@@ -101,7 +103,8 @@ func (in Inputs) codexVersion() string {
 // Tag 是派生镜像的 tag。
 func (in Inputs) Tag() string {
 	h := hash12(in.ProfileFile, []byte(in.BaseImage), in.AgentFile, in.Entrypoint, []byte(in.ClaudeVersion), []byte(in.codexVersion()),
-		[]byte(strconv.Itoa(in.UID)), []byte(strconv.Itoa(in.GID)))
+		[]byte(strconv.Itoa(in.UID)), []byte(strconv.Itoa(in.GID)),
+		[]byte(strconv.FormatBool(in.DisableClaude)), []byte(strconv.FormatBool(in.DisableCodex)))
 	return "sbx/" + in.Profile + ":" + h
 }
 
@@ -130,6 +133,8 @@ func (b Builder) Ensure(in Inputs) (string, error) {
 		"GID":            strconv.Itoa(in.GID),
 		"CLAUDE_VERSION": in.ClaudeVersion,
 		"CODEX_VERSION":  in.codexVersion(),
+		"INSTALL_CLAUDE": strconv.FormatBool(!in.DisableClaude),
+		"INSTALL_CODEX":  strconv.FormatBool(!in.DisableCodex),
 	}
 	if err := b.build(tag, files, args); err != nil {
 		return "", err

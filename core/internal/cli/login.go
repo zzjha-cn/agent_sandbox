@@ -78,10 +78,13 @@ func (a *App) loginCmd() *cobra.Command {
 	var email, importSource string
 	cmd := &cobra.Command{
 		Use:   "login [claude|codex]",
-		Short: "Log in to an agent inside the sandbox (default claude; credentials live in sbx-home, shared by every task)",
+		Short: "Log in to an agent inside the sandbox (uses default_agent; credentials live in sbx-home, shared by every task)",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			name := ""
+			if err := a.loadConfig(); err != nil {
+				return err
+			}
+			name := a.Cfg.DefaultAgent
 			if len(args) == 1 {
 				name = args[0]
 			}
@@ -108,8 +111,8 @@ func (a *App) loginCmd() *cobra.Command {
 					return err
 				}
 			}
-			if err := a.loadConfig(); err != nil {
-				return err
+			if a.Cfg.Agents[name].Disabled {
+				return fmt.Errorf("agent %s is disabled by agents.%s.disabled", name, name)
 			}
 			tag, err := a.agentImage()
 			if err != nil {

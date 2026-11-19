@@ -6,6 +6,8 @@ ARG UID=1000
 ARG GID=1000
 ARG CLAUDE_VERSION=latest
 ARG CODEX_VERSION=latest
+ARG INSTALL_CLAUDE=true
+ARG INSTALL_CODEX=true
 
 USER root
 ENV DEBIAN_FRONTEND=noninteractive
@@ -22,7 +24,12 @@ RUN if ! command -v npm >/dev/null 2>&1; then \
       && rm -rf /var/lib/apt/lists/*; \
     fi
 
-RUN npm i -g @anthropic-ai/claude-code@${CLAUDE_VERSION} @openai/codex@${CODEX_VERSION} && npm cache clean --force
+RUN set -eu; \
+    set --; \
+    if [ "$INSTALL_CLAUDE" = true ]; then set -- "$@" "@anthropic-ai/claude-code@${CLAUDE_VERSION}"; fi; \
+    if [ "$INSTALL_CODEX" = true ]; then set -- "$@" "@openai/codex@${CODEX_VERSION}"; fi; \
+    if [ "$#" -gt 0 ]; then npm i -g "$@"; fi; \
+    npm cache clean --force
 
 # agent 用户：UID 和宿主机一致；已有同 UID 用户（如 node 镜像的 node）则改名复用，
 # 已有同 GID 的组直接沿用。

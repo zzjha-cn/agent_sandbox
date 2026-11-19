@@ -8,6 +8,36 @@ import (
 	"testing"
 )
 
+func TestAgentDisabledLayerMerge(t *testing.T) {
+	d := t.TempDir()
+	global := write(t, d, "global.toml", "default_agent = \"codex\"\n[agents.claude]\ndisabled = true\nversion = \"2.0.0\"\n", false)
+	ld, err := LoadLayers([]Layer{global})
+	if err != nil || len(ld.Warnings) != 0 {
+		t.Fatalf("load: %v, warnings: %v", err, ld.Warnings)
+	}
+	if !ld.Config.Agents["claude"].Disabled || ld.Config.Agents["codex"].Disabled {
+		t.Fatal("Claude should be disabled and Codex enabled")
+	}
+	found := false
+	for _, row := range ld.Show() {
+		if row[0] == "agents.claude.disabled" && row[1] == "true" && row[2] == "global.toml" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("missing disabled setting and source in config output")
+	}
+	ws := write(t, d, "ws.toml", "[agents.claude]\ndisabled = false\n", false)
+	ld, err = LoadLayers([]Layer{global, ws})
+	if err != nil || ld.Config.Agents["claude"].Disabled || ld.Config.ClaudeVersion() != "2.0.0" {
+		t.Fatalf("explicit false must override true without losing version: %+v, %v", ld.Config.Agents, err)
+	}
+	bad := write(t, d, "bad.toml", "[agents.claude]\ndisabled = true\n", false)
+	if _, err = LoadLayers([]Layer{bad}); err == nil || !strings.Contains(err.Error(), "agent claude is disabled") {
+		t.Fatalf("disabled default agent should fail: %v", err)
+	}
+}
+
 // write 建一个层文件，返回 Layer。
 func write(t *testing.T, dir, name, body string, project bool) Layer {
 	t.Helper()

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"sandx/internal/config"
@@ -95,6 +96,20 @@ func TestAdmissionRejectsProviderChangeBeforePreparingResources(t *testing.T) {
 				t.Fatal("provider mismatch reached resource admission")
 			}
 		})
+	}
+}
+
+func TestAdmissionRejectsDisabledAgentBeforeResources(t *testing.T) {
+	req := testRequest("disabled")
+	req.Task.Home = t.TempDir()
+	req.Config = config.Default()
+	req.Config.Agents["claude"] = config.Agent{Disabled: true}
+	d := &RuntimeDriver{CheckConcurrency: func(task.Task) error {
+		t.Fatal("disabled agent reached resource admission")
+		return nil
+	}}
+	if err := d.Admit(context.Background(), req, false, false); err == nil || !strings.Contains(err.Error(), "agent claude is disabled") {
+		t.Fatalf("expected disabled-agent rejection, got %v", err)
 	}
 }
 

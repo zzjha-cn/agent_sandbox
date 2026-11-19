@@ -297,7 +297,11 @@ func mergeLayer(dst *Config, src Config, md toml.MetaData, layer string, srcs ma
 			if !md.IsDefined("agents", name, df[i].Key) {
 				continue
 			}
-			*df[i].Str = *sf[i].Str
+			if df[i].Bool != nil {
+				*df[i].Bool = *sf[i].Bool
+			} else {
+				*df[i].Str = *sf[i].Str
+			}
 			mark(srcs, "agents."+name+"."+df[i].Key, layer, false)
 			touched = true
 		}
@@ -348,6 +352,7 @@ func indexFunc(n int, eq func(int) bool) int {
 func agentFields(a *Agent) []binding {
 	return []binding{
 		{Key: "version", Str: &a.Version},
+		{Key: "disabled", Bool: &a.Disabled},
 		{Key: "api_key_env", Str: &a.APIKeyEnv},
 		{Key: "api_key_file", Str: &a.APIKeyFile},
 	}
@@ -417,11 +422,11 @@ func (ld Loaded) Show() [][3]string {
 		ag := ld.Config.Agents[n]
 		for _, f := range agentFields(&ag) {
 			// 没配过的 api_key_* 不占一行，免得把表撑开
-			if *f.Str == "" && f.Key != "version" {
+			if f.Str != nil && *f.Str == "" && f.Key != "version" {
 				continue
 			}
 			key := "agents." + n + "." + f.Key
-			rows = append(rows, [3]string{key, strconv.Quote(*f.Str), ld.Sources[key].String()})
+			rows = append(rows, [3]string{key, f.render(), ld.Sources[key].String()})
 		}
 	}
 	return rows

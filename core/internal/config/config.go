@@ -83,6 +83,8 @@ func (r Resources) MemoryBytes() int64 {
 
 type Agent struct {
 	Version string `toml:"version"`
+	// Disabled omits this agent from newly built runtime images.
+	Disabled bool `toml:"disabled"`
 	// APIKeyEnv / APIKeyFile 二选一，配了就优先于订阅登录（design §7.1）。
 	// 这两个键只能写在全局层或工作区层——项目层的红线会拦住它们（M2-2）。
 	APIKeyEnv  string `toml:"api_key_env"`
@@ -256,6 +258,9 @@ func (c Config) Validate() error {
 	}
 	if c.DefaultAgent != "claude" && c.DefaultAgent != "codex" {
 		return fieldf("default_agent", "unsupported agent %q (supported: claude, codex)", c.DefaultAgent)
+	}
+	if c.Agents[c.DefaultAgent].Disabled {
+		return fieldf("default_agent", "agent %s is disabled; select an installed agent", c.DefaultAgent)
 	}
 	if !memRe.MatchString(c.Resources.Memory) {
 		return fieldf("resources.memory", "resources.memory is invalid: %q (examples: 3g, 512m)", c.Resources.Memory)

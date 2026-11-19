@@ -40,7 +40,11 @@ func (a *App) claudeVersion() string {
 // .sbx/Dockerfile 在信任确认的覆盖范围内，所以"项目自带 Dockerfile"这件事
 // 天然要先过 sbx trust。
 func (a *App) imageInputs() (in image.Inputs, err error) {
-	defer func() { in.CodexVersion = a.Cfg.CodexVersion() }()
+	defer func() {
+		in.CodexVersion = a.Cfg.CodexVersion()
+		in.DisableClaude = a.Cfg.Agents["claude"].Disabled
+		in.DisableCodex = a.Cfg.Agents["codex"].Disabled
+	}()
 	uid, gid := os.Getuid(), os.Getgid()
 	if ref := strings.TrimSpace(a.Cfg.Image); ref != "" {
 		return image.ImageInputs(ref, a.claudeVersion(), uid, gid), nil
@@ -93,6 +97,9 @@ func (a *App) upgradeCmd() *cobra.Command {
 			}
 			if v := a.Cfg.ClaudeVersion(); v != "latest" {
 				return fmt.Errorf("the config pins agents.claude.version = %q; change the config to upgrade", v)
+			}
+			if a.Cfg.Agents["claude"].Disabled {
+				return fmt.Errorf("Claude is disabled by agents.claude.disabled; no Claude upgrade is needed")
 			}
 			in, err := a.imageInputs()
 			if err != nil {

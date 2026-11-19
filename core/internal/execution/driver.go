@@ -53,6 +53,9 @@ func (d *RuntimeDriver) Admit(ctx context.Context, req Request, exists, running 
 	if _, err := agent.ResolveProvider(req.Config.DefaultAgent); err != nil {
 		return err
 	}
+	if req.Config.Agents[req.Config.DefaultAgent].Disabled {
+		return fmt.Errorf("agent %s is disabled", req.Config.DefaultAgent)
+	}
 	// Provider ownership belongs to the logical Task, even if its container was lost.
 	meta, ok, err := t.ReadMeta()
 	if err != nil {
