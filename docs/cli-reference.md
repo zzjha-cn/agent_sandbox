@@ -26,7 +26,7 @@ Available Commands:
   forward     Single-target TCP holes from a task to one address you name
   help        Help about any command
   isolation   Inspect or adopt this user's dedicated Docker daemon
-  login       Log in to an agent inside the sandbox (default claude; credentials live in sbx-home, shared by every task)
+  login       Log in to an agent inside the sandbox (uses default_agent; credentials live in sbx-home, shared by every task)
   logs        Show a headless run's output (sbx run -p); -f follows it
   ls          List the tasks in this workspace (--all for every workspace)
   memory      Manage reviewed project memory and Claude host/sandbox synchronization
@@ -529,7 +529,7 @@ Global Flags:
 ## sbx login
 
 ```text
-Log in to an agent inside the sandbox (default claude; credentials live in sbx-home, shared by every task)
+Log in to an agent inside the sandbox (uses default_agent; credentials live in sbx-home, shared by every task)
 
 Usage:
   sbx login [claude|codex] [flags]
@@ -1173,6 +1173,7 @@ Usage:
 Flags:
       --attempt string   specific recorded attempt ID (default: current session)
   -h, --help             help for status
+      --recalls          read current session runtime recall records without Docker (JSON)
       --scope string     task namespace: git or general (default "git")
 
 Global Flags:

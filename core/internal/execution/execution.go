@@ -393,7 +393,7 @@ func (s *Service) run(ctx context.Context, req Request, result Result) (Result, 
 			return result, pipelineError(AdmissionRejected, PreparePhase, err)
 		}
 	}
-	if req.Pipeline != nil && len(req.Pipeline.Spec.Tools) > 0 {
+	if req.Config.Memory.Recall || req.Pipeline != nil && len(req.Pipeline.Spec.Tools) > 0 {
 		closeTools, err := s.startTools(ctx, &req, &result)
 		if err != nil {
 			return result, pipelineError(AdmissionRejected, PreparePhase, err)

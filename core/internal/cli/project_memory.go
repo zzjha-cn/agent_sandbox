@@ -209,6 +209,7 @@ func (a *App) addProjectMemoryCommands(root *cobra.Command) {
 		root.AddCommand(c)
 	}
 	var scope, attempt string
+	var recalls bool
 	status := &cobra.Command{Use: "status <task>", Short: "Read the recorded memory mode and snapshot without Docker (JSON)", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if _, e := a.memoryStore(false); e != nil {
 			return e
@@ -239,7 +240,20 @@ func (a *App) addProjectMemoryCommands(root *cobra.Command) {
 			if e != nil {
 				return e
 			}
+			if recalls {
+				if v.RecallID == "" {
+					return errors.New("session has no runtime recall ledger")
+				}
+				history, err := execution.ReadMemoryRecalls(a.Home, t.ID(), v.RecallID)
+				if err != nil {
+					return err
+				}
+				return json.NewEncoder(a.Out).Encode(history)
+			}
 			return json.NewEncoder(a.Out).Encode(v)
+		}
+		if recalls {
+			return errors.New("--recalls requires the current session; omit --attempt")
 		}
 		if !projectmemory.ValidID(attempt) {
 			return errors.New("invalid attempt ID")
@@ -251,6 +265,7 @@ func (a *App) addProjectMemoryCommands(root *cobra.Command) {
 		_, e = fmt.Fprintln(a.Out, string(b))
 		return e
 	}}
+	status.Flags().BoolVar(&recalls, "recalls", false, "read current session runtime recall records without Docker (JSON)")
 	status.Flags().StringVar(&scope, "scope", "git", "task namespace: git or general")
 	status.Flags().StringVar(&attempt, "attempt", "", "specific recorded attempt ID (default: current session)")
 	root.AddCommand(status)

@@ -84,6 +84,7 @@ func memorySelection(req Request) (projectmemory.Selection, error) {
 }
 
 type MemorySession struct {
+	RecallID string                  `json:"recall_id,omitempty"`
 	Pinned   string                  `json:"pinned,omitempty"`
 	Schema   string                  `json:"schema_version"`
 	TaskKey  string                  `json:"task_key"`
@@ -139,13 +140,16 @@ func prepareMemoryContext(ctx context.Context, req Request, active bool) (Memory
 	store := projectmemory.Store{Home: t.Home}
 	if resume {
 		if known {
-			if prior.Mode != mode || prior.Provider != v.Provider || prior.Pinned != v.Pinned {
+			if prior.Mode != mode || prior.Provider != v.Provider || prior.Pinned != v.Pinned || (prior.RecallID != "") != req.Config.Memory.Recall {
 				return v, errors.New("memory mode/provider changed; use --fresh or a new task")
 			}
 			v = prior
 		} else if mode != "native" {
 			return v, errors.New("existing conversation has untracked memory; use --fresh or a new task")
 		}
+	}
+	if !resume && req.Config.Memory.Recall {
+		v.RecallID = projectmemory.ID()
 	}
 	if mode == "managed" {
 		id, e := store.Resolve(req.Config.Memory.Project, t.WS.Root)
@@ -172,6 +176,27 @@ func prepareMemoryContext(ctx context.Context, req Request, active bool) (Memory
 				return v, e
 			}
 			v.Snapshot = &snap
+		}
+	}
+	if v.RecallID != "" && !resume {
+		ledger, err := memoryLedger(req, v)
+		if err != nil {
+			return v, err
+		}
+		if err = ledger.Initialize(ctx); err != nil {
+			return v, err
+		}
+	}
+	if resume && v.RecallID != "" {
+		if _, err := projectmemory.ReadFile(filepath.Join(dir, "recalls", v.RecallID+".json"), 4<<20); err != nil {
+			return v, fmt.Errorf("memory recall history missing or unreadable: %w", err)
+		}
+		recall, err := memoryRecall(req, v)
+		if err != nil {
+			return v, err
+		}
+		if err = recall.ValidateHistory(ctx); err != nil {
+			return v, fmt.Errorf("memory recalls: %w", err)
 		}
 	}
 	if e = os.MkdirAll(dir, 0700); e != nil {

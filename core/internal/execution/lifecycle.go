@@ -325,6 +325,17 @@ func validateRequest(req Request) error {
 	if req.Mode != "" && req.Mode != Interactive && req.Mode != Headless {
 		return &ExecutionError{Kind: AdmissionRejected, Stage: "task_spec", Cause: errors.New("unsupported execution mode")}
 	}
+	if req.Config.Memory.Recall {
+		if EffectiveMemoryMode(req) != "managed" {
+			return errors.New("runtime recall requires managed memory")
+		}
+		if req.OrganizationPolicyDigest != "" {
+			return errors.New("organization runtime recall requires an explicit memory grant policy")
+		}
+		if err := validateToolProvider(req); err != nil {
+			return err
+		}
+	}
 	if req.Pipeline != nil {
 		if len(req.Pipeline.Spec.Tools) > 0 {
 			if err := validateToolProvider(req); err != nil {

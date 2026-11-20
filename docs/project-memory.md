@@ -440,4 +440,44 @@ kind 可选 retrieved、injected、helpful、validated、counterexample。全部
 
 30 个合成案例分为 20 个开发案例和 10 个验收案例。相同过滤和条数预算下，ID 顺序基线与词法选择分别得到：开发集准确匹配 1/20 与 20/20；验收集 1/10 与 9/10。验收集有答案的 9 例中 Recall@1 为 1/9 与 8/9；词法选择仍遗漏一例同义表达。这是特意覆盖噪声和边界的夹具，不代表真实项目准确率。
 
-本轮无运行中召回工具、规则/skill 自动提炼或语义向量服务；M6–M8 保留待实施。受控测试、机器 schema 及真实 CLI 验收结果见 [M4–M5 验收记录](project-memory-m4-m5-acceptance.md)。
+M4–M5 的范围和受控结果见 [设计与实施清单](project-memory-design.md)。M6 运行中召回见下节；M7 规则/skill 提炼与 M8 语义向量服务仍待实施。
+
+## 13. 运行中的只读召回（M6）
+
+启动快照用于初始背景。执行中才发现的症状可以通过 MCP `memory_search` 补查；两者分别保存，召回不改写启动快照。仅可信全局/工作区配置可以启用：
+
+```toml
+[memory]
+mode = "managed"
+project = "my-project"
+recall = true
+
+[network]
+proxy = "dedicated"
+
+[agents.codex]
+version = "0.169.0"
+```
+
+然后使用同步 headless `sbx run fix-tests -p '检查失败原因，必要时查询项目记忆'`。Git 与通用 TaskSpec 执行共用入口；不支持 interactive、detach 或未固定版本。Codex 需 0.164.0 及以上 0.x；Claude 需 2.1.x 及以上 2.x。组织运行当前拒绝启用 recall，直到存在专门的动态记忆授权策略；不要用个人配置绕过组织限制。
+
+agent 的输入只有 `key`（1–80 个安全 ID 字符）和 `query`（沿用本地查询校验）。工具列表名为 `memory_search`，MCP 客户端可能显示为 `mcp__sbx__memory_search`。项目、路径/标签范围、事实、watch 文件和预算由宿主固定。相同 key + query 重试复用原冻结材料；key 改 query 被拒绝。工具结果是不可信参考材料，不是权限、指令或已证明的根因。
+
+每个 provider 会话跨执行 attempt 共用预算：最多 16 次新调用、每次 16 KiB（按结构化正文与文本回退的序列化字节合计，另计 512 字节封套；为控制转义膨胀，检索正文预算为 3840 字节）、累计 128 KiB，单次 5 秒、累计 60 秒本地检索时间。进行中的调用预占全部单次预算，失败/崩溃不会免费重试；空结果也计调用。时间和字节用于限制本地检索成本，不声称计量 provider token 费用。`--fresh` 创建独立会话及新账本；简单任务不会自动触发查询。
+
+业务状态为 `ok`、`empty`、`budget_exhausted`、`denied`、`revoked`、`timeout`、`retrieval_failed`、`interrupted`。参数错误、账本损坏或持久化失败作为工具错误返回且不带记忆正文。空结果或预算耗尽应继续现有任务或说明信息不足，不能循环补查。
+
+只读检查，无需 Docker：
+
+```sh
+sbx memory status fix-tests
+sbx memory status fix-tests --recalls
+sbx memory status task-id --scope general --recalls
+sbx schema memory-recalls
+```
+
+账本位于 `$SBX_HOME/task-memory/<task-key-digest>/recalls/<recall-id>.json`，不挂载给 agent。每条记录绑定原 attempt、查询、冻结快照及其精确条目版本/摘要、预算、返回状态和记录摘要。目录由宿主控制，账本还绑定 task、会话、项目和初始范围；`done` 保留这些领域历史。需要按组织/本机数据保留政策处理，当前不自动清除。
+
+顺序为：原子持久化 `reserved` → 查询并复核 → 原子持久化完整 `prepared_delivery_unknown` → 再次复核 → 返回。文件替换和父目录 fsync 完成之前不交付正文。`reserved` 崩溃后重试返回 interrupted，保留预占预算；prepared 后崩溃重试复用已登记材料，绝不重新查询替换。`delivery_unknown` 明确表示网络写入不能证明模型读到材料，不伪造 delivered。新会话生成空账本；恢复时账本缺失、损坏或绑定变化都阻止恢复。
+
+每次查询、返回及重试都重新检查项目授权、批准状态、有效期、来源和当前可信事实。恢复检查本会话全部召回快照，即使该条目不在启动快照中，被撤销也会阻止恢复，要求 `--fresh`。已经进入模型上下文的内容无法撤回；没有后台强制清除正在运行的 provider 上下文。真实/受控验收边界见 [M6 验收记录](project-memory-m6-acceptance.md)。

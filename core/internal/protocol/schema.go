@@ -14,7 +14,7 @@ import (
 type JSONSchema map[string]any
 
 func SchemaNames() []string {
-	return []string{"task", "event", "result", "task-status", "execution-status", "version", "admission", "retention", "team-event", "task-list", "task-maintenance", "memory-input", "memory-entry", "memory-project", "memory-context", "memory-session", "task-handoff", "memory-extraction", "memory-summary", "memory-processing", "memory-bundle", "memory-maintenance", "memory-feedback"}
+	return []string{"task", "event", "result", "task-status", "execution-status", "version", "admission", "retention", "team-event", "task-list", "task-maintenance", "memory-input", "memory-entry", "memory-project", "memory-context", "memory-session", "task-handoff", "memory-extraction", "memory-summary", "memory-processing", "memory-bundle", "memory-maintenance", "memory-feedback", "memory-recalls"}
 }
 
 // Schema derives wire shapes from the actual CLI types. Input objects are
@@ -22,6 +22,8 @@ func SchemaNames() []string {
 func Schema(name string) (JSONSchema, error) {
 	var value any
 	switch name {
+	case "memory-recalls":
+		value = projectmemory.RecallHistory{}
 	case "memory-feedback":
 		value = projectmemory.Feedback{}
 	case "memory-bundle":
@@ -110,6 +112,9 @@ func Schema(name string) (JSONSchema, error) {
 		s["$id"] = "urn:sbx:schema:memory-extraction:v1"
 		prop(s, "schema_version")["const"] = taskmemory.JobSchema
 		prop(s, "state")["enum"] = []string{"pending", "running", "succeeded", "failed", "interrupted"}
+	case "memory-recalls":
+		s["$id"] = "urn:sbx:schema:memory-recalls:v1"
+		prop(s, "schema_version")["const"] = "sbx.memory-recalls/v1"
 	case "memory-summary":
 		s["$id"] = "urn:sbx:schema:memory-summary:v1"
 	case "memory-input", "memory-entry", "memory-project", "memory-context", "memory-session":

@@ -200,6 +200,7 @@ func bindings(c *Config) []binding {
 		{Key: "memory.extract.timeout_seconds", Int: &c.Memory.Extract.TimeoutSeconds},
 		{Key: "memory.extract.max_output_tokens", Int: &c.Memory.Extract.MaxOutputTokens},
 		{Key: "memory.extract.max_calls", Int: &c.Memory.Extract.MaxCalls},
+		{Key: "memory.recall", Bool: &c.Memory.Recall},
 		{Key: "memory.mode", Str: &c.Memory.Mode},
 		{Key: "memory.project", Str: &c.Memory.Project},
 		{Key: "memory.snapshot", Str: &c.Memory.Snapshot},

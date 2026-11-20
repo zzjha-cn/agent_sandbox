@@ -102,6 +102,7 @@ type MemoryExtraction struct {
 
 // ProjectMemory is trusted host configuration; repositories cannot select a knowledge store.
 type ProjectMemory struct {
+	Recall   bool              `toml:"recall"` // opt-in runtime read-only MCP recall
 	Extract  MemoryExtraction  `toml:"extract"`
 	Mode     string            `toml:"mode"`
 	Project  string            `toml:"project"`
@@ -238,8 +239,8 @@ func (c Config) Validate() error {
 	default:
 		return fieldf("memory.mode", "memory.mode must be native, managed or off")
 	}
-	if c.Memory.Mode != "managed" && (c.Memory.Project != "" || c.Memory.Snapshot != "" || len(c.Memory.Paths) > 0 || len(c.Memory.Tags) > 0 || c.Memory.Query != "" || len(c.Memory.Facts) > 0 || len(c.Memory.Watch) > 0) {
-		return fieldf("memory", "memory.project/snapshot/paths/tags/query/facts/watch require mode = managed")
+	if c.Memory.Mode != "managed" && (c.Memory.Recall || c.Memory.Project != "" || c.Memory.Snapshot != "" || len(c.Memory.Paths) > 0 || len(c.Memory.Tags) > 0 || c.Memory.Query != "" || len(c.Memory.Facts) > 0 || len(c.Memory.Watch) > 0) {
+		return fieldf("memory", "memory.recall/project/snapshot/paths/tags/query/facts/watch require mode = managed")
 	}
 	if err := (projectmemory.Selection{Query: c.Memory.Query, Facts: c.Memory.Facts}).Validate(); err != nil {
 		return fieldf("memory", "%s", err)

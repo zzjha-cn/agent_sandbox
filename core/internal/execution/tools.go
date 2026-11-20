@@ -28,14 +28,14 @@ func validateToolProvider(req Request) error {
 	if req.Mode != Headless || req.Detach {
 		return errors.New("dynamic tools require synchronous headless execution")
 	}
-	version := req.Config.Agents[req.Pipeline.Spec.Agent.Provider].Version
+	version := req.Config.Agents[req.Config.DefaultAgent].Version
 	m := toolVersion.FindStringSubmatch(version)
 	if m == nil {
 		return errors.New("tool provider requires a pinned supported release")
 	}
 	major, _ := strconv.Atoi(m[1])
 	minor, _ := strconv.Atoi(m[2])
-	switch req.Pipeline.Spec.Agent.Provider {
+	switch req.Config.DefaultAgent {
 	case "codex":
 		if major == 0 && minor >= 164 {
 			return nil
@@ -54,7 +54,10 @@ func (s *Service) startTools(ctx context.Context, req *Request, result *Result) 
 	if err := validateToolProvider(*req); err != nil {
 		return nil, err
 	}
-	policy := req.Pipeline.Policy.ToolGateway.Defaults()
+	policy := toolgate.Policy{}.Defaults()
+	if req.Pipeline != nil {
+		policy = req.Pipeline.Policy.ToolGateway.Defaults()
+	}
 	if !toolgate.ValidateHost(policy.Host) {
 		return nil, errors.New("invalid gateway host")
 	}
@@ -72,7 +75,11 @@ func (s *Service) startTools(ctx context.Context, req *Request, result *Result) 
 	}
 	base := *req
 	bindings := map[string]string{}
-	for _, selection := range req.Pipeline.Spec.Tools {
+	selections := []toolgate.Selection{}
+	if req.Pipeline != nil {
+		selections = req.Pipeline.Spec.Tools
+	}
+	for _, selection := range selections {
 		bindings[selection.ID] = req.Pipeline.Policy.Tools[selection.GrantRef].Binding()
 	}
 	auth := func(selection toolgate.Selection, target string) (external.Grant, error) {
@@ -97,7 +104,12 @@ func (s *Service) startTools(ctx context.Context, req *Request, result *Result) 
 		}
 		return grant, selection.Authorize(grant, target)
 	}
-	gateway, endpoint, err := toolgate.Start(ctx, req.Task.Name, result.AttemptID, req.Pipeline.Spec.Tools, policy, auth, external.HTTP{}, journal.Append)
+	registered, err := memoryTools(ctx, *req)
+	if err != nil {
+		journal.Close()
+		return nil, err
+	}
+	gateway, endpoint, err := toolgate.StartWithTools(ctx, req.Task.Name, result.AttemptID, selections, policy, auth, external.HTTP{}, journal.Append, registered)
 	if err != nil {
 		journal.Close()
 		return nil, err
@@ -125,7 +137,9 @@ func (s *Service) startTools(ctx context.Context, req *Request, result *Result) 
 			return nil, err
 		}
 	}
-	s.facts.ToolJournal = result.AttemptID
+	if s.facts != nil {
+		s.facts.ToolJournal = result.AttemptID
+	}
 	req.ToolGateway = true
 	req.ToolEndpoint = endpoint
 	s.closeTools = closeTools

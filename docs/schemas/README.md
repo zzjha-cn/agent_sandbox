@@ -10,6 +10,7 @@
 | [memory-entry](memory-entry.schema.json) | 当前条目、修订与审核摘要 |
 | [memory-project](memory-project.schema.json) | 项目元数据及完整修订历史 |
 | [memory-context](memory-context.schema.json) | 可固定引用的记忆快照 |
+| [memory-recalls](memory-recalls.schema.json) | M6 会话召回账本、冻结材料、预算与交付不确定性 |
 | [memory-session](memory-session.schema.json) | task/attempt 启动上下文准备记录 |
 | [task-handoff](task-handoff.schema.json) | 执行事实交接和显式人工备注，独立 v1 |
 | [memory-summary](memory-summary.schema.json) | 可授权外发的人工摘要输入，禁止未知字段 |
