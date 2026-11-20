@@ -146,7 +146,7 @@ func (s RecallService) Recall(ctx context.Context, req RecallRequest) (RecallRes
 	}
 	var snap Snapshot
 	if err == nil {
-		snap, err = s.Queries.Search(ctx, s.Project, q)
+		snap, err = s.Queries.SearchWithin(ctx, QueryContext{Project: s.Project, Scope: q}, Query{Text: q.Query})
 	}
 	out = RecallResponse{Status: "retrieval_failed"}
 	if ctx.Err() != nil {

@@ -132,12 +132,13 @@ type Entry struct {
 func entryDigest(e Entry) string { e.Digest = ""; return Digest(e) }
 
 type Project struct {
-	Schema   string     `json:"schema_version"`
-	ID       string     `json:"id"`
-	Name     string     `json:"name"`
-	Sequence uint64     `json:"sequence"`
-	History  []Entry    `json:"history"`
-	Feedback []Feedback `json:"feedback,omitempty"`
+	FindingReviews []FindingReview `json:"finding_reviews,omitempty"`
+	Schema         string          `json:"schema_version"`
+	ID             string          `json:"id"`
+	Name           string          `json:"name"`
+	Sequence       uint64          `json:"sequence"`
+	History        []Entry         `json:"history"`
+	Feedback       []Feedback      `json:"feedback,omitempty"`
 }
 
 func (p Project) Latest() []Entry {
@@ -266,6 +267,9 @@ func (s Store) Load(id string) (Project, error) {
 		}
 		revs[v.ID] = v.Revision
 	}
+	if e = validateFindingReviews(p); e != nil {
+		return p, e
+	}
 	return p, validateFeedbackHistory(p)
 }
 func (s Store) Create(name string) (Project, error) {
@@ -339,35 +343,7 @@ func (s Store) Resolve(id, repo string) (string, error) {
 	return id, e
 }
 func (s Store) Add(id string, v Input) (Entry, error) {
-	if e := v.Validate(); e != nil {
-		return Entry{}, e
-	}
-	u, e := s.lock()
-	if e != nil {
-		return Entry{}, e
-	}
-	defer u()
-	p, e := s.Load(id)
-	if e != nil {
-		return Entry{}, e
-	}
-	if v.Supersedes != "" {
-		found := false
-		for _, old := range p.Latest() {
-			if old.ID == v.Supersedes && old.Status == "approved" {
-				found = true
-			}
-		}
-		if !found {
-			return Entry{}, errors.New("supersedes must identify an approved entry in this project")
-		}
-	}
-	n := Entry{Input: v, ID: ID(), Revision: 1, Status: "candidate", CreatedAt: time.Now().UTC()}
-	n.Digest = entryDigest(n)
-	p.History = append(p.History, n)
-	p.Sequence++
-	f, _ := s.projectPath(id)
-	return n, write(f, p)
+	return s.Management().SubmitCandidate(context.Background(), id, v, 0)
 }
 
 // Review uses a mandatory digest comparison; approving a stale candidate fails.
@@ -376,97 +352,7 @@ func (s Store) Review(project, id, digest, status, reviewer, reason string) (Ent
 }
 
 func (s Store) ReviewAt(project, id, digest, status, reviewer, reason string, sequence uint64, due *time.Time) (Entry, error) {
-	if s.Actor != nil {
-		reviewer = s.Actor.Subject
-		if sequence == 0 {
-			return Entry{}, errors.New("organization review requires expected project sequence")
-		}
-	}
-	if due != nil && status != "approved" && status != "renewed" {
-		return Entry{}, errors.New("review due only applies to approval or renewal")
-	}
-	if due != nil && !due.After(time.Now()) {
-		return Entry{}, errors.New("review due must be in the future")
-	}
-	if digest == "" || strings.TrimSpace(reviewer) == "" || strings.TrimSpace(reason) == "" {
-		return Entry{}, errors.New("digest, reviewer and reason are required")
-	}
-	if len(reviewer) > 256 || len(reason) > 2048 {
-		return Entry{}, errors.New("review metadata too large")
-	}
-	u, e := s.lock()
-	if e != nil {
-		return Entry{}, e
-	}
-	defer u()
-	p, e := s.Load(project)
-	if e != nil {
-		return Entry{}, e
-	}
-	if sequence != 0 && sequence != p.Sequence {
-		return Entry{}, errors.New("project sequence changed")
-	}
-	var current Entry
-	for _, v := range p.Latest() {
-		if v.ID == id {
-			current = v
-		}
-	}
-	if current.ID == "" || current.Digest != digest {
-		return current, errors.New("entry absent or changed; review its current digest")
-	}
-	switch status {
-	case "approved", "rejected":
-		if current.Status != "candidate" {
-			return current, errors.New("only candidates may be approved or rejected")
-		}
-	case "renewed":
-		if current.Status != "approved" || due == nil {
-			return current, errors.New("renew requires an approved entry and future review due")
-		}
-		status = "approved"
-	case "archived":
-		if current.Status != "approved" {
-			return current, errors.New("only approved entries may be archived")
-		}
-	default:
-		return current, errors.New("invalid review transition")
-	}
-	if status == "approved" && current.Status == "candidate" && current.Supersedes != "" {
-		var old Entry
-		for _, v := range p.Latest() {
-			if v.ID == current.Supersedes {
-				old = v
-			}
-		}
-		if old.Status != "approved" {
-			return current, errors.New("superseded entry changed; submit a new candidate")
-		}
-		now := time.Now().UTC()
-		old.ReviewedAt = &now
-		old.Status = "superseded"
-		old.Revision++
-		old.Reviewer = reviewer
-		old.ReviewIdentity = s.Actor
-		old.Reason = reason
-		old.Digest = entryDigest(old)
-		p.History = append(p.History, old)
-	}
-	now := time.Now().UTC()
-	current.ReviewedAt = &now
-	current.Status = status
-	current.Revision++
-	current.Reviewer = reviewer
-	current.ReviewIdentity = s.Actor
-	if status == "approved" {
-		current.ReviewDue = due
-	}
-	current.Reason = reason
-	current.Digest = entryDigest(current)
-	p.History = append(p.History, current)
-	p.Sequence++
-	f, _ := s.projectPath(project)
-	return current, write(f, p)
+	return s.Management().Review(context.Background(), project, id, digest, status, reviewer, reason, sequence, due)
 }
 
 type Selection struct {

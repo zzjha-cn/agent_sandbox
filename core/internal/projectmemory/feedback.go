@@ -1,6 +1,7 @@
 package projectmemory
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"time"
@@ -34,39 +35,35 @@ func (v Feedback) validate() error {
 }
 
 func (s Store) RecordFeedback(project string, input Feedback) (Feedback, error) {
-	if s.Actor != nil {
-		input.Actor = s.Actor.Subject
+	return s.Management().RecordFeedback(context.Background(), project, input, 0)
+}
+
+func (s *ManagementService) RecordFeedback(ctx context.Context, project string, input Feedback, sequence uint64) (Feedback, error) {
+	if s.actor != nil {
+		input.Actor = s.actor.Subject
 	}
 	if err := input.validate(); err != nil {
 		return Feedback{}, err
 	}
-	u, err := s.lock()
-	if err != nil {
-		return Feedback{}, err
-	}
-	defer u()
-	p, err := s.Load(project)
-	if err != nil {
-		return Feedback{}, err
-	}
-	found := false
-	for _, entry := range p.History {
-		if entry.ID == input.EntryID && entry.Digest == input.EntryDigest {
-			found = true
-			break
+	err := s.repository.UpdateProject(ctx, project, sequence, func(p *Project) error {
+		found := false
+		for _, entry := range p.History {
+			if entry.ID == input.EntryID && entry.Digest == input.EntryDigest {
+				found = true
+				break
+			}
 		}
-	}
-	if !found {
-		return Feedback{}, errors.New("feedback entry revision not found in this project")
-	}
-	input.ID = ID()
-	input.Identity = s.Actor
-	input.CreatedAt = time.Now().UTC()
-	input.Digest = feedbackDigest(input)
-	p.Feedback = append(p.Feedback, input)
-	p.Sequence++
-	f, _ := s.projectPath(project)
-	return input, write(f, p)
+		if !found {
+			return errors.New("feedback entry revision not found in this project")
+		}
+		input.ID = ID()
+		input.Identity = s.actor
+		input.CreatedAt = time.Now().UTC()
+		input.Digest = feedbackDigest(input)
+		p.Feedback = append(p.Feedback, input)
+		return nil
+	})
+	return input, err
 }
 
 func validateFeedbackHistory(p Project) error {

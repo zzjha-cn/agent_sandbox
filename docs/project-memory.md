@@ -481,3 +481,81 @@ sbx schema memory-recalls
 顺序为：原子持久化 `reserved` → 查询并复核 → 原子持久化完整 `prepared_delivery_unknown` → 再次复核 → 返回。文件替换和父目录 fsync 完成之前不交付正文。`reserved` 崩溃后重试返回 interrupted，保留预占预算；prepared 后崩溃重试复用已登记材料，绝不重新查询替换。`delivery_unknown` 明确表示网络写入不能证明模型读到材料，不伪造 delivered。新会话生成空账本；恢复时账本缺失、损坏或绑定变化都阻止恢复。
 
 每次查询、返回及重试都重新检查项目授权、批准状态、有效期、来源和当前可信事实。恢复检查本会话全部召回快照，即使该条目不在启动快照中，被撤销也会阻止恢复，要求 `--fresh`。已经进入模型上下文的内容无法撤回；没有后台强制清除正在运行的 provider 上下文。真实/受控验收边界见 [M6 验收记录](project-memory-m6-acceptance.md)。
+
+## 14. 管理用例与复核事项
+
+候选提交、批准/拒绝、续期、替代、归档和反馈现经 `ManagementService` 进入 `KnowledgeRepository.UpdateProject`。仓储在同一项目锁下读取当前权威视图、核对预期 sequence、执行领域转换并原子写入；替代旧条目与批准新条目保持同一次提交。原 Store API 为兼容包装，旧 entry/snapshot 摘要不重写。导入/提取批量发布保留原有原子入口，不借本批改动其幂等规则。
+
+sequence=0 保留个人调用的旧语义；审核始终要求当前 entry digest，组织审核仍要求预期 sequence。新的管理端口允许候选/反馈调用方传预期版本。反馈只绑定历史修订并追加声明，不自动批准或撤销。
+
+```sh
+sbx memory findings list --project my-project --facts go.version=1.27
+sbx memory findings review --project my-project --finding <finding-id> \
+  --decision needs_update --reason '已观察到反例，需要生成更新候选' \
+  --sequence <current-sequence>
+```
+
+复核事项来自到期、来源消失、条件未知/不匹配、词法冲突提示和 counterexample 反馈。finding ID 绑定精确条目 revision/digest、触发原因及相关事实/反馈。决定可为 acknowledged、needs_update、dismissed，带操作者、解释、时间与摘要，追加在项目历史中。它只表示如何处理线索，不改变 approved，也不能使过期/撤销内容重新进入查询。条件或来源修订变化产生新的事项；依然失效的事项即使已 acknowledged，也继续受有效性检查约束。没有自动任务队列、质量打分或后台清理。
+
+查询使用 `QueryContext` 固定项目、范围与最大预算；`Query` 只能收窄路径、标签和预算。`ObservedFacts` 由注入的 ObservationProvider 提供并绑定摘要。FileObservationProvider 只观察宿主显式选定的文件；EvidenceDocumentResolver 只验证来源文档，提取作业目录布局由 memoryio.ExtractionFiles 适配。未知/损坏来源继续保守排除。
+
+## 15. 从经验生成 rule / skill 草稿（M7）
+
+`memory draft` 消费显式选定、当前 approved 且未到期的来源。每项需要 ID、revision、digest。程序复核来源身份和可用性，冻结材料与生成器版本；不自动浏览 provider 历史或调用外部模型。agent 可以在聊天中综合经验形成计划，再用明确输入生成可审核产物。
+
+先准备 `sbx schema memory-draft-request` 对应的 JSON：
+
+```json
+{
+  "kind": "skill",
+  "name": "prep-input-check",
+  "description": "排查 prep 输入变化后依赖仍旧的问题",
+  "sources": [{"id": "entry-id", "revision": 2, "digest": "sha256:..."}],
+  "plan": {
+    "conditions": "项目已配置 prep",
+    "trigger": "锁文件变化后 tag 或依赖未更新",
+    "steps": "核对生效配置、COPY/watch 和播种状态，优先隔离验证",
+    "validation": "记录实际命令、结果和未验证环境",
+    "exit": "报告观察事实、可能原因及未知项",
+    "limits": "不自动 reseed、安装、提交或发布",
+    "unknowns": "真实私网与具体根因尚未验证"
+  }
+}
+```
+
+kind 可选 rule 或 skill；七个计划段落都需要显式填写。facts 只能声明非 file 条件；草稿入口没有任意宿主文件观察权限，未知文件条件保留警告。多个同名来源内容不同时给出 possible_source_conflict 线索，不自动推断哪项正确。
+
+```sh
+sbx memory draft create --project my-project --file draft-request.json \
+  --repo /path/to/repository --output docs/memory-drafts/prep-input-check
+sbx memory draft show <draft-id> --project my-project \
+  --repo /path/to/repository --output docs/memory-drafts/prep-input-check
+sbx memory draft relations --project my-project --entry <source-entry-id>
+```
+
+输出只创建一个明确指定的新草稿目录，包含 RULE.md 或 SKILL.md、冻结的 sources.json、README.md 和内部身份标记。不写生效 AGENTS.md，不写 `.agents` / `.codex` / `sbx_skills` / `skills` 目录，不安装、不提交、不发布。仓储保存精确产物摘要和仓库身份摘要/相对位置；绝对仓库路径不写入来源关系。已有目录和非本草稿内容不覆盖，symlink、正文变化或额外文件都会阻止核验。
+
+若写入失败，命令给出已准备的 draft ID。修复实际环境后使用同一冻结记录恢复：
+
+```sh
+sbx memory draft write <draft-id> --project my-project \
+  --repo /path/to/repository --output docs/memory-drafts/prep-input-check
+```
+
+顺序是先持久化 prepared 记录，再写入并核验文件，再记录 written。恢复不会重新生成；若部分文件已损坏，不自动覆盖修补，需操作者检查或选择新的草稿目录。知识来源、账本与仓库文件不承诺跨介质全局事务：交付前后都复核来源，失效时拒绝完成，已有草稿作为待核对材料保留。重复写入相同目录保持记录摘要不变。
+
+独立审核示例：validation.json 是有界数组，每项为 scenario、outcome、evidence；approved 需要全部为 passed，并核对实际输出目录。声明会被记录，但不自动证明行为正确。
+
+```sh
+sbx memory draft review <draft-id> --project my-project \
+  --digest <current-record-digest> --decision approved \
+  --reviewer <operator> --reason '已核对来源、命令能力、权限和验收范围' \
+  --validation validation.json --repo /path/to/repository \
+  --output docs/memory-drafts/prep-input-check
+```
+
+规则草稿应进入仓库评审；skill 草稿应在隔离项目完成代表性验证。个人 reviewer 是声明，组织身份绑定宿主 UID。审核绑定 artifact digest，提交还要求当前 record digest；并发或过期审核被拒绝。批准只是草稿审核状态，独立的生效/安装/发布操作仍需另行执行和授权。
+
+来源撤销、替代、到期或证据消失后，show / relations 动态提示 source_invalid；已批准记录与文件原文保留，不静默重写，不伪称撤回已经读过的内容。没有图数据库，也没有后台自动修改已发布文件。每条记录最多 256 KiB、16 个输出位置和 64 条评审；关联列表最多 128 个记录与 4 MiB，超限显式失败。来源/草稿/审核历史默认留在宿主 project-memory，需由数据保留政策管理；清理 task 不清理它们。
+
+具体示例及验证边界见 [M7 验收记录](project-memory-m7-acceptance.md)。

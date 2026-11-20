@@ -20,13 +20,14 @@ func (a *App) addMemoryRetrievalCommands(root *cobra.Command) {
 		if _, e = s.Load(project); e != nil {
 			return e
 		}
-		facts, e := projectmemory.ObserveFiles(repo, watch, q.Facts)
+		observation, e := (projectmemory.FileObservationProvider{Root: repo, Watch: watch, Facts: q.Facts}).Observe(cmd.Context())
+		facts := observation.Values
 		if e != nil {
 			return e
 		}
 		selection := q
 		selection.Facts = facts
-		v, e := s.Queries().Search(cmd.Context(), project, selection)
+		v, e := s.Queries().SearchWithin(cmd.Context(), projectmemory.QueryContext{Project: project, Scope: selection}, projectmemory.Query{Text: selection.Query})
 		if e != nil {
 			return e
 		}
@@ -72,7 +73,7 @@ func (a *App) addMemoryRetrievalCommands(root *cobra.Command) {
 			return e
 		}
 		input.EntryID = args[0]
-		v, e := s.RecordFeedback(addProject, input)
+		v, e := s.Management().RecordFeedback(cmd.Context(), addProject, input, 0)
 		if e != nil {
 			return e
 		}

@@ -3,21 +3,36 @@ package projectmemory
 import (
 	"context"
 	"encoding/json"
-	"path/filepath"
+	"sandx/internal/memoryio"
 )
 
 // FileEvidenceResolver is the adapter for registered extraction-job files.
 // QueryService depends only on EvidenceResolver, not this layout or job wire type.
+type EvidenceDocumentReader interface {
+	ReadEvidence(context.Context, string) ([]byte, error)
+}
+
+// EvidenceDocumentResolver verifies source identity without knowing storage paths.
+type EvidenceDocumentResolver struct{ Reader EvidenceDocumentReader }
+
+// FileEvidenceResolver is a compatibility composition adapter, not query policy.
 type FileEvidenceResolver struct{ Home string }
 
 func (s FileEvidenceResolver) ResolveEvidence(ctx context.Context, project string, p Provenance) (EvidenceState, error) {
+	return (EvidenceDocumentResolver{Reader: memoryio.ExtractionFiles{Home: s.Home, ReadFile: ReadFile}}).ResolveEvidence(ctx, project, p)
+}
+
+func (s EvidenceDocumentResolver) ResolveEvidence(ctx context.Context, project string, p Provenance) (EvidenceState, error) {
 	if err := ctx.Err(); err != nil {
 		return EvidenceUnavailable, err
+	}
+	if s.Reader == nil {
+		return EvidenceUnavailable, nil
 	}
 	if !ValidID(p.Job) {
 		return EvidenceUnavailable, nil
 	}
-	b, err := ReadFile(filepath.Join(s.Home, "memory-extractions", p.Job, "job.json"), maxStore)
+	b, err := s.Reader.ReadEvidence(ctx, p.Job)
 	if err != nil {
 		return EvidenceUnavailable, nil
 	}

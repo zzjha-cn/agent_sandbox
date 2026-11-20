@@ -10,6 +10,10 @@
 | [memory-entry](memory-entry.schema.json) | 当前条目、修订与审核摘要 |
 | [memory-project](memory-project.schema.json) | 项目元数据及完整修订历史 |
 | [memory-context](memory-context.schema.json) | 可固定引用的记忆快照 |
+| [memory-draft-request](memory-draft-request.schema.json) | M7 显式来源引用及七段草稿计划输入 |
+| [memory-draft](memory-draft.schema.json) | 冻结来源、产物、版本与独立审核记录 |
+| [memory-draft-inspection](memory-draft-inspection.schema.json) | 当前来源/产物复核结果 |
+| [memory-review-queue](memory-review-queue.schema.json) | 管理复核线索与处理声明 |
 | [memory-recalls](memory-recalls.schema.json) | M6 会话召回账本、冻结材料、预算与交付不确定性 |
 | [memory-session](memory-session.schema.json) | task/attempt 启动上下文准备记录 |
 | [task-handoff](task-handoff.schema.json) | 执行事实交接和显式人工备注，独立 v1 |

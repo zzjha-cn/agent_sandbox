@@ -107,7 +107,7 @@ func checkJSON(d *json.Decoder, depth int) error {
 		return e
 	}
 	if t == nil {
-		return errors.New("null fields are not supported in sharing bundles")
+		return errors.New("null fields are not supported")
 	}
 	delim, ok := t.(json.Delim)
 	if !ok {

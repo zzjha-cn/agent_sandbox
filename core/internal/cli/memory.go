@@ -244,5 +244,6 @@ func (a *App) memoryCmd() *cobra.Command {
 	a.addProjectMemoryCommands(cmd)
 	a.addExtractionCommands(cmd)
 	a.addMemoryMaintenanceCommands(cmd)
+	a.addMemoryCurationCommands(cmd)
 	return cmd
 }

@@ -75,11 +75,12 @@ func selectMemoryContext(ctx context.Context, req Request, store projectmemory.S
 		}
 		return v, e
 	}
-	return store.Queries().Search(ctx, id, q)
+	return store.Queries().SearchWithin(ctx, projectmemory.QueryContext{Project: id, Scope: q}, projectmemory.Query{Text: q.Query})
 }
 
 func memorySelection(req Request) (projectmemory.Selection, error) {
-	facts, err := projectmemory.ObserveFiles(req.Task.Worktree(), req.Config.Memory.Watch, req.Config.Memory.Facts)
+	observation, err := (projectmemory.FileObservationProvider{Root: req.Task.Worktree(), Watch: req.Config.Memory.Watch, Facts: req.Config.Memory.Facts}).Observe(context.Background())
+	facts := observation.Values
 	return projectmemory.Selection{Paths: req.Config.Memory.Paths, Tags: req.Config.Memory.Tags, Query: req.Config.Memory.Query, Facts: facts}, err
 }
 

@@ -34,9 +34,9 @@ type EvidenceResolver interface {
 }
 
 type EntryRef struct {
-	ID       string
-	Revision int
-	Digest   string
+	ID       string `json:"id"`
+	Revision int    `json:"revision"`
+	Digest   string `json:"digest"`
 }
 
 func reference(entry Entry) EntryRef {

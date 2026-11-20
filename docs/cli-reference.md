@@ -595,9 +595,11 @@ Available Commands:
   archive     Record an explicit review bound to the displayed entry digest
   candidates  Read project memory entries as JSON
   check       Validate authoritative history and derive current views without a separate index (JSON)
+  draft       Create and review source-bound rule/skill drafts; never installs or publishes
   export      Print a portable bundle of explicitly selected approved experience (JSON)
   extract     Freeze safe task material and call a tool-free model to propose candidates (may incur API charges)
   feedback    Record or inspect explicit operator feedback; never changes approval
+  findings    Inspect or acknowledge review issues without changing approval
   handoff     Rebuild a task handoff from durable facts without running the task (JSON)
   import      Map a portable bundle to a local project as unapproved candidates
   inspect     Report duplicate/conflict hints, review expiry and storage usage (JSON)
@@ -717,6 +719,125 @@ Global Flags:
   -v, --verbose   print every docker and git command sbx runs
 ```
 
+## sbx memory draft
+
+```text
+Create and review source-bound rule/skill drafts; never installs or publishes
+
+Usage:
+  sbx memory draft [command]
+
+Available Commands:
+  create      Freeze explicit approved sources and write a rule/skill draft
+  relations   Find drafts affected by a source entry; recheck source validity
+  review      Record explicit draft review bound to its digest and validation declarations
+  show        Inspect draft identity, current source validity and optional output files
+  write       Recover writing an existing frozen draft without regeneration
+
+Flags:
+  -h, --help   help for draft
+
+Global Flags:
+  -v, --verbose   print every docker and git command sbx runs
+
+Use "sbx memory draft [command] --help" for more information about a command.
+```
+
+## sbx memory draft create
+
+```text
+Freeze explicit approved sources and write a rule/skill draft
+
+Usage:
+  sbx memory draft create [flags]
+
+Flags:
+      --file string      draft request JSON, explicit exact source refs and plan
+  -h, --help             help for create
+      --output string    relative draft directory; cannot target active skills/instructions
+      --project string   registered authorized project
+      --repo string      repository root for the explicit draft directory (default ".")
+
+Global Flags:
+  -v, --verbose   print every docker and git command sbx runs
+```
+
+## sbx memory draft relations
+
+```text
+Find drafts affected by a source entry; recheck source validity
+
+Usage:
+  sbx memory draft relations [flags]
+
+Flags:
+      --entry string     optional source entry ID (default: all drafts)
+  -h, --help             help for relations
+      --project string   registered authorized project
+
+Global Flags:
+  -v, --verbose   print every docker and git command sbx runs
+```
+
+## sbx memory draft review
+
+```text
+Record explicit draft review bound to its digest and validation declarations
+
+Usage:
+  sbx memory draft review <draft> [flags]
+
+Flags:
+      --decision string     approved|rejected (never publishes)
+      --digest string       current draft record digest
+  -h, --help                help for review
+      --output string       relative draft directory; cannot target active skills/instructions
+      --project string      registered authorized project
+      --reason string       explicit review explanation
+      --repo string         repository root for the explicit draft directory (default ".")
+      --reviewer string     personal declaration; managed identity comes from host UID (default "operator")
+      --validation string   JSON array of scenario/outcome/evidence declarations; required for approval
+
+Global Flags:
+  -v, --verbose   print every docker and git command sbx runs
+```
+
+## sbx memory draft show
+
+```text
+Inspect draft identity, current source validity and optional output files
+
+Usage:
+  sbx memory draft show <draft> [flags]
+
+Flags:
+  -h, --help             help for show
+      --output string    relative draft directory; cannot target active skills/instructions
+      --project string   registered authorized project
+      --repo string      repository root for the explicit draft directory (default ".")
+
+Global Flags:
+  -v, --verbose   print every docker and git command sbx runs
+```
+
+## sbx memory draft write
+
+```text
+Recover writing an existing frozen draft without regeneration
+
+Usage:
+  sbx memory draft write <draft> [flags]
+
+Flags:
+  -h, --help             help for write
+      --output string    relative draft directory; cannot target active skills/instructions
+      --project string   registered authorized project
+      --repo string      repository root for the explicit draft directory (default ".")
+
+Global Flags:
+  -v, --verbose   print every docker and git command sbx runs
+```
+
 ## sbx memory export
 
 ```text
@@ -806,6 +927,66 @@ Usage:
 Flags:
   -h, --help             help for list
       --project string   registered project
+
+Global Flags:
+  -v, --verbose   print every docker and git command sbx runs
+```
+
+## sbx memory findings
+
+```text
+Inspect or acknowledge review issues without changing approval
+
+Usage:
+  sbx memory findings [command]
+
+Available Commands:
+  list        List current evidence, expiry, condition and counterexample review issues
+  review      Record explicit handling of a current finding without changing approval
+
+Flags:
+  -h, --help   help for findings
+
+Global Flags:
+  -v, --verbose   print every docker and git command sbx runs
+
+Use "sbx memory findings [command] --help" for more information about a command.
+```
+
+## sbx memory findings list
+
+```text
+List current evidence, expiry, condition and counterexample review issues
+
+Usage:
+  sbx memory findings list [flags]
+
+Flags:
+      --facts stringToString   trusted equality facts for the current review view (default [])
+  -h, --help                   help for list
+      --project string         registered authorized project
+
+Global Flags:
+  -v, --verbose   print every docker and git command sbx runs
+```
+
+## sbx memory findings review
+
+```text
+Record explicit handling of a current finding without changing approval
+
+Usage:
+  sbx memory findings review [flags]
+
+Flags:
+      --decision string        acknowledged|needs_update|dismissed
+      --facts stringToString   trusted equality facts for the current review view (default [])
+      --finding string         current finding ID
+  -h, --help                   help for review
+      --project string         registered authorized project
+      --reason string          explicit finding review explanation
+      --reviewer string        personal declaration; managed identity comes from host UID (default "operator")
+      --sequence uint          expected project sequence; required in organization mode
 
 Global Flags:
   -v, --verbose   print every docker and git command sbx runs

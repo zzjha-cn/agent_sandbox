@@ -14,7 +14,7 @@ import (
 type JSONSchema map[string]any
 
 func SchemaNames() []string {
-	return []string{"task", "event", "result", "task-status", "execution-status", "version", "admission", "retention", "team-event", "task-list", "task-maintenance", "memory-input", "memory-entry", "memory-project", "memory-context", "memory-session", "task-handoff", "memory-extraction", "memory-summary", "memory-processing", "memory-bundle", "memory-maintenance", "memory-feedback", "memory-recalls"}
+	return []string{"task", "event", "result", "task-status", "execution-status", "version", "admission", "retention", "team-event", "task-list", "task-maintenance", "memory-input", "memory-entry", "memory-project", "memory-context", "memory-session", "task-handoff", "memory-extraction", "memory-summary", "memory-processing", "memory-bundle", "memory-maintenance", "memory-feedback", "memory-recalls", "memory-draft-request", "memory-draft", "memory-draft-inspection", "memory-review-queue"}
 }
 
 // Schema derives wire shapes from the actual CLI types. Input objects are
@@ -22,6 +22,14 @@ func SchemaNames() []string {
 func Schema(name string) (JSONSchema, error) {
 	var value any
 	switch name {
+	case "memory-draft-request":
+		value = projectmemory.DraftRequest{}
+	case "memory-draft":
+		value = projectmemory.DraftRecord{}
+	case "memory-draft-inspection":
+		value = projectmemory.DraftInspection{}
+	case "memory-review-queue":
+		value = projectmemory.ReviewQueue{}
 	case "memory-recalls":
 		value = projectmemory.RecallHistory{}
 	case "memory-feedback":
@@ -71,7 +79,7 @@ func Schema(name string) (JSONSchema, error) {
 	default:
 		return nil, fmt.Errorf("unknown schema %q; use sbx schema to list names", name)
 	}
-	s := shape(reflect.TypeOf(value), name == "task" || name == "memory-input" || name == "memory-summary" || name == "memory-bundle")
+	s := shape(reflect.TypeOf(value), name == "task" || name == "memory-input" || name == "memory-summary" || name == "memory-bundle" || name == "memory-draft-request")
 	s["$schema"] = "https://json-schema.org/draft/2020-12/schema"
 	s["$id"] = "urn:sbx:schema:" + name + ":v2"
 	s["title"] = "sbx " + name
@@ -112,6 +120,19 @@ func Schema(name string) (JSONSchema, error) {
 		s["$id"] = "urn:sbx:schema:memory-extraction:v1"
 		prop(s, "schema_version")["const"] = taskmemory.JobSchema
 		prop(s, "state")["enum"] = []string{"pending", "running", "succeeded", "failed", "interrupted"}
+	case "memory-draft-request":
+		s["$id"] = "urn:sbx:schema:memory-draft-request:v1"
+		prop(s, "kind")["enum"] = []string{"rule", "skill"}
+		require(s, "kind", "name", "description", "sources", "plan")
+	case "memory-draft":
+		s["$id"] = "urn:sbx:schema:memory-draft:v1"
+		prop(s, "schema_version")["const"] = projectmemory.DraftSchema
+	case "memory-draft-inspection":
+		s["$id"] = "urn:sbx:schema:memory-draft-inspection:v1"
+		prop(s, "schema_version")["const"] = "sbx.memory-draft-inspection/v1"
+	case "memory-review-queue":
+		s["$id"] = "urn:sbx:schema:memory-review-queue:v1"
+		prop(s, "schema_version")["const"] = "sbx.memory-review-queue/v1"
 	case "memory-recalls":
 		s["$id"] = "urn:sbx:schema:memory-recalls:v1"
 		prop(s, "schema_version")["const"] = "sbx.memory-recalls/v1"

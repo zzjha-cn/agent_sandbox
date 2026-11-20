@@ -85,7 +85,8 @@ func (a *App) addProjectMemoryCommands(root *cobra.Command) {
 		if _, e = s.Load(snapProject); e != nil {
 			return e
 		}
-		facts, e := projectmemory.ObserveFiles(snapRepo, snapWatch, snapFacts)
+		observation, e := (projectmemory.FileObservationProvider{Root: snapRepo, Watch: snapWatch, Facts: snapFacts}).Observe(cmd.Context())
+		facts := observation.Values
 		if e != nil {
 			return e
 		}
@@ -124,7 +125,7 @@ func (a *App) addProjectMemoryCommands(root *cobra.Command) {
 		if e != nil {
 			return e
 		}
-		entry, e := s.Add(addProject, v)
+		entry, e := s.Management().SubmitCandidate(cmd.Context(), addProject, v, 0)
 		if e != nil {
 			return e
 		}
@@ -191,7 +192,7 @@ func (a *App) addProjectMemoryCommands(root *cobra.Command) {
 			if s.Actor != nil && sequence == 0 {
 				return errors.New("organization review requires --sequence from project show")
 			}
-			entry, e := s.ReviewAt(project, args[0], digest, status, reviewer, reason, sequence, due)
+			entry, e := s.Management().Review(cmd.Context(), project, args[0], digest, status, reviewer, reason, sequence, due)
 			if e != nil {
 				return e
 			}
