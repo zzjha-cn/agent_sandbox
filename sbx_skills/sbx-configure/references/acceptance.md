@@ -1,4 +1,16 @@
+## M6 运行中召回开发绑定（2026-11-20）
+
+当前开发二进制 `memory-m6-dev`，知识修订 8，绑定本地已审核工作树（source_dirty=true），不是正式发布。新增宿主 memory.recall、独立 RecallLedger、注册式 MCP memory_search、memory status --recalls 与 memory-recalls schema。Codex 真实容器新会话/恢复、撤销/fresh 和无需补查场景已验收；Claude 按用户要求禁用，仅做受控测试，不声称真实验收完成。细节及证据见 docs/project-memory-m6-acceptance.md；配置场景以 references/config-rules.md 和当前二进制为准。
+
 # 配置 skill 验收记录
+
+## 项目调查优先的接入流程
+
+2026-11-20：将主流程改为“读取项目 → 分类推荐清单一次确认 → 配置与验证 → HTML”。新增 project-plan.md，要求从项目版本声明、锁文件、CI 和已有开发环境确定运行/Prep 版本配对；明确内置 init 的 golang:1.23 只是模板，不能直接套用。清单覆盖开发范围、Agent/供应商接入、镜像工具链、prep、服务/本地输入、构建与运行网络、落地验证，必须给建议、证据和配置位置；仅集中询问真正缺失的决策。沿用现有 Agent 禁用选择，不强制 web-go 或双 Agent 安装，HTML 与确认清单保持一致。
+
+格式校验通过；原有受控测试 10 项通过。使用现有 core/bin/sbx 追加真实 CLI 夹具检查，6 项配置夹具通过；封包往返测试失败：当前 core 源码与旧清单绑定已漂移，未将未审核的并行 core 修改重新绑定来使测试通过。这些检查不证明真实模型已遵循新对话流程，未执行实际项目接入、Docker 构建或私网验收。
+
+revision 8 只刷新审核后的 skill 内容摘要；保留既有二进制、帮助与源码摘要绑定。包内完整性检查与目标二进制兼容性/源码一致性是不同检查；当前本地 memory-m6-dev 二进制的 probe 也正确报告版本、二进制摘要及根帮助不匹配；本次不声明当前工作区可发布，后续随目标 core 版本维护配套绑定。
 
 ## HTML 拓扑交付
 

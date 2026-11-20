@@ -1,4 +1,4 @@
 interface:
   display_name: "sbx 项目配置"
-  short_description: "对话配置 sbx，验证生效结果，交付镜像、prep、服务与网络的 HTML 拓扑"
-  default_prompt: "使用 $sbx-configure 调查当前项目，询问缺失信息并生成、验证合适的 sbx 配置，最后用 HTML 图形化展示配置、镜像、prep、服务与网络拓扑。"
+  short_description: "先读项目，分类推荐并确认后配置开发沙箱，验证并交付 HTML 拓扑"
+  default_prompt: "使用 $sbx-configure 先读取当前项目与已有配置，按 Agent、镜像工具链、prep、服务和网络列出有依据的推荐清单；我确认后直接配置并验证 sbx 开发沙箱，最后交付 HTML 拓扑。"

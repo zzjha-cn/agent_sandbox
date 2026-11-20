@@ -19,7 +19,7 @@
 
 - 当前 agent 层要求 **Debian/Ubuntu 系基础镜像**，使用 apt-get、useradd/groupadd、bash 等能力。Alpine、distroless、scratch 不在当前支持范围，不能承诺任意 Docker Hub 镜像都能用。
 - sbx 自动构建 `.sbx/Dockerfile` 时使用临时上下文，只放入该 Dockerfile，**不是 Git 根**。不能在其中直接 `COPY requirements.txt` 或仓库目录。需要项目上下文时走上表的单独构建路径。prep 的上下文则是 Git 根，两者不要混淆。
-- agent 层负责安装 Codex/Claude、必要的 Node/npm、mise 和 sbx 入口，设置 agent 用户与 WORKDIR。用户 Dockerfile 主要负责工具链/系统库；不要依赖自己设置的 USER、ENTRYPOINT、WORKDIR 或 PATH 最终保持原样，也不需重复安装 agent。即使不用 web-go，agent 层仍可能安装 Node/npm。
+- agent 层按有效 `agents.<name>.disabled` 选择安装 Codex/Claude（默认两者安装）、必要的 Node/npm、mise 和 sbx 入口，设置 agent 用户与 WORKDIR。用户 Dockerfile 主要负责工具链/系统库；不要依赖自己设置的 USER、ENTRYPOINT、WORKDIR 或 PATH 最终保持原样，也不需重复安装 agent。即使不用 web-go，agent 层仍可能安装 Node/npm。
 - 工具链应能被最终非 root agent 用户访问，不能只装入 `/root`。核对最终 PATH、版本、可写缓存/依赖目录与宿主 CPU 架构；安装时临时可用不代表 task 内可用。
 - Dockerfile 及其 FROM 引用可审阅；凭据不放 ARG/ENV/COPY 或镜像层。现有镜像名 tag 相同也不保证内容不变，是否需要 digest 或新 tag 由项目要求决定。
 

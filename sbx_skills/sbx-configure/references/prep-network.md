@@ -2,6 +2,8 @@
 
 ## Prep：构建与播种
 
+生成前按 [项目调查与确认清单](project-plan.md) 核对项目版本、运行镜像与 prep 的版本配对。内置 init 模板和下方示例不是版本探测结果，不可直接套用 FROM；需要基于项目锁文件与实际安装方式生成。
+
 只有配置的 Dockerfile 实际存在才启用 prep，默认路径 `.sbx/prep.Dockerfile`。构建上下文是 Git 根；COPY 使用相对根路径，monorepo 注意根锁文件、子模块和本地依赖。`.gitignore` 不是 Docker 的排除规则；避免 COPY 整个仓库，若需修改 Docker 忽略规则，应保留已有构建行为。
 
 播种只覆盖：
